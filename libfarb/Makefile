@@ -2,7 +2,8 @@ BIN=libfarb.so
 SOURCES = $(wildcard *.c)
 OBJECTS = $(SOURCES:.c=.o)
 
-CFLAGS=-Wall -g
+CFLAGS=-Wall -g -Wno-comment
+MPICC=
 
 all: $(BIN)
 

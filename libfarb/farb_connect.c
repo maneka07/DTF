@@ -6,6 +6,7 @@
 #include <string.h>
 #include <assert.h>
 #include "farb_connect.h"
+//#include "farb_common.h"
 #include <sys/time.h>
 #include <dlfcn.h>
 
@@ -28,20 +29,20 @@ int save_to_buffer_node(struct file_buffer *fbuf, \
     struct buffer_node *node;
     while (remain)
     {
-        avail_buf = DEFAULT_NODE_BUF_SIZE - offset % DEFAULT_NODE_BUF_SIZE;
+        avail_buf = DEFAULT_BUFFER_NODE_SIZE - offset % DEFAULT_BUFFER_NODE_SIZE;
         tocpy = remain > avail_buf ? avail_buf : remain;
-        node = search_buffer_node(fbuf, offset/DEFAULT_NODE_BUF_SIZE, NULL);
+        node = search_buffer_node(fbuf, offset/DEFAULT_BUFFER_NODE_SIZE, NULL);
         if (node != NULL){
-            memcpy(node->node_ptr + offset % DEFAULT_NODE_BUF_SIZE, data, tocpy);
+            memcpy(node->node_ptr + offset % DEFAULT_BUFFER_NODE_SIZE, data, tocpy);
             node->dirty_flag = 1;
         }
         else{
-            char *nbuf = malloc(DEFAULT_NODE_BUF_SIZE);
+            char *nbuf = malloc(DEFAULT_BUFFER_NODE_SIZE);
             if (nbuf == NULL)
                 return ENOMEM;
-            memset(nbuf, 0, DEFAULT_NODE_BUF_SIZE);
-            memcpy(nbuf + offset % DEFAULT_NODE_BUF_SIZE, data, tocpy);
-            add_to_buffer_node_list(fbuf, offset/DEFAULT_NODE_BUF_SIZE, nbuf, 1);
+            memset(nbuf, 0, DEFAULT_BUFFER_NODE_SIZE);
+            memcpy(nbuf + offset % DEFAULT_BUFFER_NODE_SIZE, data, tocpy);
+            add_to_buffer_node_list(fbuf, offset/DEFAULT_BUFFER_NODE_SIZE, nbuf, 1);
         }
         data += tocpy;
         remain -= tocpy;
@@ -60,11 +61,11 @@ int read_from_buffer_node(struct file_buffer *fbuf, \
     struct buffer_node *node;
     while (remain)
     {
-        avail_buf = DEFAULT_NODE_BUF_SIZE - offset % DEFAULT_NODE_BUF_SIZE;
+        avail_buf = DEFAULT_BUFFER_NODE_SIZE - offset % DEFAULT_BUFFER_NODE_SIZE;
         tocpy = remain > avail_buf ? avail_buf : remain;
-        node = search_buffer_node(fbuf, offset/DEFAULT_NODE_BUF_SIZE, NULL);
+        node = search_buffer_node(fbuf, offset/DEFAULT_BUFFER_NODE_SIZE, NULL);
         if (node != NULL){
-            memcpy(data, node->node_ptr + offset % DEFAULT_NODE_BUF_SIZE, tocpy);
+            memcpy(data, node->node_ptr + offset % DEFAULT_BUFFER_NODE_SIZE, tocpy);
         }
         else{
             data = NULL;
@@ -85,23 +86,23 @@ int flush_data_to_disk(char *file_name, struct file_buffer *fbuf){
     fseek(f, 0, SEEK_END);
     fseek(f, 0, SEEK_SET);
     while (node != NULL){
-        if (node->next == NULL && fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE > 0){
-            ret = fwrite(node->node_ptr, 1, fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE, f);
-            if(ret != fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE){
+        if (node->next == NULL && fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE > 0){
+            ret = fwrite(node->node_ptr, 1, fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE, f);
+            if(ret != fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE){
                 printf("\n fwrite() failed\n");
                 fclose(f);
                 return -1;
             }
         }
         else{
-            ret = fwrite(node->node_ptr, 1, DEFAULT_NODE_BUF_SIZE, f);
-            if(ret != DEFAULT_NODE_BUF_SIZE){
+            ret = fwrite(node->node_ptr, 1, DEFAULT_BUFFER_NODE_SIZE, f);
+            if(ret != DEFAULT_BUFFER_NODE_SIZE){
                 printf("\n fwrite() failed\n");
                 fclose(f);
                 return -1;
             }
 
-            if(0 != fseek(f, DEFAULT_NODE_BUF_SIZE, SEEK_CUR)){
+            if(0 != fseek(f, DEFAULT_BUFFER_NODE_SIZE, SEEK_CUR)){
                 printf("\n fseek() failed\n");
                 fclose(f);
                 return -1;
@@ -122,19 +123,19 @@ int copy_buffer_file(struct file_buffer *src_fbuf, struct file_buffer *dst_fbuf)
     dst_fbuf->buffer_size = src_fbuf->buffer_size;
     int i = 0;
     while (node != NULL){
-        if (node->next == NULL && src_fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE > 0){
-            nbuf = malloc(src_fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE);
+        if (node->next == NULL && src_fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE > 0){
+            nbuf = malloc(src_fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE);
             if (nbuf==NULL)
                 return ENOMEM;
 
-            memcpy(nbuf, node->node_ptr, src_fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE);
+            memcpy(nbuf, node->node_ptr, src_fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE);
         }
         else{
-            nbuf = malloc(DEFAULT_NODE_BUF_SIZE);
+            nbuf = malloc(DEFAULT_BUFFER_NODE_SIZE);
             if (nbuf==NULL)
                 return ENOMEM;
 
-            memcpy(nbuf, node->node_ptr, DEFAULT_NODE_BUF_SIZE);
+            memcpy(nbuf, node->node_ptr, DEFAULT_BUFFER_NODE_SIZE);
         }
         add_to_buffer_node_list(dst_fbuf, i, nbuf, 1);
         node = node->next;
@@ -156,7 +157,7 @@ int copy_buffer_file(struct file_buffer *src_fbuf, struct file_buffer *dst_fbuf)
 
 static void parse_config(char *ini_name, char *service_name){
   dictionary * ini ;
-  char       * s; 
+  char       * s;
   char       para_name[1024];
   int        i, j;
   ini = iniparser_load(ini_name);
@@ -193,7 +194,7 @@ static void parse_config(char *ini_name, char *service_name){
 
    	sprintf(para_name, "COMP%d:client_server_flag%d", j, i);
    	fbuf->client_server_flag = iniparser_getint(ini, para_name, 0);
-	
+
 	fbuf->buffer_list = NULL;
    	}
   }
@@ -221,14 +222,14 @@ struct server_connection *conn_serv_publish_port(const char *service_name,
 
     ierr = MPI_Open_port(MPI_INFO_NULL, connection->port_name);
     assert(ierr== MPI_SUCCESS);
-
+    FARB_DBG(VERBOSE_DBG_LEVEL,   "Publish name for %s", service_name);
     ierr = MPI_Publish_name(connection->service_name, \
 		MPI_INFO_NULL, connection->port_name);
     assert(ierr== MPI_SUCCESS);
   }
 
   MPI_Bcast(connection->port_name, MPI_MAX_PORT_NAME, MPI_CHAR, 0, MPI_COMM_WORLD);
-
+  FARB_DBG(VERBOSE_DBG_LEVEL,   "Accept connection for %s", service_name);
   ierr = MPI_Comm_accept(connection->port_name, MPI_INFO_NULL, 0, \
 		MPI_COMM_WORLD, &connection->client);
 
@@ -265,7 +266,7 @@ void conn_serv_unpublish_port(struct server_connection *connection){
   @return 	server			record the server information after the connection
  */
 /*--------------------------------------------------------------------------*/
-struct client_connection* conn_client_connect(const char* service_name, 
+struct client_connection* conn_client_connect(const char* service_name,
 					     MPI_Comm*server) {
   struct client_connection* connection = malloc(sizeof(struct client_connection));
   MPI_Comm_rank(MPI_COMM_WORLD, &connection->client_rank);
@@ -275,10 +276,11 @@ struct client_connection* conn_client_connect(const char* service_name,
   connection->spare_buffer_size = 0;
 
   strncpy(connection->service_name, service_name, 1024);
+   FARB_DBG(VERBOSE_DBG_LEVEL,   "Before lookup name for %s", service_name);
   int ierr = MPI_Lookup_name(connection->service_name, MPI_INFO_NULL, \
 		connection->port_name);
   assert(ierr == MPI_SUCCESS);
-
+ FARB_DBG(VERBOSE_DBG_LEVEL,   "Before connect for %s", service_name);
   ierr = MPI_Comm_connect( connection->port_name, MPI_INFO_NULL, 0, \
 		MPI_COMM_WORLD, &connection->server );
   assert(ierr == MPI_SUCCESS);
@@ -392,7 +394,7 @@ void conn_client_send_data(struct client_connection*connection,
   assert(dest < connection->client_size);
   int ierr = MPI_Send(buffer, len, MPI_BYTE, dest, tag, \
 		connection->server);
-  
+
   assert(ierr == MPI_SUCCESS);
 }
 
@@ -563,9 +565,9 @@ void conn_client_allscatter_nb_data(struct client_connection*connection,
 }
 
 /******************************************************************************/
-/* 
- *  functions used for scale-letkf											  *  
-*/ 
+/*
+ *  functions used for scale-letkf											  *
+*/
 /******************************************************************************/
 
 
@@ -578,7 +580,7 @@ void conn_client_allscatter_nb_data(struct client_connection*connection,
   @param	datatype		datatype of each send buffer element (handle)
   @param	buffer_size		Each process may send a different amount of data (alltoallv)
   @param	recv_count		length for each process in alltoallv
-  @param	axis			(Important) 0 for normal case, and 2 for SCALE-LETKF 
+  @param	axis			(Important) 0 for normal case, and 2 for SCALE-LETKF
   @return	void
  */
 /*--------------------------------------------------------------------------*/
@@ -661,7 +663,7 @@ void pub_client_allscatter_3d_range_data(struct client_connection*connexion,
   @param	datatype		datatype of each send buffer element (handle)
   @param	buffer_size		Each process may send a different amount of data (alltoallv)
   @param	send_count		length for each process in alltoallv
-  @param	axis			(Important) 0 for normal case, and 2 for SCALE-LETKF 
+  @param	axis			(Important) 0 for normal case, and 2 for SCALE-LETKF
   @return	void
  */
 /*--------------------------------------------------------------------------*/
@@ -744,7 +746,7 @@ void pub_server_allscatter_3d_range_data(struct server_connection*connexion,
   @param	datatype		datatype of each send buffer element (handle)
   @param	buffer_size		Each process may send a different amount of data (alltoallv)
   @param	recv_count		length for each process in alltoallv
-  @param	axis			(Important) 0 for normal case, and 1 for SCALE-LETKF 
+  @param	axis			(Important) 0 for normal case, and 1 for SCALE-LETKF
   @return	void
  */
 /*--------------------------------------------------------------------------*/
@@ -780,7 +782,7 @@ void pub_client_allscatter_2d_range_data(struct client_connection*connexion,
   @param	datatype		datatype of each send buffer element (handle)
   @param	buffer_size		Each process may send a different amount of data (alltoallv)
   @param	send_count		length for each process in alltoallv
-  @param	axis			(Important) 0 for normal case, and 1 for SCALE-LETKF 
+  @param	axis			(Important) 0 for normal case, and 1 for SCALE-LETKF
   @return	void
  */
 /*--------------------------------------------------------------------------*/
@@ -1237,9 +1239,9 @@ struct file_buffer * pub_check_in_list(char *file_name){
 
 
 /******************************************************************************/
-/* 
- *  functions used for scale-letkf, and called by Fortran					  *  
-*/ 
+/*
+ *  functions used for scale-letkf, and called by Fortran					  *
+*/
 /******************************************************************************/
 
 /*-------------------------------------------------------------------------*/
@@ -1277,9 +1279,11 @@ void conn_finalize_() {
 /*--------------------------------------------------------------------------*/
 
 void pub_server_connect_(char *service_name){
+ FARB_DBG(VERBOSE_DBG_LEVEL,   "Enter server connect for %s", service_name);
   char port_name[MPI_MAX_PORT_NAME];
   MPI_Comm client;
   server_conn = conn_serv_publish_port(service_name, port_name, &client);
+   FARB_DBG(VERBOSE_DBG_LEVEL,   "Exit server connect for %s", service_name);
 }
 
 
@@ -1292,8 +1296,11 @@ void pub_server_connect_(char *service_name){
 /*--------------------------------------------------------------------------*/
 
 void pub_client_connect_(char *service_name){
+
+  FARB_DBG(VERBOSE_DBG_LEVEL,   "Enter client connect for %s", service_name);
   MPI_Comm server;
   client_conn = conn_client_connect(service_name, &server);
+  FARB_DBG(VERBOSE_DBG_LEVEL,   "Exit client connect for %s", service_name);
 }
 
 
@@ -1315,39 +1322,39 @@ int pub_recv_data_(char *service_name){
     fbuf = search_one_node(i);
     if (fbuf && !strncmp(fbuf->direction, "rd", 2) && (fbuf->client_server_flag == 0)){
 	  	file_len = pub_client_recv_sz();
-		if (file_len % DEFAULT_NODE_BUF_SIZE > 0)
-			loops = file_len/DEFAULT_NODE_BUF_SIZE + 1;
-		else loops = file_len/DEFAULT_NODE_BUF_SIZE;
+		if (file_len % DEFAULT_BUFFER_NODE_SIZE > 0)
+			loops = file_len/DEFAULT_BUFFER_NODE_SIZE + 1;
+		else loops = file_len/DEFAULT_BUFFER_NODE_SIZE;
 
 		for (j = 0; j < loops; j++)
 		{
-          nbuf = malloc(DEFAULT_NODE_BUF_SIZE);
+          nbuf = malloc(DEFAULT_BUFFER_NODE_SIZE);
           if (nbuf == NULL)
             return ENOMEM;
-	
-      	  pub_client_recv_data(nbuf, DEFAULT_NODE_BUF_SIZE);
-		  add_to_buffer_node_list(fbuf, client_conn->mpi_tag/DEFAULT_NODE_BUF_SIZE, nbuf, 1);
-	  	} 
+
+      	  pub_client_recv_data(nbuf, DEFAULT_BUFFER_NODE_SIZE);
+		  add_to_buffer_node_list(fbuf, client_conn->mpi_tag/DEFAULT_BUFFER_NODE_SIZE, nbuf, 1);
+	  	}
 	    fbuf->buffer_pointer = NULL;
         fbuf->buffer_size =file_len;
       }
       else if (!strncmp(fbuf->direction, "rd", 2)){
         file_len = pub_server_recv_sz();
-        if (file_len % DEFAULT_NODE_BUF_SIZE > 0)
-            loops = file_len/DEFAULT_NODE_BUF_SIZE + 1;
-        else loops = file_len/DEFAULT_NODE_BUF_SIZE;
+        if (file_len % DEFAULT_BUFFER_NODE_SIZE > 0)
+            loops = file_len/DEFAULT_BUFFER_NODE_SIZE + 1;
+        else loops = file_len/DEFAULT_BUFFER_NODE_SIZE;
 
         for (j = 0; j < loops; j++)
         {
-          nbuf = malloc(DEFAULT_NODE_BUF_SIZE);
+          nbuf = malloc(DEFAULT_BUFFER_NODE_SIZE);
           if (nbuf == NULL)
             return ENOMEM;
 
-          pub_server_recv_data(nbuf, DEFAULT_NODE_BUF_SIZE);
-          add_to_buffer_node_list(fbuf, client_conn->mpi_tag/DEFAULT_NODE_BUF_SIZE, nbuf, 1);
+          pub_server_recv_data(nbuf, DEFAULT_BUFFER_NODE_SIZE);
+          add_to_buffer_node_list(fbuf, client_conn->mpi_tag/DEFAULT_BUFFER_NODE_SIZE, nbuf, 1);
         }
         fbuf->buffer_pointer = NULL;
-        fbuf->buffer_size =file_len;	
+        fbuf->buffer_size =file_len;
       }
   }
   return ENOERR;
@@ -1375,9 +1382,9 @@ int pub_send_data_(char *service_name){
 
       if (fbuf->client_server_flag == 0){
 		pub_client_send_sz(fbuf->buffer_size);
-		for (j = 0; j < node_size; j++){ 
+		for (j = 0; j < node_size; j++){
 		  if (node && node->dirty_flag){
-		    pub_client_send_data2(node->node_ptr, DEFAULT_NODE_BUF_SIZE, j*DEFAULT_NODE_BUF_SIZE);
+		    pub_client_send_data2(node->node_ptr, DEFAULT_BUFFER_NODE_SIZE, j*DEFAULT_BUFFER_NODE_SIZE);
 	        //printf("client send, node %d is dirty\n", j);
 		  }
 		  node = node->next;
@@ -1387,7 +1394,7 @@ int pub_send_data_(char *service_name){
 		pub_server_send_sz(fbuf->buffer_size);
         for (j = 0; j < node_size; j++){
           if (node && node->dirty_flag){
-            pub_server_send_data2(node->node_ptr, DEFAULT_NODE_BUF_SIZE, j*DEFAULT_NODE_BUF_SIZE);
+            pub_server_send_data2(node->node_ptr, DEFAULT_BUFFER_NODE_SIZE, j*DEFAULT_BUFFER_NODE_SIZE);
 			//printf("server_send, node %d is dirty\n", j);
 		  }
           node = node->next;
@@ -1398,7 +1405,7 @@ int pub_send_data_(char *service_name){
   //gettimeofday(&tv[1], NULL);
   //printf("SEND TIME: %ld\n", (tv[1].tv_sec - tv[0].tv_sec) * 1000000 + \
 		 tv[1].tv_usec - tv[0].tv_usec);
-  return ENOERR; 
+  return ENOERR;
 }
 
 /*-------------------------------------------------------------------------*/
@@ -1419,20 +1426,20 @@ int pub_recv_data1_(char *service_name){
   char *local_buffer = NULL;
 
   size = pub_client_recv_sz();
-  
+
   if (size != 0){
   	local_buffer =  malloc(size);
   	if (local_buffer == NULL)
   		return ENOMEM;
   	pub_client_recv_data(local_buffer, size);
   }
-   
+
   handle = dlopen("../../hack.so", RTLD_LAZY);
   if (!handle) {
 	fprintf(stderr, "%s\n", dlerror());
 	exit(EXIT_FAILURE);
   }
-  func_set_address = (void(*)(char *)) dlsym(handle, "set_address"); 
+  func_set_address = (void(*)(char *)) dlsym(handle, "set_address");
   func_set_address(local_buffer);
   func_set_size = (void(*)(int)) dlsym(handle, "set_size");
   func_set_size(size);
@@ -1456,26 +1463,26 @@ int pub_send_data1_(char *service_name){
   int size;
   char* (*func_get_address)(void) = NULL;
   int (*func_get_size)(void) = NULL;
-  
-  handle = dlopen("../../hack.so", RTLD_LAZY); 
+
+  handle = dlopen("../../hack.so", RTLD_LAZY);
   if (!handle) {
 	fprintf(stderr, "%s\n", dlerror());
 	exit(EXIT_FAILURE);
   }
 
-  func_get_address = (char* (*)(void)) dlsym(handle, "get_address"); 
+  func_get_address = (char* (*)(void)) dlsym(handle, "get_address");
   my_buf = func_get_address();
 
   func_get_size = (int(*)(void)) dlsym(handle, "get_size");
   size = func_get_size();
-  
+
   pub_server_send_sz(size);
   if (size != 0)
   	pub_server_send_data(my_buf, size);
   dlclose(handle);
-  
+
   /* free the buffer of the send processes */
-  
+
   if (my_buf != NULL && size !=0)
   	free(my_buf);
   return size;

@@ -14,20 +14,20 @@ int save_to_buffer_node(struct file_buffer *fbuf, \
     struct buffer_node *node;
     while (remain)
     {
-        avail_buf = DEFAULT_NODE_BUF_SIZE - offset % DEFAULT_NODE_BUF_SIZE;
+        avail_buf = DEFAULT_BUFFER_NODE_SIZE - offset % DEFAULT_BUFFER_NODE_SIZE;
         tocpy = remain > avail_buf ? avail_buf : remain;
-        node = search_buffer_node(fbuf, offset/DEFAULT_NODE_BUF_SIZE, NULL);
+        node = search_buffer_node(fbuf, offset/DEFAULT_BUFFER_NODE_SIZE, NULL);
         if (node != NULL){
-            memcpy(node->node_ptr + offset % DEFAULT_NODE_BUF_SIZE, data, tocpy);
+            memcpy(node->node_ptr + offset % DEFAULT_BUFFER_NODE_SIZE, data, tocpy);
             node->dirty_flag = 1;
         }
         else{
-            char *nbuf = malloc(DEFAULT_NODE_BUF_SIZE);
+            char *nbuf = malloc(DEFAULT_BUFFER_NODE_SIZE);
             if (nbuf == NULL)
                 return ENOMEM;
-            memset(nbuf, 0, DEFAULT_NODE_BUF_SIZE);
-            memcpy(nbuf + offset % DEFAULT_NODE_BUF_SIZE, data, tocpy);
-            add_to_buffer_node_list(fbuf, offset/DEFAULT_NODE_BUF_SIZE, nbuf, 1);
+            memset(nbuf, 0, DEFAULT_BUFFER_NODE_SIZE);
+            memcpy(nbuf + offset % DEFAULT_BUFFER_NODE_SIZE, data, tocpy);
+            add_to_buffer_node_list(fbuf, offset/DEFAULT_BUFFER_NODE_SIZE, nbuf, 1);
         }
         data += tocpy;
         remain -= tocpy;
@@ -46,11 +46,11 @@ int read_from_buffer_node(struct file_buffer *fbuf, \
     struct buffer_node *node;
     while (remain)
     {
-        avail_buf = DEFAULT_NODE_BUF_SIZE - offset % DEFAULT_NODE_BUF_SIZE;
+        avail_buf = DEFAULT_BUFFER_NODE_SIZE - offset % DEFAULT_BUFFER_NODE_SIZE;
         tocpy = remain > avail_buf ? avail_buf : remain;
-        node = search_buffer_node(fbuf, offset/DEFAULT_NODE_BUF_SIZE, NULL);
+        node = search_buffer_node(fbuf, offset/DEFAULT_BUFFER_NODE_SIZE, NULL);
         if (node != NULL){
-            memcpy(data, node->node_ptr + offset % DEFAULT_NODE_BUF_SIZE, tocpy);
+            memcpy(data, node->node_ptr + offset % DEFAULT_BUFFER_NODE_SIZE, tocpy);
         }
         else{
             data = NULL;
@@ -71,23 +71,23 @@ int flush_data_to_disk(char *file_name, struct file_buffer *fbuf){
     fseek(f, 0, SEEK_END);
     fseek(f, 0, SEEK_SET);
     while (node != NULL){
-        if (node->next == NULL && fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE > 0){
-            ret = fwrite(node->node_ptr, 1, fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE, f);
-            if(ret != fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE){
+        if (node->next == NULL && fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE > 0){
+            ret = fwrite(node->node_ptr, 1, fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE, f);
+            if(ret != fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE){
                 printf("\n fwrite() failed\n");
                 fclose(f);
                 return -1;
             }
         }
         else{
-            ret = fwrite(node->node_ptr, 1, DEFAULT_NODE_BUF_SIZE, f);
-            if(ret != DEFAULT_NODE_BUF_SIZE){
+            ret = fwrite(node->node_ptr, 1, DEFAULT_BUFFER_NODE_SIZE, f);
+            if(ret != DEFAULT_BUFFER_NODE_SIZE){
                 printf("\n fwrite() failed\n");
                 fclose(f);
                 return -1;
             }
 
-            if(0 != fseek(f, DEFAULT_NODE_BUF_SIZE, SEEK_CUR)){
+            if(0 != fseek(f, DEFAULT_BUFFER_NODE_SIZE, SEEK_CUR)){
                 printf("\n fseek() failed\n");
                 fclose(f);
                 return -1;
@@ -107,19 +107,19 @@ int copy_buffer_file(struct file_buffer *src_fbuf, struct file_buffer *dst_fbuf)
     dst_fbuf->buffer_size = src_fbuf->buffer_size;
     int i = 0;
     while (node != NULL){
-        if (node->next == NULL && src_fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE > 0){
-            nbuf = malloc(src_fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE);
+        if (node->next == NULL && src_fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE > 0){
+            nbuf = malloc(src_fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE);
             if (nbuf==NULL)
                 return ENOMEM;
 
-            memcpy(nbuf, node->node_ptr, src_fbuf->buffer_size % DEFAULT_NODE_BUF_SIZE);
+            memcpy(nbuf, node->node_ptr, src_fbuf->buffer_size % DEFAULT_BUFFER_NODE_SIZE);
         }
         else{
-            nbuf = malloc(DEFAULT_NODE_BUF_SIZE);
+            nbuf = malloc(DEFAULT_BUFFER_NODE_SIZE);
             if (nbuf==NULL)
                 return ENOMEM;
 
-            memcpy(nbuf, node->node_ptr, DEFAULT_NODE_BUF_SIZE);
+            memcpy(nbuf, node->node_ptr, DEFAULT_BUFFER_NODE_SIZE);
         }
         add_to_buffer_node_list(dst_fbuf, i, nbuf, 1);
         node = node->next;
@@ -140,7 +140,7 @@ struct buffer_node* create_buffer_node_list(struct file_buffer *filebuf, int off
 	ptr->node_ptr = bptr;
 	ptr->dirty_flag = 0;
 	ptr->next = NULL;
-	filebuf->buffer_list = ptr; 
+	filebuf->buffer_list = ptr;
 	buffer_node_curr = ptr;
 	return ptr;
 }
@@ -168,7 +168,7 @@ struct buffer_node* add_to_buffer_node_list(\
 	buffer_node_curr = filebuf->buffer_list;
 	while (buffer_node_curr->next != NULL)
 		buffer_node_curr = buffer_node_curr->next;
-	
+
 	if(add_to_end)
 	{
 		buffer_node_curr->next = ptr;
@@ -223,7 +223,7 @@ int delete_buffer_node_list(struct file_buffer *filebuf){
 			free(ptr->node_ptr);
 
 		free(ptr);
-		ptr = buffer_node_curr;			   
+		ptr = buffer_node_curr;
 	}
 	filebuf->buffer_list = NULL;
 	return 0;
@@ -331,7 +331,7 @@ struct file_buffer* search_in_list(char * file_path, struct file_buffer **prev)
             ptr = ptr->next;
         }
     }
-    
+
     if(found)
     {
         if(prev)
@@ -428,7 +428,7 @@ int delete_list(void)
 struct file_buffer* match_in_list(char * file_path)
 {
     struct file_buffer *ptr = head;
-    struct file_buffer *tmp = NULL;
+   // struct file_buffer *tmp = NULL;
     int found = 0;
 
     while(ptr != NULL)
@@ -445,7 +445,7 @@ struct file_buffer* match_in_list(char * file_path)
 	}
 	else
 	{
-            tmp = ptr;
+           // tmp = ptr;
             ptr = ptr->next;
         }
     }

@@ -6,33 +6,33 @@
 #ifndef LINKED_LIST_H
 #define LINKED_LIST_H
 
-#define DEFAULT_NODE_BUF_SIZE (4*1024*1024)
-
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 
-typedef struct buffer_node{
-	int offset_start;
-	char *node_ptr;
-  	int dirty_flag;
-	struct buffer_node *next;
-}node_buffer_t;
+#include "farb_file_buffer.h"
 
-struct file_buffer{
-  char file_path[1024];         /* path of the file */
-  char *buffer_pointer;         /* pointer of the buffer */
-  struct buffer_node *buffer_list; /* buffer node list */
-  int buffer_size;              /* size of the buffer */
-  char service_name[1024];		/* service name */
-  char direction[8];			/* direction of send & recv */
-  char alias_name[1024];		/* alias name for the file */
-  int client_server_flag;
-  int files_cnt;
-  struct file_buffer *next;     /* pointer to the next record */
-};
+//typedef struct buffer_node{
+//	int offset_start;
+//	char *node_ptr;
+//  	int dirty_flag;
+//	struct buffer_node *next;
+//}node_buffer_t;
+
+//struct file_buffer{
+//  char file_path[1024];         /* path of the file */
+//  char *buffer_pointer;         /* pointer of the buffer */
+//  struct buffer_node *buffer_list; /* buffer node list */
+//  int buffer_size;              /* size of the buffer */
+//  char service_name[1024];		/* service name */
+//  char direction[8];			/* direction of send & recv */
+//  char alias_name[1024];		/* alias name for the file */
+//  int client_server_flag;
+//  int files_cnt;
+//  struct file_buffer *next;     /* pointer to the next record */
+//};
 
 int save_to_buffer_node(struct file_buffer *fbuf, \
                 int offset, int size, char * data);

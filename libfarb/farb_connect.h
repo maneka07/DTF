@@ -20,7 +20,7 @@
 #include <semaphore.h>
 #include <pthread.h>
 
-//#define DEFAULT_NODE_BUF_SIZE (8*1024*1024)
+//#define DEFAULT_BUFFER_NODE_SIZE (8*1024*1024)
 
 
 struct server_connection{
@@ -89,7 +89,7 @@ void conn_init_();
 void conn_finalize_();
 
 /* wait for a connection */
-struct server_connection* conn_serv_publish_port(const char * service_name, 
+struct server_connection* conn_serv_publish_port(const char * service_name,
 					char *port_name, MPI_Comm *client);
 
 /* close a connection */
@@ -104,8 +104,8 @@ void conn_client_disconnect(struct client_connection*connection);
 
 
 /* receive data from a server
- * (Currently for SYNC between server and client) 
- * should be replaced with netCDF related function 
+ * (Currently for SYNC between server and client)
+ * should be replaced with netCDF related function
  */
 void conn_client_recv_data(struct client_connection*connection,
 			   void* buffer,
@@ -113,9 +113,9 @@ void conn_client_recv_data(struct client_connection*connection,
 			   int tag,
 			   int src);
 
-/* send data to a client 
- * (Currently for SYNC between server and client) 
- * should be replaced with netCDF related function 
+/* send data to a client
+ * (Currently for SYNC between server and client)
+ * should be replaced with netCDF related function
  */
 void conn_server_send_data(struct server_connection*connection,
 			   void* buffer,
