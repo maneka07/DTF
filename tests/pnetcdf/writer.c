@@ -71,7 +71,7 @@
 #include <mpi.h>
 #include <pnetcdf.h>
 
-#include "farb.h"
+#include "pfarb.h"
 
 #define NY 3
 #define NX 2
@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
     ERR
     err = ncmpi_enddef(ncid);
     ERR
-
+    printf("app %d: finished def\n", rank); 
     /* First, fill the entire array with zeros, using a blocking I/O.
        Every process writes a subarray of size NY * myNX */
     buf    = (int**) malloc(myNX * sizeof(int*));
@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
     count[0] = NY;  count[1] = myNX;
     err = ncmpi_put_vara_int_all(ncid, varid, start, count, buf[0]);
     free(buf[0]);
-
+    printf("app %d: finished init\n", rank); 
     /* initialize the buffer with rank ID. Also make the case interesting,
        by allocating buffers separately */
     for (i=0; i<myNX; i++) {
@@ -194,10 +194,9 @@ int main(int argc, char** argv) {
         else
             start[1]++;
     }
-
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts);
     ERR
-
+      printf("app %d: finished write\n", rank);
     /* check status of all requests */
     for (i=0; i<num_reqs; i++)
         if (sts[i] != NC_NOERR)

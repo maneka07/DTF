@@ -10,11 +10,6 @@
 #define VERBOSE_DBG_LEVEL    2
 #define VERBOSE_ALL_LEVEL    3
 
-#define IO_MODE_UNDEFINED   -1
-#define IO_MODE_FILE         0
-#define IO_MODE_MEMORY       1
-
-
 #define FARB_TIMEOUT       1200 /* it's long because letkf and obs are hanging for a long time before they get data from scale*/
 
 #include <string.h>

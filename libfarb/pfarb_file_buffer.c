@@ -1,9 +1,10 @@
-#include "farb_file_buffer.h"
+#include "pfarb_file_buffer.h"
+#include "pfarb.h"
 #include <assert.h>
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path)
 {
     struct file_buffer *ptr = buflist;
-//    FARB_DBG(VERBOSE_DBG_LEVEL,   "Will search for %s", file_path);
+
     while(ptr != NULL)
     {
         if(strstr(file_path, ptr->file_path) != NULL || ( strlen(ptr->alias_name) != 0 && strstr(file_path, ptr->alias_name) != NULL) )
@@ -11,10 +12,21 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path)
 
         ptr = ptr->next;
     }
-//    if(ptr==NULL)
-//        FARB_DBG(VERBOSE_DBG_LEVEL,   "File %s not found", file_path);
-//    else
-//        FARB_DBG(VERBOSE_DBG_LEVEL,   "File found %s", ptr->file_path);
+
+    return ptr;
+}
+
+farb_var_t* find_var(farb_var_t* varlist, int varid)
+{
+    farb_var_t *ptr = varlist;
+
+    while(ptr != NULL)
+    {
+        if(ptr->id == varid)
+            break;
+
+        ptr = ptr->next;
+    }
 
     return ptr;
 }
@@ -31,10 +43,23 @@ void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
     }
 }
 
+static void delete_var(farb_var_t *var)
+{
+    long long unsigned i;
+
+    for(i = 0; i< var->bufnode_cnt; i++){
+        if(var->bufnodes[i].data != NULL)
+            free(var->bufnodes[i].data);
+    }
+
+    free(var);
+}
+
 void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
 {
-    int i;
+
     file_buffer_t *prev;
+    farb_var_t    *var, *tmp;
     if(buf == NULL)
         return;
 
@@ -43,11 +68,16 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
     if(buf->reader_ids != NULL)
         free(buf->reader_ids);
 
-    for(i = 0; i < buf->node_cnt; i++){
-        free(buf->nodes_tbl[i].data);
+    if(buf->header != NULL)
+        free(buf->header);
+
+    var = buf->vars;
+    while(var != NULL){
+        tmp = var->next;
+        delete_var(var);
+        var = tmp;
     }
-    if(buf->nodes_tbl != NULL)
-        free(buf->nodes_tbl);
+
     if(*buflist == buf)
         *buflist = buf->next;
     else{
@@ -77,14 +107,41 @@ file_buffer_t* new_file_buffer()
         buf->nreaders = 0;
         buf->is_ready = 0;
         buf->transfered = 0;
-        buf->nodes = NULL;
-        buf->data_sz = 0;
-        buf->node_cnt = 0;
-        buf->nodes_tbl = NULL;
-        buf->mode = IO_MODE_UNDEFINED;
+        buf->vars = NULL;
+        buf->header = NULL;
+        buf->hdr_sz = 0;
+        buf->mode = FARB_IO_MODE_UNDEFINED;
     } else {
         FARB_DBG(VERBOSE_ERROR_LEVEL,   "Error allocating memory");
     }
 
     return buf;
 }
+
+farb_var_t* new_var(int varid, int ndims, MPI_Offset *shape)
+{
+    int i;
+    farb_var_t *var = malloc(sizeof(farb_var_t));
+    assert(var!=NULL);
+
+    /*Initialize whatever we can initialize at this stage*/
+    var->bufnodes = NULL;
+    var->bufnode_cnt = 0;
+    var->id = varid;
+    var->begin = -1;
+    if(ndims > 0){ //non scalar
+        var->shape = (MPI_Offset*)malloc(ndims*sizeof(MPI_Offset));
+        for(i=0; i<ndims;i++)
+            var->shape[i] = shape[i];
+    }
+    else
+        var->shape = NULL;
+
+    var->ndims = ndims;
+    var->next = NULL;
+    var->type = MPI_DATATYPE_NULL;
+    var->xsz = 0;
+    return var;
+}
+
+

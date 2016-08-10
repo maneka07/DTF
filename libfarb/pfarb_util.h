@@ -4,8 +4,8 @@
 #include <stdlib.h>
 #include <errno.h>
 
-#include "farb_common.h"
-#include "farb_file_buffer.h"
+#include "pfarb_common.h"
+#include "pfarb_file_buffer.h"
 
 #define FILE_READY_TAG  0
 #define RECV_READY_TAG  1
@@ -29,7 +29,7 @@ typedef struct component{
 }component_t;
 
 typedef struct farb_settings{
-    size_t node_sz;         /*Size of a node of memory buffer*/
+    MPI_Offset node_sz;         /*Size of a node of memory buffer*/
     int msg_sz;             /*MPI message size for transfering the data. Should be a divisor for node_sz.*/
 }farb_settings_t;
 
@@ -42,14 +42,14 @@ typedef struct msg_ready_notif{
 MPI_Datatype msg_ready_datatype;
 
 int load_config(const char *ini_name, const char *service_name);
-//void print_config();
 void clean_config();
 
 int init_comp_comm();
 void finalize_comp_comm();
 
-size_t mem_write(const char* filename, off_t const offset, const size_t data_sz, void *const data);
-size_t mem_read(const char* filename, off_t const offset, const size_t data_sz, void *const data);
+MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data);
+MPI_Offset mem_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data);
+
 int get_read_flag(const char* filename);
 int get_write_flag(const char* filename);
 int get_io_mode(const char* filename);
@@ -58,4 +58,8 @@ void notify_file_ready(const char* filename);
 void notify_recv_ready(const char* filename);
 void close_file(const char* filename);
 int file_buffer_ready(const char* filename);
+void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header);
+MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
+int def_var(const char* filename, int varid, int ndims, MPI_Offset *shape);
+MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *start, const MPI_Offset *count, const MPI_Offset *stride, const MPI_Offset *imap, MPI_Datatype dtype, void *buf, int rw_flag);
 #endif

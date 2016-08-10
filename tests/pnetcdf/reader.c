@@ -71,7 +71,7 @@
 #include <mpi.h>
 #include <pnetcdf.h>
 
-#include "farb.h"
+#include "pfarb.h"
 
 #define NY 3
 #define NX 2
@@ -134,6 +134,8 @@ int main(int argc, char** argv) {
     err = ncmpi_inq_varid(ncid, "var", &varid);
     ERR
 
+      printf("app %d: varid %d, dim0 len %lld, dim1 len %lld\n", rank, varid, global_ny, global_nx);
+      
     /* initialize the buffer with -1, so a read error can be pinpointed */
     buf    = (int**) malloc(myNX * sizeof(int*));
     buf[0] = (int*)  malloc(global_ny * myNX * sizeof(int));
@@ -183,7 +185,7 @@ int main(int argc, char** argv) {
     for (i=0; i<myNX; i++) {
         for (j=0; j<global_ny; j++)
             if (buf[i][j] != rank+10) {
-                printf("Read contents mismatch at buf[%d][%d] = %d (should be %d)\n", i,j,buf[i][j],rank+10);
+	      printf("%d: Read contents mismatch at buf[%d][%d] = %d (should be %d)\n", rank, i,j,buf[i][j],rank+10);
             }
     }
 

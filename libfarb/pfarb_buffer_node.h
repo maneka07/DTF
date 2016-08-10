@@ -9,13 +9,8 @@
 
 typedef struct buffer_node{
 
-    char* data;
-    size_t data_sz;
-    //TODO remove all the rest
-	int offset_start;
-	char *node_ptr;
-  	int dirty_flag;
-	struct buffer_node *next;
+    void* data;
+    MPI_Offset data_sz;
 }buffer_node_t;
 
 #endif /*BUFFER_NODE_H_INCLUDED

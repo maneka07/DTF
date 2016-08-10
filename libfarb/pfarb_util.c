@@ -8,7 +8,8 @@
 #include <string.h>
 #include <mpi.h>
 #include <unistd.h>
-#include "farb_util_new.h"
+#include "pfarb_util.h"
+#include "pfarb.h"
 
 struct file_buffer * gl_filebuf_list = NULL;
 struct component *gl_comps = NULL;
@@ -103,13 +104,13 @@ static void print_config(){
         for(i = 0; i < fb->nreaders; i++)
             FARB_DBG(VERBOSE_DBG_LEVEL,   "%s, ", gl_comps[(fb->reader_ids)[i]].name);
         switch(fb->mode){
-            case IO_MODE_UNDEFINED:
+            case FARB_IO_MODE_UNDEFINED:
                 FARB_DBG(VERBOSE_DBG_LEVEL,   "I/O mode: undefined ");
                 break;
-            case IO_MODE_FILE:
+            case FARB_IO_MODE_FILE:
                 FARB_DBG(VERBOSE_DBG_LEVEL,   "I/O mode: file i/o ");
                 break;
-            case IO_MODE_MEMORY:
+            case FARB_IO_MODE_MEMORY:
                 FARB_DBG(VERBOSE_DBG_LEVEL,   "I/O mode: direct transfer ");
                 break;
             default:
@@ -129,7 +130,7 @@ static int check_config()
 
     while(fbuf!= NULL){
 
-        if(fbuf->mode == IO_MODE_UNDEFINED){
+        if(fbuf->mode == FARB_IO_MODE_UNDEFINED){
             FARB_DBG(VERBOSE_ERROR_LEVEL,   " FARB Error: I/O mode for file %s underfined", fbuf->file_path);
             return 1;
         }
@@ -302,9 +303,9 @@ int load_config(const char *ini_name, const char *comp_name){
             assert(cur_fb != NULL);
 
             if(strcmp(value, "file") == 0)
-                cur_fb->mode = IO_MODE_FILE;
+                cur_fb->mode = FARB_IO_MODE_FILE;
             else if(strcmp(value, "memory") == 0)
-                cur_fb->mode = IO_MODE_MEMORY;
+                cur_fb->mode = FARB_IO_MODE_MEMORY;
 
         } else {
             FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: unknown parameter %s.", param);
@@ -500,10 +501,6 @@ int init_comp_comm(){
     if(gl_comps == NULL || gl_ncomp == 1)
         return 0;
 
-
-    if(gl_my_rank != 0)
-        gl_verbose = VERBOSE_NONE; //only roots will print as do not want to pollute the output
-
     s = getenv("FARB_GLOBAL_PATH");
     if(s == NULL){
         FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: please set FARB_GLOBAL_PATH.");
@@ -605,121 +602,101 @@ int file_buffer_ready(const char* filename)
 }
 
 
-size_t mem_write(const char* filename, off_t const offset, const size_t data_sz, void *const data)
+MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data)
 {
-    unsigned int node_id, last_node_id;
-    size_t node_offt, to_cpy, copied=0;
+    MPI_Offset node_id, last_node_id;
+
+    MPI_Offset node_offt, to_cpy, copied=0;
     int i;
 
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
-    if(fbuf == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: farb_write called for %s but this file is not listed in the FARB configuration file.", filename);
-        assert(0);
-    }
+    FARB_DBG(VERBOSE_DBG_LEVEL,   "Will write %llu bytes to var %d at offt %llu", data_sz, var->id, offset);
 
-    if(!(fbuf->write_flag && fbuf->mode==IO_MODE_MEMORY)){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Warning: farb_write called for %s but this file is not subject to direct transfer.", filename);
-        return 0;
-    }
-
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Will write %d bytes to %s at offt %d, ", (int)data_sz, filename, (int)offset);
-    last_node_id = (unsigned int)( ((size_t)offset + data_sz) / gl_sett.node_sz);
-    if(( (size_t)offset + data_sz) % gl_sett.node_sz > 0)
+    last_node_id = (offset + data_sz) / gl_sett.node_sz;
+    if( (offset + data_sz) % gl_sett.node_sz > 0)
         last_node_id++;
 
-    if(last_node_id > fbuf->node_cnt){
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Will allocate %d nodes", last_node_id - fbuf->node_cnt);
-        fbuf->nodes_tbl = (buffer_node_t*)realloc(fbuf->nodes_tbl, last_node_id * sizeof(buffer_node_t));
-        assert(fbuf->nodes_tbl != NULL);
-        for(i = fbuf->node_cnt; i < last_node_id; i++){
-            fbuf->nodes_tbl[i].data = NULL;
-            fbuf->nodes_tbl[i].data_sz = 0;
+    if(last_node_id > var->bufnode_cnt){
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Will allocate %llu nodes", last_node_id - var->bufnode_cnt);
+        var->bufnodes = realloc(var->bufnodes, last_node_id * sizeof(buffer_node_t));
+        assert(var->bufnodes != NULL);
+
+        for(i = var->bufnode_cnt; i < last_node_id; i++){
+            var->bufnodes[i].data = NULL;
+            var->bufnodes[i].data_sz = 0;
         }
 
-        fbuf->node_cnt = last_node_id;
+        var->bufnode_cnt = last_node_id;
     }
 
     while(copied != data_sz){
-        node_id = (unsigned int)( ( (size_t)offset + copied ) / gl_sett.node_sz );
-        node_offt =( (size_t)offset + copied ) % gl_sett.node_sz;
+        node_id = ( offset + copied ) / gl_sett.node_sz ;
+        node_offt = ( offset + copied ) % gl_sett.node_sz;
 
         if(data_sz < gl_sett.node_sz - node_offt)
             to_cpy = data_sz;
         else
             to_cpy = gl_sett.node_sz - node_offt;
 
-        if(fbuf->nodes_tbl[node_id].data == NULL){
-            fbuf->nodes_tbl[node_id].data = (char*)malloc(gl_sett.node_sz);
-            assert(fbuf->nodes_tbl[node_id].data != NULL);
+        if(var->bufnodes[node_id].data == NULL){
+            var->bufnodes[node_id].data = (void*)malloc(gl_sett.node_sz);
+            assert(var->bufnodes[node_id].data != NULL);
         }
-        memcpy( fbuf->nodes_tbl[node_id].data+node_offt, (char*)(data+copied), to_cpy );
+        memcpy( (void*)(var->bufnodes[node_id].data+node_offt), (void*)(data+copied), to_cpy );
         copied += to_cpy;
     }
-    if(offset+data_sz > fbuf->data_sz)
-        fbuf->data_sz = offset+data_sz;
-
+    if(offset+data_sz > var->data_sz)
+        var->data_sz = offset+data_sz;
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Leave mem_write");
     return copied;
 }
 
-size_t mem_read(const char* filename, off_t const offset, const size_t data_sz, void *const data)
+MPI_Offset mem_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data)
 {
 
-    size_t copied = 0, node_offt, to_cpy;
-    size_t new_data_sz = data_sz;
-    unsigned int node_id;
+    MPI_Offset copied = 0, node_offt, to_cpy;
+    MPI_Offset new_data_sz = data_sz;
+    MPI_Offset node_id;
 
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
-    if(fbuf == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: farb_read called for %s but this file is not listed in the FARB configuration file.", filename);
-        goto panic_exit;
-    }
+    FARB_DBG(VERBOSE_DBG_LEVEL, "mem_read at offt %ld of size %lu", (long int)offset, (long unsigned)data_sz);
 
-    if(!(fbuf->read_flag && fbuf->mode == IO_MODE_MEMORY)){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Warning: farb_read called for %s but this file is not subject to direct transfer.", filename);
+  //  FARB_DBG(VERBOSE_DBG_LEVEL, "Will read %ld from offt %ld (file sz %ld)", data_sz, offset, fbuf->data_sz);
+    if(offset > var->data_sz){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: ps tries to read %llu from offt %llu but file sz is %llu", data_sz, offset, var->data_sz);
         return 0;
     }
 
-    assert(fbuf->is_ready);
-
-  //  FARB_DBG(VERBOSE_DBG_LEVEL, "Will read %ld from offt %ld (file sz %ld)", data_sz, offset, fbuf->data_sz);
-
-    if(offset + data_sz > fbuf->data_sz){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: ps tries to read %ld from offt %ld but file sz is %ld)", data_sz, offset, fbuf->data_sz);
-        new_data_sz = fbuf->data_sz - offset;
+    if(offset + data_sz > var->data_sz){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: ps tries to read %llu from offt %llu but file sz is %llu", data_sz, offset, var->data_sz);
+        new_data_sz = var->data_sz - offset;
     }
 
     while(copied != new_data_sz){
-        node_id = (unsigned int)( ( (size_t)offset + copied ) / gl_sett.node_sz );
-        node_offt =( (size_t)offset + copied ) % gl_sett.node_sz;
+        node_id =  ( offset + copied ) / gl_sett.node_sz;
+        node_offt =( offset + copied ) % gl_sett.node_sz;
 
         if(new_data_sz - copied < gl_sett.node_sz)
             to_cpy = new_data_sz - copied;
         else
             to_cpy = gl_sett.node_sz - node_offt;
 
-        assert(fbuf->nodes_tbl[node_id].data != NULL);
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Will copy %ld from node %u oft %ld to offt %ld", to_cpy, node_id, node_offt, copied );
-        memcpy( (char*)(data+copied), fbuf->nodes_tbl[node_id].data+node_offt, to_cpy );
+        assert(var->bufnodes[node_id].data != NULL);
+        //FARB_DBG(VERBOSE_DBG_LEVEL, "Will copy %ld from node %u oft %ld to offt %ld", to_cpy, node_id, node_offt, copied );
+        memcpy( (void*)(data+copied), (void*)(var->bufnodes[node_id].data+node_offt), to_cpy );
         copied += to_cpy;
     }
 
     return copied;
-panic_exit:
-
-    return 0;
 }
 
 void progress_io()
 {
     MPI_Status status;
-    int i,j, flag, src, errno;
-    unsigned int node_id;
+    int i, flag, src, errno;
     char filename[MAX_FILE_NAME];
-    unsigned int nnodes;
     file_buffer_t *fbuf;
-    unsigned int nexpect_msg, nmsg = 0;
+ //   unsigned int nexpect_msg, nmsg = 0;
     struct msg_ready_notif msg_ready;
-    off_t node_offt;
+ //   off_t node_offt;
 
     for(i = 0; i < gl_ncomp; i++){
         if( i == gl_my_comp_id || gl_comps[i].intercomm == MPI_COMM_NULL)
@@ -742,53 +719,53 @@ void progress_io()
                 fbuf = find_file_buffer(gl_filebuf_list, msg_ready.filename);
                 assert(fbuf != NULL);
 
-                if(fbuf->mode == IO_MODE_MEMORY){
-                    if(msg_ready.file_sz == 0){
-                        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Warning: size of file %s is zero", msg_ready.filename );
-                        fbuf->is_ready = 1;
-                        return;
-                    }
-
-                    //allocate memory to receive
-                    nnodes = (unsigned int)( msg_ready.file_sz / gl_sett.node_sz);
-                    if( msg_ready.file_sz % gl_sett.node_sz > 0)
-                        nnodes++;
-
-                    assert(fbuf->nodes_tbl == NULL);
-                    fbuf->nodes_tbl = (buffer_node_t*)malloc(nnodes * sizeof(buffer_node_t));
-                    assert(fbuf->nodes_tbl != NULL);
-
-                    fbuf->node_cnt = nnodes;
-                    for(j = 0; j < fbuf->node_cnt; j++){
-                        fbuf->nodes_tbl[j].data = malloc(gl_sett.node_sz);
-                        assert(fbuf->nodes_tbl[j].data !=NULL);
-                        fbuf->nodes_tbl[j].data_sz = 0;
-                    }
-
-                    FARB_DBG(VERBOSE_DBG_LEVEL, "Notify that I am ready to receive");
-                    //notify the file writer that we are ready to receive the data
-                    errno = MPI_Send(msg_ready.filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].intercomm);
-                    assert(errno==MPI_SUCCESS);
-
-                    nexpect_msg = (unsigned int)(msg_ready.file_sz / gl_sett.msg_sz);
-                    if( msg_ready.file_sz  % gl_sett.msg_sz > 0)
-                        nexpect_msg++;
-                    FARB_DBG(VERBOSE_DBG_LEVEL, "Expect to receive %d messages", nexpect_msg);
-                    //TODO remove data_sz in buffer nodes
-                    //receive the actual file
-                    node_id = 0;
-                    nmsg = 0;
-                    while(nmsg != nexpect_msg){
-                        node_offt = (nmsg % (unsigned int)(gl_sett.node_sz / gl_sett.msg_sz)) * (size_t)gl_sett.msg_sz;
-
-                        errno = MPI_Recv(fbuf->nodes_tbl[node_id].data + node_offt, gl_sett.msg_sz, MPI_CHAR, src, DATA_TAG+nmsg, gl_comps[i].intercomm, &status);
-                        assert(errno == MPI_SUCCESS);
-                        nmsg++;
-                        node_id = (unsigned int)((gl_sett.msg_sz*nmsg) / gl_sett.node_sz);
-                        FARB_DBG(VERBOSE_DBG_LEVEL, "Received %d", nmsg);
-                    }
-
-                    fbuf->data_sz = (size_t)msg_ready.file_sz;
+                if(fbuf->mode == FARB_IO_MODE_MEMORY){
+//                    if(msg_ready.file_sz == 0){
+//                        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Warning: size of file %s is zero", msg_ready.filename );
+//                        fbuf->is_ready = 1;
+//                        return;
+//                    }
+//
+//                    //allocate memory to receive
+//                    nnodes = (unsigned int)( msg_ready.file_sz / gl_sett.node_sz);
+//                    if( msg_ready.file_sz % gl_sett.node_sz > 0)
+//                        nnodes++;
+//
+//                    assert(fbuf->nodes_tbl == NULL);
+//                    fbuf->nodes_tbl = (buffer_node_t*)malloc(nnodes * sizeof(buffer_node_t));
+//                    assert(fbuf->nodes_tbl != NULL);
+//
+//                    fbuf->node_cnt = nnodes;
+//                    for(j = 0; j < fbuf->node_cnt; j++){
+//                        fbuf->nodes_tbl[j].data = malloc(gl_sett.node_sz);
+//                        assert(fbuf->nodes_tbl[j].data !=NULL);
+//                        fbuf->nodes_tbl[j].data_sz = 0;
+//                    }
+//
+//                    FARB_DBG(VERBOSE_DBG_LEVEL, "Notify that I am ready to receive");
+//                    //notify the file writer that we are ready to receive the data
+//                    errno = MPI_Send(msg_ready.filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].intercomm);
+//                    assert(errno==MPI_SUCCESS);
+//
+//                    nexpect_msg = (unsigned int)(msg_ready.file_sz / gl_sett.msg_sz);
+//                    if( msg_ready.file_sz  % gl_sett.msg_sz > 0)
+//                        nexpect_msg++;
+//                    FARB_DBG(VERBOSE_DBG_LEVEL, "Expect to receive %d messages", nexpect_msg);
+//                    //TODO remove data_sz in buffer nodes
+//                    //receive the actual file
+//                    node_id = 0;
+//                    nmsg = 0;
+//                    while(nmsg != nexpect_msg){
+//                        node_offt = (nmsg % (unsigned int)(gl_sett.node_sz / gl_sett.msg_sz)) * (size_t)gl_sett.msg_sz;
+//
+//                        errno = MPI_Recv(fbuf->nodes_tbl[node_id].data + node_offt, gl_sett.msg_sz, MPI_CHAR, src, DATA_TAG+nmsg, gl_comps[i].intercomm, &status);
+//                        assert(errno == MPI_SUCCESS);
+//                        nmsg++;
+//                        node_id = (unsigned int)((gl_sett.msg_sz*nmsg) / gl_sett.node_sz);
+//                        FARB_DBG(VERBOSE_DBG_LEVEL, "Received %d", nmsg);
+//                    }
+//
+//                    fbuf->data_sz = (size_t)msg_ready.file_sz;
                 }
                 fbuf->is_ready = 1;
                 break;
@@ -800,23 +777,23 @@ void progress_io()
                 fbuf = find_file_buffer(gl_filebuf_list, filename);
                 assert(fbuf != NULL);
                 FARB_DBG(VERBOSE_DBG_LEVEL, "Receive RECV_READY_TAG notif for %s", filename);
-                //Send the actual file
-                nexpect_msg = (unsigned int)(fbuf->data_sz / gl_sett.msg_sz);
-                if( fbuf->data_sz % gl_sett.msg_sz > 0)
-                    nexpect_msg++;
-                FARB_DBG(VERBOSE_DBG_LEVEL, "Will send %d messages", nexpect_msg);
-                //send the actual file
-                node_id = 0;
-                nmsg = 0;
-                while(nmsg != nexpect_msg){
-                    node_offt = (nmsg % (unsigned int)(gl_sett.node_sz / gl_sett.msg_sz)) * (size_t)gl_sett.msg_sz;
-
-                    errno = MPI_Send(fbuf->nodes_tbl[node_id].data + node_offt, gl_sett.msg_sz, MPI_CHAR, src, DATA_TAG+nmsg, gl_comps[i].intercomm);
-                    assert(errno == MPI_SUCCESS);
-                    nmsg++;
-                    node_id = (unsigned int)((gl_sett.msg_sz*nmsg) / gl_sett.node_sz);
-                    FARB_DBG(VERBOSE_DBG_LEVEL, "Sent %d", nmsg);
-                }
+//                //Send the actual file
+//                nexpect_msg = (unsigned int)(fbuf->data_sz / gl_sett.msg_sz);
+//                if( fbuf->data_sz % gl_sett.msg_sz > 0)
+//                    nexpect_msg++;
+//                FARB_DBG(VERBOSE_DBG_LEVEL, "Will send %d messages", nexpect_msg);
+//                //send the actual file
+//                node_id = 0;
+//                nmsg = 0;
+//                while(nmsg != nexpect_msg){
+//                    node_offt = (nmsg % (unsigned int)(gl_sett.node_sz / gl_sett.msg_sz)) * (size_t)gl_sett.msg_sz;
+//
+//                    errno = MPI_Send(fbuf->nodes_tbl[node_id].data + node_offt, gl_sett.msg_sz, MPI_CHAR, src, DATA_TAG+nmsg, gl_comps[i].intercomm);
+//                    assert(errno == MPI_SUCCESS);
+//                    nmsg++;
+//                    node_id = (unsigned int)((gl_sett.msg_sz*nmsg) / gl_sett.node_sz);
+//                    FARB_DBG(VERBOSE_DBG_LEVEL, "Sent %d", nmsg);
+//                }
 
                 fbuf->transfered++;
                 break;
@@ -836,7 +813,7 @@ void notify_file_ready(const char* filename)
     int i, comp_id, dest, errno;
     struct msg_ready_notif msg_ready;
     strcpy(msg_ready.filename, fbuf->file_path);
-    msg_ready.file_sz = (unsigned int)fbuf->data_sz;
+    msg_ready.file_sz = 0;//(unsigned int)fbuf->data_sz;
 
     for(i = 0; i < fbuf->nreaders; i++){
         comp_id = fbuf->reader_ids[i];
@@ -847,7 +824,7 @@ void notify_file_ready(const char* filename)
         errno = MPI_Send(&msg_ready, 1, msg_ready_datatype, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
         assert(errno == MPI_SUCCESS);
 
-        if(fbuf->mode == IO_MODE_FILE)
+        if(fbuf->mode == FARB_IO_MODE_FILE)
             fbuf->transfered++;
     }
 
@@ -855,6 +832,7 @@ void notify_file_ready(const char* filename)
 
 void close_file(const char *filename)
 {
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Closing file %s", filename);
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
     assert(fbuf != NULL);
 
@@ -864,13 +842,171 @@ void close_file(const char *filename)
             progress_io();
     }
 
+    farb_var_t *var = fbuf->vars;
+    while(var != NULL){
+        FARB_DBG(VERBOSE_DBG_LEVEL, "varid %d, ndims %d", var->id, var->ndims);
+        var = var->next;
+    }
+
     delete_file_buffer(&gl_filebuf_list, fbuf);
 }
 
 int get_io_mode(const char* filename)
 {
+
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
     if(fbuf == NULL)
-        return IO_MODE_UNDEFINED;
+        return FARB_IO_MODE_UNDEFINED;
     return fbuf->mode;
+}
+
+int def_var(const char* filename, int varid, int ndims, MPI_Offset *shape)
+{
+    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename);
+    assert(buf!=NULL);
+
+    farb_var_t *var = new_var(varid, ndims, shape);
+
+    if(buf->vars == NULL)
+        buf->vars = var;
+    else{
+        farb_var_t *tmp = buf->vars;
+        while(tmp->next != NULL)
+            tmp = tmp->next;
+        tmp->next = var;
+    }
+    return 0;
+}
+
+void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
+{
+    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename);
+    assert(buf!=NULL);
+
+    buf->hdr_sz = hdr_sz;
+    buf->header = malloc(hdr_sz);
+    assert(buf->header != NULL);
+    memcpy(buf->header, header, (size_t)hdr_sz);
+    return;
+}
+
+MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
+{
+    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename);
+    assert(buf!=NULL);
+
+    if(offset+chunk_sz > buf->hdr_sz){
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Warning: trying to read %llu at offt %llu but hdr sz is %llu", chunk_sz, offset, buf->hdr_sz);
+        chunk_sz = buf->hdr_sz - offset;
+    }
+
+    memcpy(chunk, buf->header+offset, (size_t)chunk_sz);
+    return chunk_sz;
+}
+
+static MPI_Offset to_1d_index(int ndim, MPI_Offset *shape, MPI_Offset *coord)
+{
+    int dimid = 0;
+    MPI_Offset idx = coord[dimid];
+
+    while(dimid != ndim - 1){
+       idx = idx*shape[dimid+1] + coord[dimid+1];
+       dimid++;
+    }
+    return idx;
+}
+
+MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *start, const MPI_Offset *count, const MPI_Offset *stride, const MPI_Offset *imap, MPI_Datatype dtype, void *buf, int rw_flag)
+{
+    MPI_Offset el_offt, byte_offt, lead_el_idx, el_cnt;
+    int dimid;
+    int el_sz;
+    MPI_Offset data_sz;
+    MPI_Offset buf_offt = 0, tmp, ret;
+
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
+    assert(buf!=NULL);
+
+    if(rw_flag == FARB_READ)
+         assert(fbuf->is_ready);
+
+    if(imap != NULL){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: writing mapped vars is not impelemented yet. Ignore.");
+        return 0;
+    }
+
+    if(stride != NULL){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: writing vars at a stride is not impelemented yet. Ignore.");
+        return 0;
+    }
+
+    farb_var_t *var = find_var(fbuf->vars, varid);
+    if(var == NULL){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: could not find var with id %d", varid);
+        return 0;
+    }
+
+    MPI_Type_size(dtype, &el_sz);
+    assert(el_sz > 0);
+    if(var->ndims <= 1){ /*scalar or 1d array*/
+        el_offt = *start;
+        byte_offt = el_offt*(MPI_Offset)el_sz;
+        /*Data size to write*/
+        data_sz = (*count)*el_sz;
+
+        if(rw_flag == FARB_READ){
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will read %llu elems of sz %d from element offt %llu ", var->id, *count, el_sz, el_offt);
+            ret = mem_read(var, byte_offt, data_sz, buf);
+        } else {
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will write %llu elems of sz %d to element offt %llu ", var->id, *count, el_sz, el_offt);
+            ret = mem_write(var, byte_offt, data_sz, buf);
+        }
+
+        if(ret != data_sz)
+            FARB_DBG(VERBOSE_DBG_LEVEL, "FARB Warning: Meant to read/write %llu bytes but actual val is %llu", data_sz, ret);
+
+    } else { /*multi-dimentional array*/
+        MPI_Offset *start1 = malloc(var->ndims*sizeof(MPI_Offset));
+        assert(start1 != NULL);
+        memcpy(start1, start, var->ndims*sizeof(MPI_Offset));
+        FARB_DBG(VERBOSE_DBG_LEVEL, "start el %lld, until %lld", start1[0], start1[0] + count[0]);
+        for(lead_el_idx = start[0]; lead_el_idx < start[0] + count[0]; lead_el_idx++){
+            /*Calculate element offset within buffer nodes*/
+            /*for an array stored in row-major form, elements with a fixed row coordinate
+            (e.g. coord X in XYZ dimensions) will be written contiguously in a 1d array.
+            So we just need to find an element offset for a given X and then write Y*Z
+            contiguous elements. */
+            start1[0] = lead_el_idx;
+            el_offt = to_1d_index(var->ndims, var->shape, start1);
+            byte_offt = el_offt*el_sz;
+
+            /*how many elements to write contiguously?*/
+            dimid = 1;
+            el_cnt = count[dimid];
+            while(dimid != var->ndims - 1){
+                el_cnt = el_cnt*count[dimid+1];
+                dimid++;
+
+            }
+
+            data_sz = el_cnt*el_sz;
+
+
+            if(rw_flag == FARB_READ){
+                FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will read %llu elems of sz %d from element offt %llu ", var->id, el_cnt, el_sz, el_offt);
+                tmp = mem_read(var, byte_offt, data_sz, (void*)(buf+buf_offt));
+            } else {
+                FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will write %llu elems of sz %d to element offt %llu ", var->id, el_cnt, el_sz, el_offt);
+                tmp = mem_write(var, byte_offt, data_sz, (void*)(buf+buf_offt));
+            }
+
+            if(tmp != data_sz)
+                FARB_DBG(VERBOSE_DBG_LEVEL, "FARB Warning: Meant to read/write %llu bytes but actual val is %llu", data_sz, tmp);
+            buf_offt+=tmp;
+        }
+        free(start1);
+        ret = tmp;
+    }
+
+    return ret;
 }

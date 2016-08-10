@@ -1,1 +1,3 @@
 >>>> Write a fortran module that can be included in user application 
+
+>>>> use MPI_Offset instead of size_t? (allows 64bit pointers)

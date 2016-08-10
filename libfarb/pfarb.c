@@ -1,8 +1,8 @@
 #include <mpi.h>
 #include <stdio.h>
 
-#include "farb.h"
-#include "farb_util_new.h"
+#include "pfarb.h"
+#include "pfarb_util.h"
 #include <assert.h>
 
 //TODO change everithing file size related to long long and check casts
@@ -28,6 +28,7 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
     MPI_Datatype dt[2] = {MPI_CHAR, MPI_UNSIGNED};
     int blocklen[2] = {MAX_FILE_NAME, 1};
     MPI_Aint displ[2];
+    int verbose;
 
     if(lib_initialized)
         return 0;
@@ -55,26 +56,30 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
         gl_verbose = VERBOSE_ERROR_LEVEL;
     else
         gl_verbose = atoi(s);
-    //for now only root will print out stuff
-    //if(gl_my_rank != 0)
-      //  gl_verbose = VERBOSE_NONE;
+
+
+    //during init only root will print out stuff
+    if(gl_my_rank != 0){
+        verbose = gl_verbose;
+        gl_verbose = VERBOSE_ERROR_LEVEL;
+    }
 
     s = getenv("FARB_NODE_SZ");
     if(s == NULL){
         gl_sett.node_sz = DEFAULT_BUFFER_NODE_SIZE;
     } else
-        gl_sett.node_sz = atoi(s)*1024;
+        gl_sett.node_sz = (MPI_Offset)(atoi(s)*1024);
 
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Buffer node size set to %ld bytes", gl_sett.node_sz);
+    FARB_DBG(VERBOSE_DBG_LEVEL,   "Buffer node size set to %llu bytes", gl_sett.node_sz);
 
     s = getenv("FARB_MESSAGE_SZ");
     if(s == NULL){
         gl_sett.msg_sz = (int)gl_sett.node_sz;
     } else
-        gl_sett.node_sz = atoi(s)*1024;
+        gl_sett.msg_sz = atoi(s)*1024;
 
-    if(gl_sett.msg_sz > (int) gl_sett.node_sz){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: message size (%d) for direct data transfer cannot exceed the memory node size. Setting to same as the node size (%d)", gl_sett.msg_sz, (int)gl_sett.node_sz);
+    if( (MPI_Offset)gl_sett.msg_sz > gl_sett.node_sz){
+        FARB_DBG(VERBOSE_ERROR_LEVEL,"FARB Warning: message size for data transfer cannot exceed the memory node size. Setting to same as the node size");
         gl_sett.msg_sz = (int)gl_sett.node_sz;
     }
 
@@ -99,6 +104,11 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
     assert(errno == MPI_SUCCESS);
 
     lib_initialized = 1;
+
+    //enable print setting for other ranks again
+    if(gl_my_rank != 0)
+        gl_verbose = verbose;
+
     return 0;
 
 panic_exit:
@@ -134,7 +144,7 @@ _EXTERN_C_ int farb_finalize()
 
     clean_config();
 
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Farb: finalize\n");
+    FARB_DBG(VERBOSE_DBG_LEVEL,"Farb: finalize");
     lib_initialized = 0;
     fflush(stdout);
     fflush(stderr);
@@ -157,8 +167,11 @@ _EXTERN_C_ int farb_finalize()
  */
 _EXTERN_C_ size_t farb_write(const char* filename, off_t const offset, const size_t data_sz, void *const data)
 {
-    if(!lib_initialized) return 0;
-    return mem_write(filename, offset, data_sz, data);
+//    if(!lib_initialized) return 0;
+//    if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
+//    return mem_write(filename, offset, data_sz, data);
+
+    return 0;
 }
 
 /**
@@ -171,13 +184,35 @@ _EXTERN_C_ size_t farb_write(const char* filename, off_t const offset, const siz
   @return	number of bytes read
 
  */
-_EXTERN_C_ size_t farb_read(const char* filename, off_t const offset, const size_t data_sz, void *const data)
+_EXTERN_C_ size_t farb_read(const char *filename, off_t const offset, const size_t data_sz, void *const data)
 {
 
-    if(!lib_initialized) return 0;
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "read %s", filename);
-    return mem_read(filename, offset, data_sz, data);
+//    if(!lib_initialized) return 0;
+//    if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
+//    FARB_DBG(VERBOSE_DBG_LEVEL,   "read %s", filename);
+//    return mem_read(filename, offset, data_sz, data);
 
+    return 0;
+}
+
+
+_EXTERN_C_ void farb_write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
+{
+    if(!lib_initialized) return;
+    //if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return;
+    if(hdr_sz == 0){
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Header size for file %s is zero", filename);
+        return;
+    }
+    write_hdr(filename, hdr_sz, header);
+    return;
+}
+
+_EXTERN_C_ MPI_Offset farb_read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
+{
+     if(!lib_initialized) return 0;
+
+     return read_hdr_chunk(filename, offset, chunk_sz, chunk);
 }
 
 /**
@@ -187,7 +222,7 @@ _EXTERN_C_ size_t farb_read(const char* filename, off_t const offset, const size
   @return	void
 
  */
-_EXTERN_C_ void farb_open(const char* filename)
+_EXTERN_C_ void farb_open(const char *filename)
 {
     if(!lib_initialized) return;
     FARB_DBG(VERBOSE_DBG_LEVEL,   "open %s", filename);
@@ -240,7 +275,6 @@ _EXTERN_C_ int farb_write_flag(const char* filename)
     if(!lib_initialized)return 0;
 
     flag = get_write_flag(filename);
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "write flag %s is %d", filename, flag);
     return flag;
 }
 
@@ -251,13 +285,16 @@ _EXTERN_C_ int farb_write_flag(const char* filename)
 */
 _EXTERN_C_ int farb_read_flag(const char* filename)
 {
-    int flag;
+    if(!lib_initialized) return 0;
+    return get_read_flag(filename);
+}
 
+_EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename, int varid, const MPI_Offset *start, const MPI_Offset *count,
+                                          const MPI_Offset *stride, const MPI_Offset *imap, MPI_Datatype dtype, void *buf, int rw_flag)
+{
     if(!lib_initialized) return 0;
 
-    flag =  get_read_flag(filename);
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "read flag %s is %d", filename, flag);
-    return flag;
+    return read_write_var(filename, varid, start, count, stride, imap, dtype, buf, rw_flag);
 }
 
 /**
@@ -278,7 +315,17 @@ _EXTERN_C_ void farb_progress_io()
 */
 _EXTERN_C_ int farb_io_mode(const char* filename)
 {
+    if(!lib_initialized) return 0;
     return get_io_mode(filename);
+}
+
+_EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Offset *shape)
+{
+    if(!lib_initialized) return 0;
+
+   // if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
+
+    return def_var(filename, varid, ndims, shape);
 }
 
 /*  Fortran Interfaces  */
