@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include "pfarb_util.h"
 #include "pfarb.h"
+#include "pfarb_mem.h"
 
 struct file_buffer * gl_filebuf_list = NULL;
 struct component *gl_comps = NULL;
@@ -377,7 +378,7 @@ static int create_intercomm(int comp_id, char* global_path){
     char portname[MPI_MAX_PORT_NAME];
     char service_name[MAX_COMP_NAME*2+1];
     FILE* portfile;
-    int ret, mode, myrank, l1, l2;
+    int errno, mode, myrank, l1, l2;
     char portfile_name[MAX_FILE_NAME];
     int wait_timeout;
 
@@ -458,17 +459,17 @@ static int create_intercomm(int comp_id, char* global_path){
             }
         }
 
-        ret = MPI_Bcast(portname, MPI_MAX_PORT_NAME, MPI_CHAR, 0, MPI_COMM_WORLD );
-        assert(ret == MPI_SUCCESS);
+        errno = MPI_Bcast(portname, MPI_MAX_PORT_NAME, MPI_CHAR, 0, MPI_COMM_WORLD );
+        CHECK_MPI(errno);
         FARB_DBG(VERBOSE_DBG_LEVEL,   "%s will connect to service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
-        ret = MPI_Comm_connect(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].intercomm));
-
+        errno = MPI_Comm_connect(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].intercomm));
+        CHECK_MPI(errno);
     } else if(mode == CONNECT_MODE_SERVER){
         FARB_DBG(VERBOSE_DBG_LEVEL,   "Creating connection for %s.", service_name);
 
-        ret = MPI_Open_port(MPI_INFO_NULL, portname);
-        assert(ret == MPI_SUCCESS);
+        errno = MPI_Open_port(MPI_INFO_NULL, portname);
+        CHECK_MPI(errno);
 
         if(myrank == 0){
 
@@ -479,14 +480,14 @@ static int create_intercomm(int comp_id, char* global_path){
 
         FARB_DBG(VERBOSE_DBG_LEVEL,   "%s starts listening for service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
-        ret = MPI_Comm_accept(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].intercomm) );
-        assert(ret == MPI_SUCCESS);
+        errno = MPI_Comm_accept(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].intercomm) );
+        CHECK_MPI(errno);
         FARB_DBG(VERBOSE_DBG_LEVEL,   "%s accepted connection on service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
-        ret = MPI_Close_port(portname);
-        assert(ret == MPI_SUCCESS);
+        errno = MPI_Close_port(portname);
+        CHECK_MPI(errno);
     }
-
+    MPI_Errhandler_set(gl_comps[comp_id].intercomm, MPI_ERRORS_RETURN);
     return 0;
 panic_exit:
 
@@ -580,6 +581,7 @@ int get_write_flag(const char* filename)
     }
     return fbuf->write_flag;
 }
+
 int get_read_flag(const char* filename)
 {
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
@@ -601,102 +603,17 @@ int file_buffer_ready(const char* filename)
     return fbuf->is_ready;
 }
 
-
-MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data)
-{
-    MPI_Offset node_id, last_node_id;
-
-    MPI_Offset node_offt, to_cpy, copied=0;
-    int i;
-
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Will write %llu bytes to var %d at offt %llu", data_sz, var->id, offset);
-
-    last_node_id = (offset + data_sz) / gl_sett.node_sz;
-    if( (offset + data_sz) % gl_sett.node_sz > 0)
-        last_node_id++;
-
-    if(last_node_id > var->bufnode_cnt){
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Will allocate %llu nodes", last_node_id - var->bufnode_cnt);
-        var->bufnodes = realloc(var->bufnodes, last_node_id * sizeof(buffer_node_t));
-        assert(var->bufnodes != NULL);
-
-        for(i = var->bufnode_cnt; i < last_node_id; i++){
-            var->bufnodes[i].data = NULL;
-            var->bufnodes[i].data_sz = 0;
-        }
-
-        var->bufnode_cnt = last_node_id;
-    }
-
-    while(copied != data_sz){
-        node_id = ( offset + copied ) / gl_sett.node_sz ;
-        node_offt = ( offset + copied ) % gl_sett.node_sz;
-
-        if(data_sz < gl_sett.node_sz - node_offt)
-            to_cpy = data_sz;
-        else
-            to_cpy = gl_sett.node_sz - node_offt;
-
-        if(var->bufnodes[node_id].data == NULL){
-            var->bufnodes[node_id].data = (void*)malloc(gl_sett.node_sz);
-            assert(var->bufnodes[node_id].data != NULL);
-        }
-        memcpy( (void*)(var->bufnodes[node_id].data+node_offt), (void*)(data+copied), to_cpy );
-        copied += to_cpy;
-    }
-    if(offset+data_sz > var->data_sz)
-        var->data_sz = offset+data_sz;
-    FARB_DBG(VERBOSE_DBG_LEVEL, "Leave mem_write");
-    return copied;
-}
-
-MPI_Offset mem_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data)
-{
-
-    MPI_Offset copied = 0, node_offt, to_cpy;
-    MPI_Offset new_data_sz = data_sz;
-    MPI_Offset node_id;
-
-    FARB_DBG(VERBOSE_DBG_LEVEL, "mem_read at offt %ld of size %lu", (long int)offset, (long unsigned)data_sz);
-
-  //  FARB_DBG(VERBOSE_DBG_LEVEL, "Will read %ld from offt %ld (file sz %ld)", data_sz, offset, fbuf->data_sz);
-    if(offset > var->data_sz){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: ps tries to read %llu from offt %llu but file sz is %llu", data_sz, offset, var->data_sz);
-        return 0;
-    }
-
-    if(offset + data_sz > var->data_sz){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: ps tries to read %llu from offt %llu but file sz is %llu", data_sz, offset, var->data_sz);
-        new_data_sz = var->data_sz - offset;
-    }
-
-    while(copied != new_data_sz){
-        node_id =  ( offset + copied ) / gl_sett.node_sz;
-        node_offt =( offset + copied ) % gl_sett.node_sz;
-
-        if(new_data_sz - copied < gl_sett.node_sz)
-            to_cpy = new_data_sz - copied;
-        else
-            to_cpy = gl_sett.node_sz - node_offt;
-
-        assert(var->bufnodes[node_id].data != NULL);
-        //FARB_DBG(VERBOSE_DBG_LEVEL, "Will copy %ld from node %u oft %ld to offt %ld", to_cpy, node_id, node_offt, copied );
-        memcpy( (void*)(data+copied), (void*)(var->bufnodes[node_id].data+node_offt), to_cpy );
-        copied += to_cpy;
-    }
-
-    return copied;
-}
-
 void progress_io()
 {
     MPI_Status status;
-    int i, flag, src, errno;
+    int i, j, flag, src, errno;
     char filename[MAX_FILE_NAME];
     file_buffer_t *fbuf;
- //   unsigned int nexpect_msg, nmsg = 0;
-    struct msg_ready_notif msg_ready;
- //   off_t node_offt;
+    farb_var_t *var;
+    buffer_node_t *node;
+    void *buf;
+    int buf_sz;
+    MPI_Request sreq, *reqs=NULL;
 
     for(i = 0; i < gl_ncomp; i++){
         if( i == gl_my_comp_id || gl_comps[i].intercomm == MPI_COMM_NULL)
@@ -709,101 +626,236 @@ void progress_io()
         switch(status.MPI_TAG){
             case FILE_READY_TAG:
                 src = status.MPI_SOURCE;
-                errno = MPI_Recv(&msg_ready, 1, msg_ready_datatype, src, FILE_READY_TAG, gl_comps[i].intercomm, &status);
-                assert(errno==MPI_SUCCESS);
-                FARB_DBG(VERBOSE_DBG_LEVEL,   "Receive FILE_READY notif for %s", msg_ready.filename);
+                errno = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, FILE_READY_TAG, gl_comps[i].intercomm, &status);
+                CHECK_MPI(errno);
+                FARB_DBG(VERBOSE_DBG_LEVEL,   "Receive FILE_READY notif for %s", filename);
 
-                //receive the file size
-                //errno = MPI_Recv(&file_sz, 1, MPI_UNSIGNED_INT, src, FILE_SZ_TAG, gl_comps[i].intercomm, &status);
-
-                fbuf = find_file_buffer(gl_filebuf_list, msg_ready.filename);
+                fbuf = find_file_buffer(gl_filebuf_list, filename);
                 assert(fbuf != NULL);
 
                 if(fbuf->mode == FARB_IO_MODE_MEMORY){
-//                    if(msg_ready.file_sz == 0){
-//                        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Warning: size of file %s is zero", msg_ready.filename );
-//                        fbuf->is_ready = 1;
-//                        return;
-//                    }
-//
-//                    //allocate memory to receive
-//                    nnodes = (unsigned int)( msg_ready.file_sz / gl_sett.node_sz);
-//                    if( msg_ready.file_sz % gl_sett.node_sz > 0)
-//                        nnodes++;
-//
-//                    assert(fbuf->nodes_tbl == NULL);
-//                    fbuf->nodes_tbl = (buffer_node_t*)malloc(nnodes * sizeof(buffer_node_t));
-//                    assert(fbuf->nodes_tbl != NULL);
-//
-//                    fbuf->node_cnt = nnodes;
-//                    for(j = 0; j < fbuf->node_cnt; j++){
-//                        fbuf->nodes_tbl[j].data = malloc(gl_sett.node_sz);
-//                        assert(fbuf->nodes_tbl[j].data !=NULL);
-//                        fbuf->nodes_tbl[j].data_sz = 0;
-//                    }
-//
-//                    FARB_DBG(VERBOSE_DBG_LEVEL, "Notify that I am ready to receive");
-//                    //notify the file writer that we are ready to receive the data
-//                    errno = MPI_Send(msg_ready.filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].intercomm);
-//                    assert(errno==MPI_SUCCESS);
-//
-//                    nexpect_msg = (unsigned int)(msg_ready.file_sz / gl_sett.msg_sz);
-//                    if( msg_ready.file_sz  % gl_sett.msg_sz > 0)
-//                        nexpect_msg++;
-//                    FARB_DBG(VERBOSE_DBG_LEVEL, "Expect to receive %d messages", nexpect_msg);
-//                    //TODO remove data_sz in buffer nodes
-//                    //receive the actual file
-//                    node_id = 0;
-//                    nmsg = 0;
-//                    while(nmsg != nexpect_msg){
-//                        node_offt = (nmsg % (unsigned int)(gl_sett.node_sz / gl_sett.msg_sz)) * (size_t)gl_sett.msg_sz;
-//
-//                        errno = MPI_Recv(fbuf->nodes_tbl[node_id].data + node_offt, gl_sett.msg_sz, MPI_CHAR, src, DATA_TAG+nmsg, gl_comps[i].intercomm, &status);
-//                        assert(errno == MPI_SUCCESS);
-//                        nmsg++;
-//                        node_id = (unsigned int)((gl_sett.msg_sz*nmsg) / gl_sett.node_sz);
-//                        FARB_DBG(VERBOSE_DBG_LEVEL, "Received %d", nmsg);
-//                    }
-//
-//                    fbuf->data_sz = (size_t)msg_ready.file_sz;
+                    /*Notify I am ready to receive*/
+                    errno = MPI_Send(filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].intercomm);
+                    CHECK_MPI(errno);
+
+                    /*Receive the header*/
+                    MPI_Probe(src, HEADER_TAG, gl_comps[i].intercomm, &status);
+                    MPI_Get_count(&status, MPI_BYTE, &buf_sz);
+                    fbuf->hdr_sz = (MPI_Offset)buf_sz;
+                    FARB_DBG(VERBOSE_DBG_LEVEL, "Hdr size to receive %d", buf_sz);
+                    fbuf->header = malloc((size_t)buf_sz);
+                    assert(fbuf->header != NULL);
+                    errno = MPI_Recv(fbuf->header, buf_sz, MPI_BYTE, src, HEADER_TAG, gl_comps[i].intercomm, &status);
+                    CHECK_MPI(errno);
+
+                    /*Receive vars*/
+                    MPI_Probe(src, VARS_TAG, gl_comps[i].intercomm, &status);
+                    MPI_Get_count(&status, MPI_BYTE, &buf_sz);
+                    buf = malloc((size_t)buf_sz);
+                    assert(buf != NULL);
+                    errno = MPI_Recv(buf, buf_sz, MPI_BYTE, src, VARS_TAG, gl_comps[i].intercomm, &status);
+                    CHECK_MPI(errno);
+
+                    unpack_vars(buf_sz, buf, &fbuf->vars, &fbuf->var_cnt);
+                    free(buf);
+                    /*Receive nodes of all variables*/
+                    var = fbuf->vars;
+                    while(var != NULL){
+                        reqs = realloc(reqs, sizeof(MPI_Request)*(int)var->node_cnt);
+                        assert(reqs != NULL);
+
+                        node = var->nodes;
+                        FARB_DBG(VERBOSE_DBG_LEVEL, "Will recv %d nodes", (int)var->node_cnt);
+                        for(j = 0; j < var->node_cnt; j++){
+                            FARB_DBG(VERBOSE_DBG_LEVEL, "node sz %d offt %d", (int)node->data_sz, (int)node->offset);
+                            errno = MPI_Irecv(node->data, (int)node->data_sz, MPI_BYTE, src, NODE_TAG+j, gl_comps[i].intercomm, &reqs[j]);
+                            CHECK_MPI(errno);
+                            node = node->next;
+                        }
+                        errno = MPI_Waitall(var->node_cnt, reqs, MPI_STATUSES_IGNORE);
+                        CHECK_MPI(errno);
+                        var = var->next;
+                    }
+                    free(reqs);
                 }
+
                 fbuf->is_ready = 1;
                 break;
             case RECV_READY_TAG:
 
                 src = status.MPI_SOURCE;
-                errno = MPI_Recv(&filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].intercomm, &status);
-                assert(errno==MPI_SUCCESS);
+                errno = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].intercomm, &status);
+
+                CHECK_MPI(errno);
                 fbuf = find_file_buffer(gl_filebuf_list, filename);
                 assert(fbuf != NULL);
                 FARB_DBG(VERBOSE_DBG_LEVEL, "Receive RECV_READY_TAG notif for %s", filename);
-//                //Send the actual file
-//                nexpect_msg = (unsigned int)(fbuf->data_sz / gl_sett.msg_sz);
-//                if( fbuf->data_sz % gl_sett.msg_sz > 0)
-//                    nexpect_msg++;
-//                FARB_DBG(VERBOSE_DBG_LEVEL, "Will send %d messages", nexpect_msg);
-//                //send the actual file
-//                node_id = 0;
-//                nmsg = 0;
-//                while(nmsg != nexpect_msg){
-//                    node_offt = (nmsg % (unsigned int)(gl_sett.node_sz / gl_sett.msg_sz)) * (size_t)gl_sett.msg_sz;
-//
-//                    errno = MPI_Send(fbuf->nodes_tbl[node_id].data + node_offt, gl_sett.msg_sz, MPI_CHAR, src, DATA_TAG+nmsg, gl_comps[i].intercomm);
-//                    assert(errno == MPI_SUCCESS);
-//                    nmsg++;
-//                    node_id = (unsigned int)((gl_sett.msg_sz*nmsg) / gl_sett.node_sz);
-//                    FARB_DBG(VERBOSE_DBG_LEVEL, "Sent %d", nmsg);
-//                }
 
+                /*Send the hearder*/
+                errno = MPI_Isend(fbuf->header, (int)fbuf->hdr_sz, MPI_CHAR, src, HEADER_TAG, gl_comps[i].intercomm, &sreq);
+                CHECK_MPI(errno);
+
+                /*Pack the vars info and send it*/
+                pack_vars(fbuf->var_cnt, fbuf->vars, &buf_sz, &buf);
+                errno = MPI_Wait(&sreq, MPI_STATUS_IGNORE);
+                CHECK_MPI(errno);
+
+                errno = MPI_Send(buf, buf_sz, MPI_BYTE, status.MPI_SOURCE, VARS_TAG, gl_comps[i].intercomm);
+                CHECK_MPI(errno);
+                free(buf);
+                /*Send buffer nodes*/
+                var = fbuf->vars;
+                while(var != NULL){
+                    reqs = realloc(reqs, sizeof(MPI_Request)*(int)var->node_cnt);
+                    assert(reqs != NULL);
+
+                    node = var->nodes;
+                    FARB_DBG(VERBOSE_DBG_LEVEL, "Will send %d nodes", (int)var->node_cnt);
+                    for(j = 0; j < var->node_cnt; j++){
+                        FARB_DBG(VERBOSE_DBG_LEVEL, "node sz %d offt %d", (int)node->data_sz, (int)node->offset);
+                        errno = MPI_Isend(node->data, (int)node->data_sz, MPI_BYTE, status.MPI_SOURCE, NODE_TAG+j, gl_comps[i].intercomm, &reqs[j]);
+                        CHECK_MPI(errno);
+                        node = node->next;
+                    }
+                    errno = MPI_Waitall(var->node_cnt, reqs, MPI_STATUSES_IGNORE);
+                    CHECK_MPI(errno);
+                    var = var->next;
+                }
+                free(reqs);
                 fbuf->transfered++;
                 break;
             default:
                 FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: unknown tag %d", status.MPI_TAG);
                 assert(0);
         }
-
     }
 
+}
+
+//typedef struct farb_var{
+//    int                     id;         /* varid assigned by pnetcdf*/
+//    MPI_Offset              *shape;     /* dim->size of each dim */
+//    int                     ndims;      /* number of dimensions */
+//
+//    buffer_node_t           *nodes;      /*head buffer node that stores the data*/
+//    MPI_Offset              node_cnt;   /*number of allocated buffer nodes*/
+//    struct farb_var *next;
+//}farb_var_t;
+
+/*
+    vars        [OUT]
+    var_cnt     [OUT]
+    the rest    [IN]
+*/
+void unpack_vars(int buf_sz, void *buf, farb_var_t **vars, int *var_cnt)
+{
+    size_t offt = 0;
+    MPI_Offset offset, data_sz;
+    assert(buf_sz > 0);
+    assert(buf != NULL);
+
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Unpacking vars sz %d", buf_sz);
+
+    int i, j;
+    farb_var_t *var;
+    buffer_node_t *node;
+
+    memcpy(var_cnt, buf, sizeof(int));
+    offt += sizeof(int);
+
+    for(i = 0; i < *var_cnt; i++){
+        var = malloc(sizeof(farb_var_t));
+        assert(var != NULL);
+        var->nodes = NULL;
+        var->next = NULL;
+
+        memcpy(&var->id, buf+offt, sizeof(var->id));
+        offt += sizeof(var->id);
+        memcpy(&var->ndims, buf+offt, sizeof(var->ndims));
+        offt += sizeof(var->id);
+        if(var->ndims > 0){
+            var->shape = malloc(var->ndims*sizeof(MPI_Offset));
+            assert(var->shape != NULL);
+            for(j = 0; j < var->ndims; j++){
+                memcpy(&(var->shape[j]), buf+offt, sizeof(MPI_Offset));
+                offt += sizeof(MPI_Offset);
+            }
+        } else
+            var->shape = NULL;
+        memcpy(&var->node_cnt, buf+offt, sizeof(var->node_cnt));
+        offt += sizeof(var->node_cnt);
+        for(j = 0; j < var->node_cnt; j++){
+            memcpy(&offset, buf+offt, sizeof(MPI_Offset));
+            offt += sizeof(MPI_Offset);
+            memcpy(&data_sz, buf+offt, sizeof(MPI_Offset));
+            offt += sizeof(MPI_Offset);
+            node = new_buffer_node(offset, data_sz);
+            insert_buffer_node(&var->nodes, node);
+        }
+
+        add_var(vars, var);
+    }
+
+    assert(offt == buf_sz);
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Finished unpacking vars");
+}
+
+/*
+    *buf_sz     [OUT]
+    **buf       [OUT]
+    the rest    [IN]
+*/
+void pack_vars(int var_cnt, farb_var_t *vars, int *buf_sz, void **buf)
+{
+    int i;
+    size_t sz = 0, offt=0;
+    buffer_node_t *node;
+    /*Count how much space we need. We'll pack necessary fields from farv_var_t
+      + will send the list of offsets of all variable nodes*/
+    sz += sizeof(var_cnt);
+    farb_var_t *var = vars;
+    while(var != NULL){
+        sz += sizeof(var->id) + sizeof(MPI_Offset)*var->ndims +
+              sizeof(var->ndims) + sizeof(var->node_cnt) + var->node_cnt*sizeof(MPI_Offset)*2;
+        var = var->next;
+    }
+
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Packing vars: sz %lu", sz);
+
+    *buf = malloc(sz);
+    assert(*buf != NULL);
+    //write the number of vars
+    memcpy(*buf, &var_cnt, sizeof(int));
+    offt += sizeof(int);
+    var = vars;
+    while(var != NULL){
+        memcpy(*buf+offt, &var->id, sizeof(var->id));
+        offt += sizeof(var->id);
+        memcpy(*buf+offt, &var->ndims, sizeof(var->ndims));
+        offt += sizeof(var->ndims);
+        for(i = 0; i<var->ndims;i++){
+            memcpy(*buf+offt, &var->shape[i], sizeof(MPI_Offset));
+            offt += sizeof(MPI_Offset);
+        }
+        memcpy(*buf+offt, &var->node_cnt, sizeof(var->node_cnt));
+        offt+=sizeof(var->node_cnt);
+        /*Pack node offsets*/
+        node = var->nodes;
+        while(node != NULL){
+            memcpy(*buf+offt, &node->offset, sizeof(MPI_Offset));
+            offt+=sizeof(MPI_Offset);
+            memcpy(*buf+offt, &node->data_sz, sizeof(MPI_Offset));
+            offt+=sizeof(MPI_Offset);
+            node = node->next;
+        }
+
+        var = var->next;
+    }
+    FARB_DBG(VERBOSE_DBG_LEVEL, "packing: offt %d, sz %d", (int)offt, (int)sz);
+    assert(offt == sz);
+
+    *buf_sz = (int)sz;
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Finish packing vars");
 }
 
 void notify_file_ready(const char* filename)
@@ -811,18 +863,13 @@ void notify_file_ready(const char* filename)
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename);
     assert(fbuf != NULL);
     int i, comp_id, dest, errno;
-    struct msg_ready_notif msg_ready;
-    strcpy(msg_ready.filename, fbuf->file_path);
-    msg_ready.file_sz = 0;//(unsigned int)fbuf->data_sz;
 
     for(i = 0; i < fbuf->nreaders; i++){
         comp_id = fbuf->reader_ids[i];
         dest = gl_my_rank;  //file per process mode
         FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader %s that file %s is ready", gl_comps[comp_id].name, fbuf->file_path);
-        //TODO replace with a nonblocking send???
-        FARB_DBG(VERBOSE_DBG_LEVEL, "name %s ,size %u", msg_ready.filename, msg_ready.file_sz);
-        errno = MPI_Send(&msg_ready, 1, msg_ready_datatype, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
-        assert(errno == MPI_SUCCESS);
+        errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
+        CHECK_MPI(errno);
 
         if(fbuf->mode == FARB_IO_MODE_FILE)
             fbuf->transfered++;
@@ -840,12 +887,6 @@ void close_file(const char *filename)
         notify_file_ready(filename);
         while(fbuf->transfered != fbuf->nreaders)
             progress_io();
-    }
-
-    farb_var_t *var = fbuf->vars;
-    while(var != NULL){
-        FARB_DBG(VERBOSE_DBG_LEVEL, "varid %d, ndims %d", var->id, var->ndims);
-        var = var->next;
     }
 
     delete_file_buffer(&gl_filebuf_list, fbuf);
@@ -867,14 +908,9 @@ int def_var(const char* filename, int varid, int ndims, MPI_Offset *shape)
 
     farb_var_t *var = new_var(varid, ndims, shape);
 
-    if(buf->vars == NULL)
-        buf->vars = var;
-    else{
-        farb_var_t *tmp = buf->vars;
-        while(tmp->next != NULL)
-            tmp = tmp->next;
-        tmp->next = var;
-    }
+    add_var(&buf->vars, var);
+    buf->var_cnt++;
+
     return 0;
 }
 
@@ -986,7 +1022,6 @@ MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *sta
             while(dimid != var->ndims - 1){
                 el_cnt = el_cnt*count[dimid+1];
                 dimid++;
-
             }
 
             data_sz = el_cnt*el_sz;
@@ -995,7 +1030,7 @@ MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *sta
             if(rw_flag == FARB_READ){
                 FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will read %llu elems of sz %d from element offt %llu ", var->id, el_cnt, el_sz, el_offt);
                 tmp = mem_read(var, byte_offt, data_sz, (void*)(buf+buf_offt));
-            } else {
+            } else { /*FARB_WRITE*/
                 FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will write %llu elems of sz %d to element offt %llu ", var->id, el_cnt, el_sz, el_offt);
                 tmp = mem_write(var, byte_offt, data_sz, (void*)(buf+buf_offt));
             }

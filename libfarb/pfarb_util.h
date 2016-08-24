@@ -9,7 +9,10 @@
 
 #define FILE_READY_TAG  0
 #define RECV_READY_TAG  1
-#define DATA_TAG    2
+
+#define HEADER_TAG  3
+#define VARS_TAG    4
+#define NODE_TAG    5 /*This tag should be always last!!*/
 
 #define CONNECT_MODE_UNDEFINED -1
 #define CONNECT_MODE_SERVER     1
@@ -33,22 +36,11 @@ typedef struct farb_settings{
     int msg_sz;             /*MPI message size for transfering the data. Should be a divisor for node_sz.*/
 }farb_settings_t;
 
-typedef struct msg_ready_notif{
-    char filename[MAX_FILE_NAME];
-    unsigned int file_sz;
-}msg_ready_notif_t;
-
-
-MPI_Datatype msg_ready_datatype;
-
 int load_config(const char *ini_name, const char *service_name);
 void clean_config();
 
 int init_comp_comm();
 void finalize_comp_comm();
-
-MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data);
-MPI_Offset mem_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data);
 
 int get_read_flag(const char* filename);
 int get_write_flag(const char* filename);
@@ -59,6 +51,9 @@ void notify_recv_ready(const char* filename);
 void close_file(const char* filename);
 int file_buffer_ready(const char* filename);
 void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header);
+void pack_vars(int var_cnt, farb_var_t *vars, int *buf_sz, void **buf);
+void unpack_vars(int buf_sz, void *buf, farb_var_t **vars, int *var_cnt);
+
 MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
 int def_var(const char* filename, int varid, int ndims, MPI_Offset *shape);
 MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *start, const MPI_Offset *count, const MPI_Offset *stride, const MPI_Offset *imap, MPI_Datatype dtype, void *buf, int rw_flag);

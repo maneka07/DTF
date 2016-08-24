@@ -30,9 +30,19 @@ char gl_my_comp_name[MAX_COMP_NAME+1];
     if(gl_verbose >= dbg_level){  \
                 memset(_buff,0,1024);                         \
                 snprintf(_buff,1024,__VA_ARGS__);             \
-                printf("%s %d: %s\n", gl_my_comp_name, gl_my_rank, _buff);  \
+                fprintf(stdout, "%s %d: %s\n", gl_my_comp_name, gl_my_rank, _buff);  \
                 fflush(stdout);   \
     }           \
 }while(0)
+
+#define CHECK_MPI(errcode) do{   \
+        if (errcode != MPI_SUCCESS) {   \
+           char error_string[1024];     \
+           int length_of_error_string;  \
+           MPI_Error_string(errno, error_string, &length_of_error_string);  \
+           FARB_DBG(VERBOSE_DBG_LEVEL, "error is: %s", error_string);       \
+           MPI_Abort(MPI_COMM_WORLD, errcode);                              \
+        }                                                                   \
+} while(0)
 
 #endif // VARS_H_INCLUDED

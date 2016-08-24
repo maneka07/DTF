@@ -25,8 +25,8 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name);
 _EXTERN_C_ int farb_finalize();
 
 /*Interfaces to be used by a File I/O library*/
-_EXTERN_C_ size_t farb_write(const char* filename, const off_t offset, const size_t data_sz, void *const data);
-_EXTERN_C_ size_t farb_read(const char* filename, const off_t  offset, const size_t data_sz, void *const data);
+//_EXTERN_C_ size_t farb_write(const char* filename, const off_t offset, const size_t data_sz, void *const data);
+//_EXTERN_C_ size_t farb_read(const char* filename, const off_t  offset, const size_t data_sz, void *const data);
 _EXTERN_C_ int farb_write_flag(const char* filename);
 _EXTERN_C_ int farb_read_flag(const char* filename);
 _EXTERN_C_ void farb_progress_io();

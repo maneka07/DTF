@@ -31,6 +31,18 @@ farb_var_t* find_var(farb_var_t* varlist, int varid)
     return ptr;
 }
 
+void add_var(farb_var_t **vars, farb_var_t *var)
+{
+    if(*vars == NULL)
+        *vars = var;
+    else{
+        farb_var_t *tmp = *vars;
+        while(tmp->next != NULL)
+            tmp = tmp->next;
+        tmp->next = var;
+    }
+}
+
 void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
 {
     if(*buflist == NULL){
@@ -45,13 +57,14 @@ void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
 
 static void delete_var(farb_var_t *var)
 {
-    long long unsigned i;
+   buffer_node_t *node = var->nodes;
 
-    for(i = 0; i< var->bufnode_cnt; i++){
-        if(var->bufnodes[i].data != NULL)
-            free(var->bufnodes[i].data);
+    while(node != NULL){
+        free(node->data);
+        var->nodes = var->nodes->next;
+        free(node);
+        node = var->nodes;
     }
-
     free(var);
 }
 
@@ -92,29 +105,24 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
 
 file_buffer_t* new_file_buffer()
 {
-
     file_buffer_t *buf;
 
-    buf = (file_buffer_t*) malloc(sizeof(struct file_buffer));
-
-    if(buf != NULL){
-        buf->file_path[0]='\0';
-        buf->alias_name[0]='\0';
-        buf->next = NULL;
-        buf->reader_ids = NULL;
-        buf->version = 0;
-        buf->writer_id=-1;
-        buf->nreaders = 0;
-        buf->is_ready = 0;
-        buf->transfered = 0;
-        buf->vars = NULL;
-        buf->header = NULL;
-        buf->hdr_sz = 0;
-        buf->mode = FARB_IO_MODE_UNDEFINED;
-    } else {
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "Error allocating memory");
-    }
-
+    buf = (file_buffer_t*)malloc(sizeof(struct file_buffer));
+    assert( buf != NULL );
+    buf->file_path[0]='\0';
+    buf->alias_name[0]='\0';
+    buf->next = NULL;
+    buf->reader_ids = NULL;
+    buf->version = 0;
+    buf->writer_id=-1;
+    buf->nreaders = 0;
+    buf->is_ready = 0;
+    buf->transfered = 0;
+    buf->vars = NULL;
+    buf->var_cnt = 0;
+    buf->header = NULL;
+    buf->hdr_sz = 0;
+    buf->mode = FARB_IO_MODE_UNDEFINED;
     return buf;
 }
 
@@ -125,10 +133,9 @@ farb_var_t* new_var(int varid, int ndims, MPI_Offset *shape)
     assert(var!=NULL);
 
     /*Initialize whatever we can initialize at this stage*/
-    var->bufnodes = NULL;
-    var->bufnode_cnt = 0;
+    var->nodes = NULL;
+    var->node_cnt=0;
     var->id = varid;
-    var->begin = -1;
     if(ndims > 0){ //non scalar
         var->shape = (MPI_Offset*)malloc(ndims*sizeof(MPI_Offset));
         for(i=0; i<ndims;i++)
@@ -139,8 +146,8 @@ farb_var_t* new_var(int varid, int ndims, MPI_Offset *shape)
 
     var->ndims = ndims;
     var->next = NULL;
-    var->type = MPI_DATATYPE_NULL;
-    var->xsz = 0;
+    //TODO !!!! when dims are registered define xsz size
+//    var->xsz = 0;
     return var;
 }
 

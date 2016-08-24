@@ -5,8 +5,6 @@
 #include "pfarb_util.h"
 #include <assert.h>
 
-//TODO change everithing file size related to long long and check casts
-
 int lib_initialized=0;
 int gl_verbose;
 int gl_my_rank;
@@ -25,9 +23,6 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
   //  char* conf_filepath;
     int errno, mpi_initialized;
     char* s;
-    MPI_Datatype dt[2] = {MPI_CHAR, MPI_UNSIGNED};
-    int blocklen[2] = {MAX_FILE_NAME, 1};
-    MPI_Aint displ[2];
     int verbose;
 
     if(lib_initialized)
@@ -93,16 +88,6 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
     errno = init_comp_comm();
     if(errno) goto panic_exit;
 
-
-    /*Create MPI_datatype for file-related notification messages*/
-    displ[0] = offsetof(msg_ready_notif_t, filename);
-    displ[1] = offsetof(msg_ready_notif_t, file_sz);
-
-    errno = MPI_Type_create_struct(2, blocklen, displ, dt, &msg_ready_datatype);
-    assert(errno == MPI_SUCCESS);
-    errno = MPI_Type_commit(&msg_ready_datatype);
-    assert(errno == MPI_SUCCESS);
-
     lib_initialized = 1;
 
     //enable print setting for other ranks again
@@ -139,7 +124,6 @@ _EXTERN_C_ int farb_finalize()
         exit(1);
     }
 
-    MPI_Type_free(&msg_ready_datatype);
     finalize_comp_comm();
 
     clean_config();
@@ -165,35 +149,35 @@ _EXTERN_C_ int farb_finalize()
   @return	number of bytes written
 
  */
-_EXTERN_C_ size_t farb_write(const char* filename, off_t const offset, const size_t data_sz, void *const data)
-{
-//    if(!lib_initialized) return 0;
-//    if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
-//    return mem_write(filename, offset, data_sz, data);
+//_EXTERN_C_ size_t farb_write(const char* filename, off_t const offset, const size_t data_sz, void *const data)
+//{
+////    if(!lib_initialized) return 0;
+////    if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
+////    return mem_write(filename, offset, data_sz, data);
 
-    return 0;
-}
+    //return 0;
+//}
 
-/**
-  @brief	First checks if direct data transfer should be used for this file. If yes,
-            reads a portion of data to corresponding memory buffer. If no, returns.
-  @param	filename        file name for the memory buffer
-  @param    offset          offset at which to read the data
-  @param    data_sz         size of the data to be read
-  @param    data            pointer to the buffer where to read the data to
-  @return	number of bytes read
+///**
+  //@brief	First checks if direct data transfer should be used for this file. If yes,
+            //reads a portion of data to corresponding memory buffer. If no, returns.
+  //@param	filename        file name for the memory buffer
+  //@param    offset          offset at which to read the data
+  //@param    data_sz         size of the data to be read
+  //@param    data            pointer to the buffer where to read the data to
+  //@return	number of bytes read
 
- */
-_EXTERN_C_ size_t farb_read(const char *filename, off_t const offset, const size_t data_sz, void *const data)
-{
+ //*/
+//_EXTERN_C_ size_t farb_read(const char *filename, off_t const offset, const size_t data_sz, void *const data)
+//{
 
-//    if(!lib_initialized) return 0;
-//    if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
-//    FARB_DBG(VERBOSE_DBG_LEVEL,   "read %s", filename);
-//    return mem_read(filename, offset, data_sz, data);
+////    if(!lib_initialized) return 0;
+////    if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
+////    FARB_DBG(VERBOSE_DBG_LEVEL,   "read %s", filename);
+////    return mem_read(filename, offset, data_sz, data);
 
-    return 0;
-}
+    //return 0;
+//}
 
 
 _EXTERN_C_ void farb_write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
