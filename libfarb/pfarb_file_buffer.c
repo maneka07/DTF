@@ -125,7 +125,7 @@ file_buffer_t* new_file_buffer()
     buf->distr_nranks = 0;
     buf->distr_ndone = 0;
    // buf->distr_ranks_expr = NULL;
-    buf->distr_rule = DISTR_RULE_DEFAULT; //p2p
+    buf->distr_rule = DISTR_RULE_P2P;
     return buf;
 }
 

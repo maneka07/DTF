@@ -206,11 +206,11 @@ int load_config(const char *ini_name, const char *comp_name){
             }
             if(cur_fb->distr_rule == DISTR_RULE_RANGE){
                 if(cur_fb->distr_range == 0){
-                    FARB_DBG(VERBOSE_ERROR_LEVEL, "Farb Error: Please specify range for file %s", cur_fb->file_path);
+                    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: Please specify range for file %s", cur_fb->file_path);
                     goto panic_exit;
                 }
                 if(cur_fb->distr_pattern == FARB_UNDEFINED){
-                    FARB_DBG(VERBOSE_ERROR_LEVEL, "Farb Error: Please specify distribution pattern for file %s", cur_fb->file_path);
+                    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: Please specify distribution pattern for file %s", cur_fb->file_path);
                     goto panic_exit;
                 }
             }
@@ -317,6 +317,11 @@ int load_config(const char *ini_name, const char *comp_name){
             else if(strcmp(value, "ranks") == 0){
                 FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: distribution rule <ranks> is not implemented yet. Use <range> instead.");
                 goto panic_exit;
+            } else if (strcmp(value, "p2p") == 0){
+                cur_fb->distr_rule = DISTR_RULE_P2P;
+            } else {
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: distribution rule %s is unknown", value);
+                goto panic_exit;
             }
         } else if(strcmp(param, "distr_pattern") == 0){
             if(strcmp(value, "scatter") == 0)
@@ -325,7 +330,7 @@ int load_config(const char *ini_name, const char *comp_name){
                 cur_fb->distr_pattern = DISTR_PATTERN_ALL;
 
             if(cur_fb->distr_pattern == FARB_UNDEFINED){
-                FARB_DBG(VERBOSE_ERROR_LEVEL, "Farb Error: unknown distribution pattern %s.", value);
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: unknown distribution pattern %s.", value);
                 goto panic_exit;
             }
         } else if(strcmp(param, "distr_range") == 0){
@@ -747,9 +752,10 @@ void progress_io()
                     errno = MPI_Send(filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].intercomm);
                     CHECK_MPI(errno);
                     receive_data(fbuf, src, gl_comps[i].intercomm);
+                    fbuf->distr_ndone++;
                 }
-
-                fbuf->is_ready = 1;
+                if(fbuf->distr_ndone == fbuf->distr_nranks)
+                    fbuf->is_ready = 1;
                 break;
             case RECV_READY_TAG:
 
@@ -805,26 +811,26 @@ void unpack_vars(int buf_sz, void *buf, farb_var_t **vars, int *var_cnt)
 
     for(i = 0; i < *var_cnt; i++){
         var = new_var(0, 0, NULL);
-        //memcpy(&var->id, buf+offt, sizeof(var->id));
         var->id = *((int*)(buf+offt));
-        offt += sizeof(var->id);
-        memcpy(&var->ndims, buf+offt, sizeof(var->ndims));
-        offt += sizeof(var->id);
+        offt += sizeof(int);
+        var->ndims = *((int*)(buf+offt));
+        offt += sizeof(int);
         if(var->ndims > 0){
             var->shape = malloc(var->ndims*sizeof(MPI_Offset));
             assert(var->shape != NULL);
             for(j = 0; j < var->ndims; j++){
-                memcpy(&(var->shape[j]), buf+offt, sizeof(MPI_Offset));
+                var->shape[j] = *((MPI_Offset*)(buf+offt));
                 offt += sizeof(MPI_Offset);
             }
         } else
             var->shape = NULL;
-        memcpy(&var->node_cnt, buf+offt, sizeof(var->node_cnt));
-        offt += sizeof(var->node_cnt);
+        var->node_cnt = *((MPI_Offset*)(buf+offt));
+        offt += sizeof(MPI_Offset);
+
         for(j = 0; j < var->node_cnt; j++){
-            memcpy(&offset, buf+offt, sizeof(MPI_Offset));
+            offset = *((MPI_Offset*)(buf+offt));
             offt += sizeof(MPI_Offset);
-            memcpy(&data_sz, buf+offt, sizeof(MPI_Offset));
+            data_sz = *((MPI_Offset*)(buf+offt));
             offt += sizeof(MPI_Offset);
             node = new_buffer_node(offset, data_sz);
             insert_buffer_node(&var->nodes, node);
@@ -862,26 +868,27 @@ void pack_vars(int var_cnt, farb_var_t *vars, int *buf_sz, void **buf)
     *buf = malloc(sz);
     assert(*buf != NULL);
     //write the number of vars
-    memcpy(*buf, &var_cnt, sizeof(int));
+    *((int*)(*buf)) = var_cnt;
     offt += sizeof(int);
     var = vars;
     while(var != NULL){
-        memcpy(*buf+offt, &var->id, sizeof(var->id));
-        offt += sizeof(var->id);
-        memcpy(*buf+offt, &var->ndims, sizeof(var->ndims));
-        offt += sizeof(var->ndims);
+        *((int*)(*buf+offt)) = var->id;
+        offt += sizeof(int);
+        *((int*)(*buf+offt)) = var->ndims;
+        offt += sizeof(int);
+
         for(i = 0; i<var->ndims;i++){
-            memcpy(*buf+offt, &var->shape[i], sizeof(MPI_Offset));
+            *((MPI_Offset*)(*buf+offt)) = var->shape[i];
             offt += sizeof(MPI_Offset);
         }
-        memcpy(*buf+offt, &var->node_cnt, sizeof(var->node_cnt));
-        offt+=sizeof(var->node_cnt);
+        *((MPI_Offset*)(*buf+offt)) = var->node_cnt;
+        offt+=sizeof(MPI_Offset);
         /*Pack node offsets*/
         node = var->nodes;
         while(node != NULL){
-            memcpy(*buf+offt, &node->offset, sizeof(MPI_Offset));
+            *((MPI_Offset*)(*buf+offt)) = node->offset;
             offt+=sizeof(MPI_Offset);
-            memcpy(*buf+offt, &node->data_sz, sizeof(MPI_Offset));
+            *((MPI_Offset*)(*buf+offt)) = node->data_sz;
             offt+=sizeof(MPI_Offset);
             node = node->next;
         }
@@ -899,18 +906,52 @@ void notify_file_ready(const char* filename)
 {
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename);
     assert(fbuf != NULL);
-    int comp_id, dest, errno;
+    int comp_id, dest, errno, ndest=0;
 
     comp_id = fbuf->reader_id;
-    dest = gl_my_rank;  //file per process mode
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader %s that file %s is ready", gl_comps[comp_id].name, fbuf->file_path);
+
+    /*First notify the reader rank which matches my rank. This is needed
+    for both: p2p distribution rule and the range rule.*/
+    dest = gl_my_rank;
+    FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
     errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
     CHECK_MPI(errno);
+    ndest++;
 
     if(fbuf->mode == FARB_IO_MODE_FILE)
         fbuf->distr_ndone++;
 
+    if(fbuf->distr_rule == DISTR_RULE_RANGE){
+        int nranks;
+        MPI_Comm_remote_size(gl_comps[comp_id].intercomm, &nranks);
+        /*Notify everyone to the left from me*/
+        dest -= fbuf->distr_range;
+        while(dest >= 0){
+            FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
+            errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
+            CHECK_MPI(errno);
+            ndest++;
+            if(fbuf->mode == FARB_IO_MODE_FILE)
+                fbuf->distr_ndone++;
 
+            dest -= fbuf->distr_range;
+        }
+        /*Notify everyone to the right from me*/
+        dest = gl_my_rank + fbuf->distr_range;
+        while(dest < nranks){
+            FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
+            errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
+            CHECK_MPI(errno);
+            ndest++;
+
+            if(fbuf->mode == FARB_IO_MODE_FILE)
+                fbuf->distr_ndone++;
+
+            dest += fbuf->distr_range;
+        }
+    }
+
+    assert(ndest == fbuf->distr_nranks);
 }
 
 void close_file(const char *filename)
@@ -921,8 +962,7 @@ void close_file(const char *filename)
 
     if(fbuf->write_flag){
         notify_file_ready(filename);
-        //while(fbuf->distr_nranks != fbuf->distr_ndone)
-        while(fbuf->distr_ndone !=1)
+        while(fbuf->distr_ndone != fbuf->distr_nranks)
             progress_io();
     }
 
@@ -988,7 +1028,7 @@ int set_distr_count(const char* filename, int varid, int count[])
     assert(fbuf != NULL);
 
     if(fbuf->distr_pattern != DISTR_PATTERN_SCATTER){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "Farb Warning: cannot set distribute count. File's distribute pattern must be <scatter>.");
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: cannot set distribute count. File's distribute pattern must be <scatter>.");
         return 0;
     }
 
@@ -1009,16 +1049,22 @@ int set_distr_count(const char* filename, int varid, int count[])
 
 int init_data_distr()
 {
-//    int nranks;
-//
-//    file_buffer_t *fbuf = gl_filebuf_list;
-//
-//    while(fbuf != NULL){
-//        if(fbuf->distr_rule == DISTR_RULE_RANGE){
-//            //if(fbuf->writer_id == gl_my_comp_id)
-//                //MPI_Comm_remote_size(gl_comps)
-//        }
-//        fbuf = fbuf->next;
-//    }
+    int nranks;
+
+    file_buffer_t *fbuf = gl_filebuf_list;
+
+    while(fbuf != NULL){
+        if(fbuf->distr_rule == DISTR_RULE_P2P){
+            fbuf->distr_nranks = 1;
+        } else if(fbuf->distr_rule == DISTR_RULE_RANGE){
+            if(fbuf->writer_id == gl_my_comp_id)
+                MPI_Comm_remote_size(gl_comps[fbuf->reader_id].intercomm, &nranks);
+            else
+                MPI_Comm_remote_size(gl_comps[fbuf->writer_id].intercomm, &nranks);
+
+            fbuf->distr_nranks = (int)(nranks/fbuf->distr_range);
+        }
+        fbuf = fbuf->next;
+    }
     return 0;
 }

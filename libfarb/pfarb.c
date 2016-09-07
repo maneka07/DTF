@@ -134,7 +134,7 @@ _EXTERN_C_ int farb_finalize()
 
     clean_config();
 
-    FARB_DBG(VERBOSE_DBG_LEVEL,"Farb: finalize");
+    FARB_DBG(VERBOSE_DBG_LEVEL,"FARB: finalize");
     free(gl_my_comp_name);
     lib_initialized = 0;
     fflush(stdout);

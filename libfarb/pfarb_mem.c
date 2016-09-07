@@ -110,7 +110,7 @@ MPI_Offset mem_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, voi
     }
 
     if(tmp == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "Farb warning: there is no data at offset %llu", offset);
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB warning: there is no data at offset %llu", offset);
         return 0;
     }
     copied = 0;

@@ -7,7 +7,7 @@
 
 #define MAX_FILE_NAME 1024
 
-#define DISTR_RULE_DEFAULT  0  /*p2p*/
+#define DISTR_RULE_P2P      0  /*default*/
 #define DISTR_RULE_RANGE    1
 #define DISTR_RULE_RANKS    2
 
