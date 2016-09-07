@@ -20,9 +20,12 @@
 #define FARB_READ   1
 #define FARB_WRITE  2
 
+/*TODO: implement hierarchical cleaning in case error occurs*/
+
 /*Interfaces used by an application*/
 _EXTERN_C_ int farb_init(const char *filename, char *module_name);
 _EXTERN_C_ int farb_finalize();
+_EXTERN_C_ int farb_set_distr_count(const char* filename, int varid, int count[]);
 
 /*Interfaces to be used by a File I/O library*/
 //_EXTERN_C_ size_t farb_write(const char* filename, const off_t offset, const size_t data_sz, void *const data);
@@ -37,6 +40,7 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Offs
 _EXTERN_C_ void farb_write_hdr(const char *filename, MPI_Offset hdr_sz, void *header);
 _EXTERN_C_ MPI_Offset farb_read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
 _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename, int varid, const MPI_Offset *start,const MPI_Offset *count,const MPI_Offset *stride,const MPI_Offset *imap, MPI_Datatype dtype, void *buf, int rw_flag);
+
 
 /*     Fortran interfaces    */
 void farb_init_(const char *filename, char *module_name, int* ierr);

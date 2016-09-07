@@ -1,16 +1,13 @@
 #ifndef VARS_H_INCLUDED
 #define VARS_H_INCLUDED
 
-#define MAX_COMP_NAME 32
-#define MAX_FILE_NAME 1024
-#define ASCIILINESZ   1024
 
-#define VERBOSE_NONE         0
-#define VERBOSE_ERROR_LEVEL  1
-#define VERBOSE_DBG_LEVEL    2
-#define VERBOSE_ALL_LEVEL    3
+#define VERBOSE_ERROR_LEVEL  0
+#define VERBOSE_DBG_LEVEL    1
+#define VERBOSE_ALL_LEVEL    2
 
 #define FARB_TIMEOUT       1200 /* it's long because letkf and obs are hanging for a long time before they get data from scale*/
+#define FARB_UNDEFINED      -1
 
 #include <string.h>
 #include <mpi.h>
@@ -24,7 +21,7 @@ extern int gl_verbose;
 extern int gl_my_rank;                         /*For debug messages*/
 extern struct farb_settings gl_sett;                 /*Framework settings*/
 char _buff[1024];
-char gl_my_comp_name[MAX_COMP_NAME+1];
+char *gl_my_comp_name;
 
 #define FARB_DBG(dbg_level, ...) do{  \
     if(gl_verbose >= dbg_level){  \

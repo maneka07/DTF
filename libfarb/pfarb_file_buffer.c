@@ -65,6 +65,8 @@ static void delete_var(farb_var_t *var)
         free(node);
         node = var->nodes;
     }
+    if(var->distr_count != NULL)
+        free(var->distr_count);
     free(var);
 }
 
@@ -77,9 +79,6 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
         return;
 
     assert(buflist != NULL);
-
-    if(buf->reader_ids != NULL)
-        free(buf->reader_ids);
 
     if(buf->header != NULL)
         free(buf->header);
@@ -112,17 +111,21 @@ file_buffer_t* new_file_buffer()
     buf->file_path[0]='\0';
     buf->alias_name[0]='\0';
     buf->next = NULL;
-    buf->reader_ids = NULL;
+    buf->reader_id = -1;
     buf->version = 0;
     buf->writer_id=-1;
-    buf->nreaders = 0;
     buf->is_ready = 0;
-    buf->transfered = 0;
     buf->vars = NULL;
     buf->var_cnt = 0;
     buf->header = NULL;
     buf->hdr_sz = 0;
-    buf->mode = FARB_IO_MODE_UNDEFINED;
+    buf->mode = FARB_UNDEFINED;
+    buf->distr_pattern = FARB_UNDEFINED;
+    buf->distr_range = 0;
+    buf->distr_nranks = 0;
+    buf->distr_ndone = 0;
+   // buf->distr_ranks_expr = NULL;
+    buf->distr_rule = DISTR_RULE_DEFAULT; //p2p
     return buf;
 }
 
@@ -145,6 +148,7 @@ farb_var_t* new_var(int varid, int ndims, MPI_Offset *shape)
         var->shape = NULL;
 
     var->ndims = ndims;
+    var->distr_count = NULL;
     var->next = NULL;
     //TODO !!!! when dims are registered define xsz size
 //    var->xsz = 0;

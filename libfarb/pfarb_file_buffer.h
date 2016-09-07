@@ -5,6 +5,15 @@
 #include "pfarb_buffer_node.h"
 #include <string.h>
 
+#define MAX_FILE_NAME 1024
+
+#define DISTR_RULE_DEFAULT  0  /*p2p*/
+#define DISTR_RULE_RANGE    1
+#define DISTR_RULE_RANKS    2
+
+#define DISTR_PATTERN_SCATTER   0
+#define DISTR_PATTERN_ALL       1
+
 typedef struct farb_var{
     int                     id;         /* varid assigned by pnetcdf*/
  //   int                     xsz;        /* byte size of 1 array element */
@@ -17,7 +26,9 @@ typedef struct farb_var{
 
     buffer_node_t           *nodes;      /*head buffer node that stores the data*/
     MPI_Offset              node_cnt;   /*number of allocated buffer nodes*/
- //    MPI_Offset              data_sz;    /*total amount of data of this variable that this ps wrote*/
+
+/*Data distribution related stuff*/
+    MPI_Offset *distr_count;                 /*Number of elements in each dimension to distribute*/
 
     struct farb_var *next;
 }farb_var_t;
@@ -33,8 +44,7 @@ typedef struct file_buffer{
   int           version;            /*To keep track in case the component generates
                                     several output files with the same name pattern*/
   int           writer_id;          /*Only one component can write to a file*/
-  int           *reader_ids;        /*Multiple components can read from a file*/
-  int           nreaders;           /*Number of components that read from the file*/
+  int           reader_id;
   int           is_ready;           /*Used to let the reader know that the file is either
                                       - received from the writer (mode = FARB_IO_MODE_MEMORY)
                                       - finished being written (mode = FARB_IO_MODE_FILE)
@@ -45,7 +55,13 @@ typedef struct file_buffer{
                                       - sends the file to one of the readers(mode = FARB_IO_MODE_MEMORY)
                                       - notifies a reader that it finished writing the file (mode = FARB_IO_MODE_FILE)*/
   int           mode;               /*Do normal File I/O or direct data transfer?*/
-
+  /*Data distribution related stuff*/
+  int distr_rule;                   /*Rule for distribution from writer to readers(range or list of ranks)*/
+  int distr_pattern;                /*Scatter portions of data or send all data*/
+  int distr_range;                  /*Range for distribution*/
+  int distr_nranks;                 /*writer: to how many ranks I distribute; reader: from how many ranks I receive*/
+  int distr_ndone;                  /*number of completed distributions*/
+ // char *distr_ranks_expr;           /*Formula describing to what ranks to distribute data*/
   struct file_buffer *next;         /* pointer to the next record */
 
 }file_buffer_t;

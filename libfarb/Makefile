@@ -13,7 +13,7 @@ $(SNAME): $(OBJ)
 	ranlib $(SNAME)
 
 $(DNAME): $(OBJ)
-	$(MPICC) -shared -o $@ $(OBJ)
+	$(MPICC) -shared -o $@ $(OBJ) -lm
 
 %.o: %.c
 	$(MPICC) -c -fPIC $< $(CFLAGS)

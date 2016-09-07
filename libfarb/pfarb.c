@@ -3,6 +3,7 @@
 
 #include "pfarb.h"
 #include "pfarb_util.h"
+#include "pfarb_buf_io.h"
 #include <assert.h>
 
 int lib_initialized=0;
@@ -44,6 +45,8 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
         exit(1);
     }
 
+    gl_my_comp_name = (char*)malloc(MAX_COMP_NAME);
+    assert(gl_my_comp_name != NULL);
     strcpy(gl_my_comp_name, module_name);
 
     s = getenv("FARB_VERBOSE_LEVEL");
@@ -88,6 +91,9 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
     errno = init_comp_comm();
     if(errno) goto panic_exit;
 
+    errno = init_data_distr();
+    if(errno) goto panic_exit;
+
     lib_initialized = 1;
 
     //enable print setting for other ranks again
@@ -129,6 +135,7 @@ _EXTERN_C_ int farb_finalize()
     clean_config();
 
     FARB_DBG(VERBOSE_DBG_LEVEL,"Farb: finalize");
+    free(gl_my_comp_name);
     lib_initialized = 0;
     fflush(stdout);
     fflush(stderr);
@@ -310,6 +317,13 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Offs
    // if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
 
     return def_var(filename, varid, ndims, shape);
+}
+
+_EXTERN_C_ int farb_set_distr_count(const char* filename, int varid, int count[])
+{
+    if(!lib_initialized) return 0;
+
+    return set_distr_count(filename, varid, count);
 }
 
 /*  Fortran Interfaces  */

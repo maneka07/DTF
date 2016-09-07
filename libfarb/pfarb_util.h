@@ -14,9 +14,11 @@
 #define VARS_TAG    4
 #define NODE_TAG    5 /*This tag should be always last!!*/
 
-#define CONNECT_MODE_UNDEFINED -1
 #define CONNECT_MODE_SERVER     1
 #define CONNECT_MODE_CLIENT     0
+
+#define MAX_COMP_NAME 32
+#define ASCIILINESZ   1024
 
 
 //#include "farb_file_buffer.h"
@@ -57,4 +59,8 @@ void unpack_vars(int buf_sz, void *buf, farb_var_t **vars, int *var_cnt);
 MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
 int def_var(const char* filename, int varid, int ndims, MPI_Offset *shape);
 MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *start, const MPI_Offset *count, const MPI_Offset *stride, const MPI_Offset *imap, MPI_Datatype dtype, void *buf, int rw_flag);
+int set_distr_count(const char* filename, int varid, int count[]);
+int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm);
+int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm);
+int init_data_distr();
 #endif

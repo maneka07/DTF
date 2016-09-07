@@ -98,19 +98,10 @@ MPI_Offset mem_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, voi
 
     FARB_DBG(VERBOSE_DBG_LEVEL, "mem_read at offt %ld of size %lu", (long int)offset, (long unsigned)data_sz);
 
-  //  FARB_DBG(VERBOSE_DBG_LEVEL, "Will read %ld from offt %ld (file sz %ld)", data_sz, offset, fbuf->data_sz);
-//    if(offset > var->last_byte_offt){
-//        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: ps tries to read %llu from offt %llu but this ps only has data up to byte %llu", data_sz, offset, var->last_byte_offt);
-//        return 0;
-//    }
-
-//    if(offset + data_sz > var->last_byte_offt){
-//        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: ps tries to read %llu from offt %llu but this ps only has data up to byte %llu", data_sz, offset, var->last_byte_offt);
-//        new_data_sz = var->last_byte_offt - offset;
-//    }
-
     //Find the first node that holds the data
     buffer_node_t *tmp = var->nodes;
+
+    print_nodes(var->nodes);
 
     while(tmp->next != NULL){
         if( (offset >= tmp->offset) && (offset < tmp->offset+tmp->data_sz))
