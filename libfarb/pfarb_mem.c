@@ -10,6 +10,58 @@ static void print_nodes(buffer_node_t* nodes){
     }
 }
 
+MPI_Offset mem_recursive_write(farb_var_t *var, const MPI_Offset start[], const MPI_Offset count[], void *data, int dim, MPI_Offset coord[])
+{
+    int i;
+    MPI_Offset written = 0ll;
+    if(dim == var->ndims - 1){
+        MPI_Offset dst_coord[var->ndims];
+        MPI_Offset data_sz = count[var->ndims-1]*var->el_sz;
+        //printf("%d %d %d\n", coord[0], coord[1], coord[2]);
+        MPI_Offset src_start_idx = to_1d_index(var->ndims, count, coord); //el offset within *data
+        MPI_Offset src_offt = src_start_idx * var->el_sz;
+        for(i = 0; i < var->ndims; i++)
+          dst_coord[i] = coord[i] + start[i];
+        MPI_Offset dst_start_idx = to_1d_index(var->ndims, var->shape, dst_coord); //el offset within var->nodes
+        MPI_Offset dst_offt = dst_start_idx*var->el_sz;
+        FARB_DBG(VERBOSE_DBG_LEVEL, "will write %llu bytes from el %llu (%llu) to el %llu(%llu)", data_sz, src_start_idx, src_offt, dst_start_idx, dst_offt);
+        written = mem_write(var, dst_offt, data_sz, data+src_offt);
+        return written;
+    }
+
+    for(i = 0; i < count[dim]; i++){
+        coord[dim] = i;
+        written += mem_recursive_write(var, start, count, data, dim+1, coord);
+    }
+    return written;
+}
+
+MPI_Offset mem_recursive_read(farb_var_t *var, const MPI_Offset start[], const MPI_Offset count[], void *data, int dim, MPI_Offset coord[])
+{
+    int i;
+    MPI_Offset read = 0ll;
+    if(dim == var->ndims - 1){
+        MPI_Offset src_coord[var->ndims];
+        MPI_Offset data_sz = count[var->ndims-1]*var->el_sz;
+        for(i = 0; i < var->ndims; i++)
+          src_coord[i] = coord[i] + start[i];
+        MPI_Offset src_start_idx = to_1d_index(var->ndims, var->shape, src_coord); //el offset within var->nodes
+        MPI_Offset src_offt = src_start_idx * var->el_sz;
+
+        MPI_Offset dst_start_idx = to_1d_index(var->ndims, count, coord); //el offset within *data
+        MPI_Offset dst_offt = dst_start_idx*var->el_sz;
+        FARB_DBG(VERBOSE_DBG_LEVEL, "will read %llu bytes from el %llu (%llu) to el %llu(%llu)", data_sz, src_start_idx, src_offt, dst_start_idx, dst_offt);
+        read = mem_read(var, src_offt, data_sz, data+dst_offt);
+        return read;
+    }
+
+    for(i = 0; i < count[dim]; i++){
+        coord[dim] = i;
+        read += mem_recursive_read(var, start, count, data, dim+1, coord);
+    }
+    return read;
+}
+
 MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data)
 {
     MPI_Offset offt, dsz, to_cpy, copied=0l;

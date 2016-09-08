@@ -120,12 +120,13 @@ file_buffer_t* new_file_buffer()
     buf->header = NULL;
     buf->hdr_sz = 0;
     buf->mode = FARB_UNDEFINED;
-    buf->distr_pattern = FARB_UNDEFINED;
+    buf->distr_rule = DISTR_RULE_P2P;
+    buf->distr_pattern = DISTR_PATTERN_ALL;
     buf->distr_range = 0;
     buf->distr_nranks = 0;
     buf->distr_ndone = 0;
    // buf->distr_ranks_expr = NULL;
-    buf->distr_rule = DISTR_RULE_P2P;
+
     return buf;
 }
 
@@ -150,8 +151,7 @@ farb_var_t* new_var(int varid, int ndims, MPI_Offset *shape)
     var->ndims = ndims;
     var->distr_count = NULL;
     var->next = NULL;
-    //TODO !!!! when dims are registered define xsz size
-//    var->xsz = 0;
+    var->el_sz = 0;
     return var;
 }
 

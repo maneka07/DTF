@@ -16,7 +16,7 @@
 
 typedef struct farb_var{
     int                     id;         /* varid assigned by pnetcdf*/
- //   int                     xsz;        /* byte size of 1 array element */
+    MPI_Offset              el_sz;        /* byte size of 1 array element */
     MPI_Offset              *shape;     /* dim->size of each dim */
     int                     ndims;      /* number of dimensions */
 //    int                     *dimids;    /* array of dimension IDs */

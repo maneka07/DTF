@@ -53,7 +53,7 @@ void notify_recv_ready(const char* filename);
 void close_file(const char* filename);
 int file_buffer_ready(const char* filename);
 void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header);
-void pack_vars(int var_cnt, farb_var_t *vars, int *buf_sz, void **buf);
+void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf);
 void unpack_vars(int buf_sz, void *buf, farb_var_t **vars, int *var_cnt);
 
 MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
@@ -63,4 +63,5 @@ int set_distr_count(const char* filename, int varid, int count[]);
 int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm);
 int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm);
 int init_data_distr();
+MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, MPI_Offset *coord);
 #endif

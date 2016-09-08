@@ -209,10 +209,6 @@ int load_config(const char *ini_name, const char *comp_name){
                     FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: Please specify range for file %s", cur_fb->file_path);
                     goto panic_exit;
                 }
-                if(cur_fb->distr_pattern == FARB_UNDEFINED){
-                    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: Please specify distribution pattern for file %s", cur_fb->file_path);
-                    goto panic_exit;
-                }
             }
         }
 
@@ -328,8 +324,7 @@ int load_config(const char *ini_name, const char *comp_name){
                 cur_fb->distr_pattern = DISTR_PATTERN_SCATTER;
             else if(strcmp(value, "all") == 0)
                 cur_fb->distr_pattern = DISTR_PATTERN_ALL;
-
-            if(cur_fb->distr_pattern == FARB_UNDEFINED){
+            else {
                 FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: unknown distribution pattern %s.", value);
                 goto panic_exit;
             }
@@ -654,6 +649,7 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
 
     unpack_vars(buf_sz, buf, &fbuf->vars, &fbuf->var_cnt);
 
+
     /*Receive nodes of all variables*/
     var = fbuf->vars;
     while(var != NULL){
@@ -692,7 +688,8 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
     CHECK_MPI(errno);
 
     /*Pack the vars info and send it*/
-    pack_vars(fbuf->var_cnt, fbuf->vars, &buf_sz, &buf);
+    //pack_vars(fbuf->var_cnt, fbuf->vars, &buf_sz, &buf);
+    pack_vars(fbuf, rank, &buf_sz, &buf);
     errno = MPI_Wait(&sreq, MPI_STATUS_IGNORE);
     CHECK_MPI(errno);
 
@@ -843,20 +840,34 @@ void unpack_vars(int buf_sz, void *buf, farb_var_t **vars, int *var_cnt)
     FARB_DBG(VERBOSE_DBG_LEVEL, "Finished unpacking vars");
 }
 
-/*
-    *buf_sz     [OUT]
-    **buf       [OUT]
-    the rest    [IN]
-*/
-void pack_vars(int var_cnt, farb_var_t *vars, int *buf_sz, void **buf)
+
+MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, MPI_Offset *coord)
+{
+      int i, j;
+      MPI_Offset idx = 0, mem=0;
+
+      for(i = 0; i < ndims; i++){
+        mem = coord[i];
+        for(j = i+1; j < ndims; j++)
+          mem *= shape[j];
+        idx += mem;
+      }
+    return idx;
+}
+
+
+void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf)
 {
     int i;
     size_t sz = 0, offt=0;
     buffer_node_t *node;
     /*Count how much space we need. We'll pack necessary fields from farv_var_t
-      + will send the list of offsets of all variable nodes*/
-    sz += sizeof(var_cnt);
-    farb_var_t *var = vars;
+      + will send the list of offsets and data sizes that we will send.
+      We assume that all nodes will be sent and allocate enough memory.
+      If scatter distribution pattern is used, we adjust later the real size of data
+      to send.*/
+    sz += sizeof(fbuf->var_cnt);
+    farb_var_t *var = fbuf->vars;
     while(var != NULL){
         sz += sizeof(var->id) + sizeof(MPI_Offset)*var->ndims +
               sizeof(var->ndims) + sizeof(var->node_cnt) + var->node_cnt*sizeof(MPI_Offset)*2;
@@ -868,9 +879,10 @@ void pack_vars(int var_cnt, farb_var_t *vars, int *buf_sz, void **buf)
     *buf = malloc(sz);
     assert(*buf != NULL);
     //write the number of vars
-    *((int*)(*buf)) = var_cnt;
+    *((int*)(*buf)) = fbuf->var_cnt;
     offt += sizeof(int);
-    var = vars;
+
+    var = fbuf->vars;
     while(var != NULL){
         *((int*)(*buf+offt)) = var->id;
         offt += sizeof(int);
@@ -881,24 +893,30 @@ void pack_vars(int var_cnt, farb_var_t *vars, int *buf_sz, void **buf)
             *((MPI_Offset*)(*buf+offt)) = var->shape[i];
             offt += sizeof(MPI_Offset);
         }
-        *((MPI_Offset*)(*buf+offt)) = var->node_cnt;
-        offt+=sizeof(MPI_Offset);
-        /*Pack node offsets*/
-        node = var->nodes;
-        while(node != NULL){
-            *((MPI_Offset*)(*buf+offt)) = node->offset;
-            offt+=sizeof(MPI_Offset);
-            *((MPI_Offset*)(*buf+offt)) = node->data_sz;
-            offt+=sizeof(MPI_Offset);
-            node = node->next;
-        }
 
+        if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
+            *((MPI_Offset*)(*buf+offt)) = var->node_cnt;
+            offt+=sizeof(MPI_Offset);
+            /*Pack node offsets*/
+            node = var->nodes;
+            while(node != NULL){
+                *((MPI_Offset*)(*buf+offt)) = node->offset;
+                offt+=sizeof(MPI_Offset);
+                *((MPI_Offset*)(*buf+offt)) = node->data_sz;
+                offt+=sizeof(MPI_Offset);
+                node = node->next;
+            }
+        } else { /*DIST_PATTERN_SCATTER*/
+            /*Data must be located contiguously in the buffer*/
+            //TODO continue
+        }
         var = var->next;
     }
     FARB_DBG(VERBOSE_DBG_LEVEL, "packing: offt %d, sz %d", (int)offt, (int)sz);
-    assert(offt == sz);
+    if(fbuf->distr_rule == DISTR_PATTERN_ALL)
+        assert(offt == sz);
 
-    *buf_sz = (int)sz;
+    *buf_sz = (int)offt;
     FARB_DBG(VERBOSE_DBG_LEVEL, "Finish packing vars");
 }
 

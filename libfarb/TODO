@@ -1,3 +1,7 @@
 >>>> Write a fortran module that can be included in user application 
 
 >>>> handle ncmpi_buffer_attach (buffered io)
+
+>>>> figure out what are fill values and how to eat them
+
+>>>> record variables (are they structs?)
