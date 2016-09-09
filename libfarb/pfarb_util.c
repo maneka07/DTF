@@ -829,7 +829,7 @@ void unpack_vars(int buf_sz, void *buf, farb_var_t **vars, int *var_cnt)
             offt += sizeof(MPI_Offset);
             data_sz = *((MPI_Offset*)(buf+offt));
             offt += sizeof(MPI_Offset);
-            node = new_buffer_node(offset, data_sz);
+            node = new_buffer_node(offset, data_sz, 0, NULL); //reader does not need to know coordinate of the first element
             insert_buffer_node(&var->nodes, node);
         }
 
@@ -846,6 +846,11 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, MPI_Offset *coord)
       int i, j;
       MPI_Offset idx = 0, mem=0;
 
+      if(ndims == 0) //scalar
+        return 0ll;
+      else if(ndims == 1) //1d array
+        return *coord;
+
       for(i = 0; i < ndims; i++){
         mem = coord[i];
         for(j = i+1; j < ndims; j++)
@@ -855,13 +860,12 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, MPI_Offset *coord)
     return idx;
 }
 
-
 void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf)
 {
     int i;
     size_t sz = 0, offt=0;
     buffer_node_t *node;
-    /*Count how much space we need. We'll pack necessary fields from farv_var_t
+    /*Count how much space we need. We'll pack necessary fields from farb_var_t
       + will send the list of offsets and data sizes that we will send.
       We assume that all nodes will be sent and allocate enough memory.
       If scatter distribution pattern is used, we adjust later the real size of data
@@ -907,8 +911,15 @@ void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf)
                 node = node->next;
             }
         } else { /*DIST_PATTERN_SCATTER*/
-            /*Data must be located contiguously in the buffer*/
-            //TODO continue
+            /* Distribute blocks of count[] elemenets one by one
+               to each process in the range. If we fail to read
+               exactly count[] elements, it means some values are
+               lacking. This will cause the app to abort.
+               //TODO figure out with fill values in pnetcdf
+            */
+            node = var->nodes;
+
+
         }
         var = var->next;
     }

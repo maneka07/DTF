@@ -1,15 +1,22 @@
 #include "pfarb_buffer_node.h"
 #include <assert.h>
-
-buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz)
+#include <string.h>
+buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz, int ndims, MPI_Offset first_el_coord[])
 {
     buffer_node_t *node = malloc(sizeof(buffer_node_t));
     assert(node != NULL);
     node->data = malloc((size_t)data_sz);
     assert(node->data != NULL);
     node->data_sz = data_sz;
-    node->next = NULL;
     node->offset = offset;
+    if(ndims > 1){
+        node->first_coord = (MPI_Offset *)malloc(ndims * sizeof(MPI_Offset));
+        assert(node->first_coord != NULL);
+        memcpy(node->first_coord, first_el_coord, ndims*sizeof(MPI_Offset));
+    } else
+        node->first_coord = NULL;
+
+    node->next = NULL;
     node->prev = NULL;
 
     return node;

@@ -24,7 +24,6 @@
 //#include "farb_file_buffer.h"
 
 //TODO: remove all asserts in the code and replace with proper error handling
-//TODO file can have either only reader or writer
 typedef struct component{
     unsigned int id;
     //TODO remove +1

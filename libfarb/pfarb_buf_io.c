@@ -16,7 +16,7 @@ MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *sta
                           const MPI_Offset *count, const MPI_Offset *stride, const MPI_Offset *imap,
                           MPI_Datatype dtype, void *buf, int rw_flag)
 {
-    MPI_Offset el_offt, byte_offt;
+    MPI_Offset el_offt;
     int el_sz;
     MPI_Offset data_sz;
     MPI_Offset ret;
@@ -52,16 +52,16 @@ MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *sta
 
     if(var->ndims <= 1){ /*scalar or 1d array*/
         el_offt = *start;
-        byte_offt = el_offt*(MPI_Offset)el_sz;
+        //byte_offt = el_offt*(MPI_Offset)el_sz;
         /*Data size to write*/
         data_sz = (*count)*el_sz;
 
         if(rw_flag == FARB_READ){
             FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will read %llu elems of sz %d from element offt %llu ", var->id, *count, el_sz, el_offt);
-            ret = mem_read(var, byte_offt, data_sz, buf);
+            ret = mem_read(var, &el_offt, data_sz, buf);
         } else {
             FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will write %llu elems of sz %d to element offt %llu ", var->id, *count, el_sz, el_offt);
-            ret = mem_write(var, byte_offt, data_sz, buf);
+            ret = mem_write(var, &el_offt, data_sz, buf);
         }
 
         if(ret != data_sz)

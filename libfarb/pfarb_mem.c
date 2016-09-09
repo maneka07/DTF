@@ -22,10 +22,8 @@ MPI_Offset mem_recursive_write(farb_var_t *var, const MPI_Offset start[], const 
         MPI_Offset src_offt = src_start_idx * var->el_sz;
         for(i = 0; i < var->ndims; i++)
           dst_coord[i] = coord[i] + start[i];
-        MPI_Offset dst_start_idx = to_1d_index(var->ndims, var->shape, dst_coord); //el offset within var->nodes
-        MPI_Offset dst_offt = dst_start_idx*var->el_sz;
-        FARB_DBG(VERBOSE_DBG_LEVEL, "will write %llu bytes from el %llu (%llu) to el %llu(%llu)", data_sz, src_start_idx, src_offt, dst_start_idx, dst_offt);
-        written = mem_write(var, dst_offt, data_sz, data+src_offt);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "will write %llu bytes from el %llu (%llu)", data_sz, src_start_idx, src_offt);
+        written = mem_write(var, dst_coord, data_sz, data+src_offt);
         return written;
     }
 
@@ -36,41 +34,19 @@ MPI_Offset mem_recursive_write(farb_var_t *var, const MPI_Offset start[], const 
     return written;
 }
 
-MPI_Offset mem_recursive_read(farb_var_t *var, const MPI_Offset start[], const MPI_Offset count[], void *data, int dim, MPI_Offset coord[])
+//MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data)
+MPI_Offset mem_write(farb_var_t *var, MPI_Offset first_el_coord[],  MPI_Offset data_sz, void *data)
 {
-    int i;
-    MPI_Offset read = 0ll;
-    if(dim == var->ndims - 1){
-        MPI_Offset src_coord[var->ndims];
-        MPI_Offset data_sz = count[var->ndims-1]*var->el_sz;
-        for(i = 0; i < var->ndims; i++)
-          src_coord[i] = coord[i] + start[i];
-        MPI_Offset src_start_idx = to_1d_index(var->ndims, var->shape, src_coord); //el offset within var->nodes
-        MPI_Offset src_offt = src_start_idx * var->el_sz;
-
-        MPI_Offset dst_start_idx = to_1d_index(var->ndims, count, coord); //el offset within *data
-        MPI_Offset dst_offt = dst_start_idx*var->el_sz;
-        FARB_DBG(VERBOSE_DBG_LEVEL, "will read %llu bytes from el %llu (%llu) to el %llu(%llu)", data_sz, src_start_idx, src_offt, dst_start_idx, dst_offt);
-        read = mem_read(var, src_offt, data_sz, data+dst_offt);
-        return read;
-    }
-
-    for(i = 0; i < count[dim]; i++){
-        coord[dim] = i;
-        read += mem_recursive_read(var, start, count, data, dim+1, coord);
-    }
-    return read;
-}
-
-MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data)
-{
-    MPI_Offset offt, dsz, to_cpy, copied=0l;
+    MPI_Offset offt, dsz, to_cpy, copied=0ll;
     buffer_node_t *tmp;
     FARB_DBG(VERBOSE_DBG_LEVEL, "Enter mem_write");
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Will write %llu bytes to var %d at offt %llu", data_sz, var->id, offset);
+    MPI_Offset start_idx = to_1d_index(var->ndims, var->shape, first_el_coord); //el offset within var->nodes
+    MPI_Offset offset = start_idx*var->el_sz;
+   // offset = var->el_sz*to_1d_index(var->ndims, var->shape, first_el_coord);
+    FARB_DBG(VERBOSE_DBG_LEVEL,   "Will write %llu bytes to el %llu (%llu)", data_sz, start_idx, offset);
 
     if(var->nodes == NULL){
-        buffer_node_t *node = new_buffer_node(offset, data_sz);
+        buffer_node_t *node = new_buffer_node(offset, data_sz, var->ndims, first_el_coord);
         var->node_cnt++;
         memcpy(node->data, data, (size_t)data_sz);
         insert_buffer_node(&(var->nodes), node);
@@ -101,14 +77,14 @@ MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, vo
             to_cpy = tmp->offset - offt;
             if(to_cpy > dsz)
                 to_cpy = dsz;
-            buffer_node_t *node = new_buffer_node(offset, to_cpy);
+            buffer_node_t *node = new_buffer_node(offset, to_cpy, var->ndims, first_el_coord);
             var->node_cnt++;
             memcpy(node->data, data+copied, (size_t)to_cpy);
             insert_buffer_node(&(var->nodes), node);
 
         } else if(offt >= tmp->offset + tmp->data_sz){ /*special case: the offset is > the last node*/
             FARB_DBG(VERBOSE_DBG_LEVEL, "2");
-            buffer_node_t *node = new_buffer_node(offset, dsz);
+            buffer_node_t *node = new_buffer_node(offset, dsz, var->ndims, first_el_coord);
             var->node_cnt++;
             to_cpy = dsz;
             memcpy(node->data, data+copied, (size_t)to_cpy);
@@ -142,13 +118,38 @@ MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, vo
     return copied;
 }
 
-MPI_Offset mem_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data)
+MPI_Offset mem_recursive_read(farb_var_t *var, const MPI_Offset start[], const MPI_Offset count[], void *data, int dim, MPI_Offset coord[])
+{
+    int i;
+    MPI_Offset read = 0ll;
+    if(dim == var->ndims - 1){
+        MPI_Offset src_coord[var->ndims];
+        MPI_Offset data_sz = count[var->ndims-1]*var->el_sz;
+        for(i = 0; i < var->ndims; i++)
+          src_coord[i] = coord[i] + start[i];
+        MPI_Offset dst_start_idx = to_1d_index(var->ndims, count, coord); //el offset within *data
+        MPI_Offset dst_offt = dst_start_idx*var->el_sz;
+
+        FARB_DBG(VERBOSE_DBG_LEVEL, "will read %llu bytes to el %llu(%llu)", data_sz, dst_start_idx, dst_offt);
+        read = mem_read(var, src_coord, data_sz, data+dst_offt);
+        return read;
+    }
+
+    for(i = 0; i < count[dim]; i++){
+        coord[dim] = i;
+        read += mem_recursive_read(var, start, count, data, dim+1, coord);
+    }
+    return read;
+}
+
+//MPI_Offset mem_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data)
+MPI_Offset mem_read(farb_var_t *var, MPI_Offset first_el_coord[],  MPI_Offset data_sz, void *data)
 {
 
     MPI_Offset copied, node_offt, to_cpy;
-
-
-    FARB_DBG(VERBOSE_DBG_LEVEL, "mem_read at offt %ld of size %lu", (long int)offset, (long unsigned)data_sz);
+    MPI_Offset start_idx = to_1d_index(var->ndims, var->shape, first_el_coord); //el offset within var->nodes
+    MPI_Offset offset = start_idx * var->el_sz;
+    FARB_DBG(VERBOSE_DBG_LEVEL, "will read %llu bytes from el %llu (%llu)", data_sz, start_idx, offset);
 
     //Find the first node that holds the data
     buffer_node_t *tmp = var->nodes;
