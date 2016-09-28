@@ -9,7 +9,6 @@
 
 #define DISTR_RULE_P2P      0  /*default*/
 #define DISTR_RULE_RANGE    1
-#define DISTR_RULE_RANKS    2
 
 #define DISTR_PATTERN_SCATTER   0
 #define DISTR_PATTERN_ALL       1
@@ -19,11 +18,6 @@ typedef struct farb_var{
     MPI_Offset              el_sz;        /* byte size of 1 array element */
     MPI_Offset              *shape;     /* dim->size of each dim */
     int                     ndims;      /* number of dimensions */
-//    int                     *dimids;    /* array of dimension IDs */
- //   MPI_Datatype            type;       /* variable's data type */
-  //  MPI_Offset              begin;      /* starting file offset of this variable */
- //   MPI_Offset              last_byte_offt;    /*offset of the last byte written by this ps*/
-
     buffer_node_t           *nodes;      /*head buffer node that stores the data*/
     MPI_Offset              node_cnt;   /*number of allocated buffer nodes*/
 
@@ -59,7 +53,8 @@ typedef struct file_buffer{
   int distr_rule;                   /*Rule for distribution from writer to readers(range or list of ranks)*/
   int distr_pattern;                /*Scatter portions of data or send all data*/
   int distr_range;                  /*Range for distribution*/
-  int distr_nranks;                 /*writer: to how many ranks I distribute; reader: from how many ranks I receive*/
+  int distr_nranks;                 /*writer: how many ranks I distribute to; reader: how many ranks I receive from*/
+  int *distr_ranks;                 /*writer: ranks I distribute to; reader: ranks I receive from*/
   int distr_ndone;                  /*number of completed distributions*/
  // char *distr_ranks_expr;           /*Formula describing to what ranks to distribute data*/
   struct file_buffer *next;         /* pointer to the next record */

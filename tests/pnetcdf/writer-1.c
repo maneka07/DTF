@@ -73,7 +73,7 @@
 
 #include "pfarb.h"
 
-#define NY 3
+#define NY 10
 #define NX 2
 
 #ifndef MIN
@@ -148,6 +148,9 @@ int main(int argc, char** argv) {
     ERR
     err = ncmpi_enddef(ncid);
     ERR
+    
+    int farb_count[] = {NY, myNX};
+    err = farb_set_distr_count(filename, varid, farb_count);
       //    printf("app %d: finished def\n", rank); 
     /* First, fill the entire array with zeros, using a blocking I/O.
        Every process writes a subarray of size NY * myNX */
@@ -155,7 +158,7 @@ int main(int argc, char** argv) {
     buf[0] = (int*)  calloc(NY * myNX, sizeof(int));
     start[0] = 0;   start[1] = myOff;
     count[0] = NY;  count[1] = myNX;
-    err = ncmpi_put_vara_int_all(ncid, varid, start, count, buf[0]);
+    //err = ncmpi_put_vara_int_all(ncid, varid, start, count, buf[0]);
     free(buf[0]);
     //printf("app %d: finished init\n", rank); 
     /* initialize the buffer with rank ID. Also make the case interesting,
@@ -171,7 +174,7 @@ int main(int argc, char** argv) {
     /* each proc writes myNX columns of the 2D array, block_len controls the
        number of contiguous columns at a time */
     block_start = 0;
-    block_len   = 2;  /* can be 1, 2, 3, ..., myNX */
+    block_len   = myNX;  /* can be 1, 2, 3, ..., myNX */
     if (block_len > myNX) block_len = myNX;
 
     start[0] = 0;   start[1] = rank * block_len;

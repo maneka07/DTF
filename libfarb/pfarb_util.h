@@ -52,12 +52,13 @@ void notify_recv_ready(const char* filename);
 void close_file(const char* filename);
 int file_buffer_ready(const char* filename);
 void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header);
-void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf);
-void unpack_vars(int buf_sz, void *buf, farb_var_t **vars, int *var_cnt);
+void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf, MPI_Offset *node_cnt, MPI_Offset **first_el_coord);
+void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *node_cnt, MPI_Offset **first_el_coord);
 
 MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
 int def_var(const char* filename, int varid, int ndims, MPI_Offset *shape);
-MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *start, const MPI_Offset *count, const MPI_Offset *stride, const MPI_Offset *imap, MPI_Datatype dtype, void *buf, int rw_flag);
+MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *start,
+                            const MPI_Offset *count, const MPI_Offset *stride, const MPI_Offset *imap, MPI_Datatype dtype, void *buf, int rw_flag);
 int set_distr_count(const char* filename, int varid, int count[]);
 int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm);
 int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm);

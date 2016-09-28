@@ -90,6 +90,8 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
         var = tmp;
     }
 
+    free(buf->distr_ranks);
+
     if(*buflist == buf)
         *buflist = buf->next;
     else{
@@ -124,6 +126,7 @@ file_buffer_t* new_file_buffer()
     buf->distr_pattern = DISTR_PATTERN_ALL;
     buf->distr_range = 0;
     buf->distr_nranks = 0;
+    buf->distr_ranks = NULL;
     buf->distr_ndone = 0;
    // buf->distr_ranks_expr = NULL;
 

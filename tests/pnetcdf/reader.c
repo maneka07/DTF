@@ -147,10 +147,10 @@ int benchmark_read(char       *filename,
     MPI_Offset start[2], count[2];
     MPI_Info info=MPI_INFO_NULL;
 
-    verbose = 0;
+    verbose = 1;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &nprocs);
-    s_rank = (rank + nprocs / 2 ) % nprocs;
+    s_rank = rank;//(rank + nprocs / 2 ) % nprocs;
 
     psizes[0] = psizes[1] = 0;
     MPI_Dims_create(nprocs, 2, psizes);
@@ -199,7 +199,7 @@ int benchmark_read(char       *filename,
     }
     reqs = (int*) malloc(num_reqs * sizeof(int));
 
-    k = 0;
+    k = 0; int j1;
     for (i=0; i<NVARS; i++) {
         if (i % 4 == 0) {
             int *int_b = (int*) buf[i];
@@ -210,6 +210,8 @@ int benchmark_read(char       *filename,
             err = ncmpi_iget_vara_int(ncid, varid[i], start, count, int_b,
                                       &reqs[k++]);
             ERR(err)
+            
+
         }
         else if (i % 4 == 1) {
             float *flt_b = (float*) buf[i];
@@ -223,6 +225,7 @@ int benchmark_read(char       *filename,
                 ERR(err)
                 flt_b += len;
             }
+
         }
         else if (i % 4 == 2) {
             short *shr_b = (short*) buf[i];
@@ -273,10 +276,45 @@ int benchmark_read(char       *filename,
     end_t = MPI_Wtime();
     timing[3] = end_t - start_t;
     start_t = end_t;
+    
+    
+    for (i=0; i<NVARS; i++) {
+        if (i % 4 == 0){
+			int *int_b = (int*) buf[i];
+			printf("r%d: var %d: ", rank, i);
+			for(j1 = 0; j1 < len*len; j1++)
+				printf("%d ", int_b[j1]);
+			printf("\n");
+		}
+	   else if (i % 4 == 1){
+			float *flt_b = (float*) buf[i];
+			printf("r%d: var %d: ", rank, i);
+			for(j1 = 0; j1 < len*len; j1++)
+			printf("%d ", (int)flt_b[j1]);
+			printf("\n");	
+		}
+            
+        else if (i % 4 == 2){
+			short *shr_b = (short*) buf[i];
+			printf("r%d: var %d: ", rank, i);
+			for(j1 = 0; j1 < len*len; j1++)
+			printf("%d ", (int)shr_b[j1]);
+			printf("\n");
+		}
+            
+        else{
+			double *dbl_b = (double*) buf[i];
+			printf("r%d: var %d: ", rank, i);
+			for(j1 = 0; j1 < len*len; j1++)
+			printf("%d ", (int)dbl_b[j1]);
+			printf("\n");
+		}
+            
+    }
 
     /* get the true I/O amount committed */
     err = ncmpi_inq_get_size(ncid, r_size); ERR(err)
-
+    printf("total get size %d\n", (int)(*r_size));
     /* get all the hints used */
     err = ncmpi_get_file_info(ncid, r_info_used); ERR(err)
 
@@ -307,7 +345,7 @@ int main(int argc, char** argv) {
     MPI_Comm_size(comm, &nprocs);
     farb_init("farb.ini", "ireader");
 
-    len = 5;
+    len = 2;
 
     benchmark_read (filename, len, &r_size, &r_info_used, timing+6);
 
@@ -317,7 +355,8 @@ int main(int argc, char** argv) {
 #else
     MPI_Reduce(&r_size, &sum_r_size, 1, MPI_LONG_LONG, MPI_SUM, 0, comm);
 #endif
-    if (rank == 0) {
+    //if (rank == 0) {
+    if(0){
         double bw = sum_r_size;
         bw /= 1048576.0;
         printf("-----------------------------------------------------------\n");

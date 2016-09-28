@@ -73,7 +73,7 @@
 
 #include "pfarb.h"
 
-#define NY 3
+#define NY 10
 #define NX 2
 
 #ifndef MIN
@@ -109,7 +109,6 @@ int main(int argc, char** argv) {
     farb_init("farb.ini", "ireader");
     
     G_NX  = NX * nprocs;
-	sleep(5);
   /* open an existing file created earlier for read -----------------------*/
     cmode = NC_NOWRITE;
     err = ncmpi_open(MPI_COMM_WORLD, filename, cmode, MPI_INFO_NULL, &ncid);
@@ -150,7 +149,8 @@ int main(int argc, char** argv) {
     /* each proc reads myNX columns of the 2D array, block_len controls the
        number of contiguous columns at a time */
     block_start = 0;
-    block_len   = 2;  /* can be 1, 2, 3, ..., myNX */
+    //block_len   = 2;  /* can be 1, 2, 3, ..., myNX */
+    block_len = myNX;
     if (block_len > myNX) block_len = myNX;
 
     start[0] = 0;          start[1] = rank * block_len;
@@ -160,14 +160,13 @@ int main(int argc, char** argv) {
         err = ncmpi_iget_vara_int(ncid, varid, start, count, buf[i],
                                   &reqs[num_reqs++]);
         ERR
-
         if (i % block_len == block_len-1)  {
             int stride = MIN(myNX-1-i, block_len);
             block_start += block_len * nprocs;
             start[1] = block_start + stride * rank;
         }
         else
-            start[1]++;
+            start[1]++; 
     }
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts);
     ERR
@@ -183,10 +182,15 @@ int main(int argc, char** argv) {
 
     /* check the read contents */
     for (i=0; i<myNX; i++) {
-        for (j=0; j<global_ny; j++)
+		printf("%d: ", rank);
+        for (j=0; j<global_ny; j++){
             if (buf[i][j] != rank+10) {
-	      printf("%d: Read contents mismatch at buf[%d][%d] = %d (should be %d)\n", rank, i,j,buf[i][j],rank+10);
+				printf("%d: Read contents mismatch at buf[%d][%d] = %d (should be %d)\n", rank, i,j,buf[i][j],rank+10);
             }
+            
+            printf("%d ", buf[i][j]);
+		}
+		printf("\n");
     }
 
     free(sts);
@@ -203,7 +207,7 @@ int main(int argc, char** argv) {
             printf("heap memory allocated by PnetCDF internally has %lld bytes yet to be freed\n",
                    sum_size);
     }
-	farb_finalize();
+    farb_finalize();
     MPI_Finalize();
     return 0;
 }

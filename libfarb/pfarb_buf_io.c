@@ -68,15 +68,14 @@ MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *sta
             FARB_DBG(VERBOSE_DBG_LEVEL, "FARB Warning: Meant to read/write %llu bytes but actual val is %llu", data_sz, ret);
 
     } else { /*multi-dimentional array*/
-        MPI_Offset *start_coord = (MPI_Offset*)malloc(var->ndims*sizeof(MPI_Offset));
-        memset((void*)start_coord, 0, var->ndims*sizeof(MPI_Offset));
+
 
         if(rw_flag == FARB_WRITE){
-            ret = mem_recursive_write(var, start, count, buf, 0, start_coord);
+            ret = mem_noncontig_write(var, start, count, buf);
         } else { /*FARB_READ*/
-            ret = mem_recursive_read(var, start, count, buf, 0, start_coord);
+            ret = mem_noncontig_read(var, start, count, buf);
         }
-        free(start_coord);
+
 //        MPI_Offset *start1 = malloc(var->ndims*sizeof(MPI_Offset));
 //        assert(start1 != NULL);
 //        memcpy(start1, start, var->ndims*sizeof(MPI_Offset));

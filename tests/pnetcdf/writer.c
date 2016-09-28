@@ -164,22 +164,22 @@ int benchmark_write(char       *filename,
     for (i=0; i<NVARS; i++) {
         if (i % 4 == 0) {
             int *int_b = (int*) malloc(len * len * sizeof(int));
-            for (j=0; j<len*len; j++) int_b[j] = rank; /* rand(); */
+            for (j=0; j<len*len; j++) int_b[j] = j +rank*10;//rank; /* rand(); */
             buf[i] = (void*)int_b;
         }
         else if (i % 4 == 1) {
             float *flt_b = (float*) malloc(len * len * sizeof(float));
-            for (j=0; j<len*len; j++) flt_b[j] = rank; /* rand(); */
+            for (j=0; j<len*len; j++) flt_b[j] = j +rank*10; /* rand(); */
             buf[i] = (void*)flt_b;
         }
         else if (i % 4 == 2) {
             short *shr_b = (short*) malloc(len * len * sizeof(short));
-            for (j=0; j<len*len; j++) shr_b[j] = rank; /* rand(); */
+            for (j=0; j<len*len; j++) shr_b[j] = j +rank*10; /* rand(); */
             buf[i] = (void*)shr_b;
         }
         else {
             double *dbl_b = (double*) malloc(len * len * sizeof(double));
-            for (j=0; j<len*len; j++) dbl_b[j] = rank; /* rand(); */
+            for (j=0; j<len*len; j++) dbl_b[j] = j +rank*10; /* rand(); */
             buf[i] = (void*)dbl_b;
         }
     }
@@ -245,9 +245,10 @@ int benchmark_write(char       *filename,
     end_t = MPI_Wtime();
     timing[2] = end_t - start_t;
     start_t = end_t;
-
+    
     k = 0;
     for (i=0; i<NVARS; i++) {
+      int j1, j2;
         if (i % 4 == 0) {
             int *int_b = (int*) buf[i];
             start[0] = len * (rank % psizes[0]);
@@ -258,12 +259,22 @@ int benchmark_write(char       *filename,
                                       &reqs[k++]);
             ERR(err)
             if (verbose) printf("block-block %d: start=%lld %lld count=%lld %lld\n",i,start[0],start[1],count[0],count[1]);
+			
+			printf("w%d: var %d: ", rank, i);
+			for(j1 = 0; j1 < len*len; j1++)
+				printf("%d ", int_b[j1]);
+			printf("\n");
         }
         else if (i % 4 == 1) {
             float *flt_b = (float*) buf[i];
             start[0] = 0;
             count[0] = len;
             count[1] = 1;
+            printf("w%d: var %d: ", rank, i);
+			for(j1 = 0; j1 < len*len; j1++)
+				printf("%d ", (int)flt_b[j1]);
+			printf("\n");
+			
             for (j=0; j<len; j++) {
                 start[1] = rank + j * nprocs;
                 err = ncmpi_iput_vara_float(ncid, varid[i], start, count,
@@ -271,7 +282,9 @@ int benchmark_write(char       *filename,
                 ERR(err)
                 flt_b += len;
                 if (verbose) printf("*-cyclic i=%d j=%d: start=%lld %lld count=%lld %lld\n",i,j,start[0],start[1],count[0],count[1]);
+
             }
+
         }
         else if (i % 4 == 2) {
             short *shr_b = (short*) buf[i];
@@ -279,17 +292,26 @@ int benchmark_write(char       *filename,
             start[1] = 0;
             count[0] = len;
             count[1] = len/2;
+            
+            printf("w%d: var %d: ", rank, i);
+			for(j1 = 0; j1 < len*len; j1++)
+				printf("%d ", (int)shr_b[j1]);
+			printf("\n");
+            
             err = ncmpi_iput_vara_short(ncid, varid[i], start, count,
                                         shr_b, &reqs[k++]);
             ERR(err)
             if (verbose) printf("block-* i=0 start=%lld %lld count=%lld %lld\n",start[0],start[1],count[0],count[1]);
-
+ 
             shr_b += len * (len/2);
             start[1] = len/2;
             count[1] = len - len/2;
             err = ncmpi_iput_vara_short(ncid, varid[i], start, count,
                                         shr_b, &reqs[k++]);
             ERR(err)
+
+
+	    
             if (verbose) printf("block-* i=1 start=%lld %lld count=%lld %lld\n",start[0],start[1],count[0],count[1]);
         }
         else {
@@ -302,6 +324,12 @@ int benchmark_write(char       *filename,
                                          &reqs[k++]);
             ERR(err)
             if (verbose) printf("*-block %d: start=%lld %lld count=%lld %lld\n",i,start[0],start[1],count[0],count[1]);
+			
+			printf("w%d: var %d: ", rank, i);
+			for(j1 = 0; j1 < len*len; j1++)
+				printf("%d ", (int)dbl_b[j1]);
+			printf("\n");
+
         }
     }
     num_reqs = k;
@@ -328,10 +356,11 @@ int benchmark_write(char       *filename,
 
     /* get the true I/O amount committed */
     err = ncmpi_inq_put_size(ncid, w_size); ERR(err)
-
+    printf("total put size %d\n", (int)(*w_size));
+					
     /* get all the hints used */
     err = ncmpi_get_file_info(ncid, w_info_used); ERR(err)
-
+						    
     err = ncmpi_close(ncid); ERR(err)
 
     end_t = MPI_Wtime();
@@ -361,7 +390,7 @@ int main(int argc, char** argv) {
     MPI_Comm_size(comm, &nprocs);
     farb_init("farb.ini", "iwriter");
 
-    len = 5;
+    len = 2;
 
     benchmark_write(filename, len, &w_size, &w_info_used, timing);
 
@@ -371,7 +400,8 @@ int main(int argc, char** argv) {
 #else
     MPI_Reduce(&w_size, &sum_w_size, 1, MPI_LONG_LONG, MPI_SUM, 0, comm);
 #endif
-    if (rank == 0) {
+    //    if (rank == 0) {
+    if(0){
         double bw = sum_w_size;
         bw /= 1048576.0;
         print_info(&w_info_used);

@@ -216,13 +216,14 @@ _EXTERN_C_ MPI_Offset farb_read_hdr_chunk(const char *filename, MPI_Offset offse
 _EXTERN_C_ void farb_open(const char *filename)
 {
     if(!lib_initialized) return;
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "open %s", filename);
+    FARB_DBG(VERBOSE_DBG_LEVEL,   "Enter farb_open %s", filename);
 
     if(get_read_flag(filename))
         while(!file_buffer_ready(filename)){
             //force progress until the writer finishes with the file.
             progress_io();
         }
+    FARB_DBG(VERBOSE_DBG_LEVEL,   "Exit farb_open %s", filename);
 }
 
 ///**

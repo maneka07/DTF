@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include "pfarb_util.h"
 #include "pfarb.h"
+#include "pfarb_mem.h"
 
 
 struct file_buffer * gl_filebuf_list = NULL;
@@ -310,10 +311,7 @@ int load_config(const char *ini_name, const char *comp_name){
         } else if(strcmp(param, "distr_rule") == 0){
             if(strcmp(value, "range") == 0)
                 cur_fb->distr_rule = DISTR_RULE_RANGE;
-            else if(strcmp(value, "ranks") == 0){
-                FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: distribution rule <ranks> is not implemented yet. Use <range> instead.");
-                goto panic_exit;
-            } else if (strcmp(value, "p2p") == 0){
+            else if (strcmp(value, "p2p") == 0){
                 cur_fb->distr_rule = DISTR_RULE_P2P;
             } else {
                 FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: distribution rule %s is unknown", value);
@@ -609,6 +607,7 @@ int get_read_flag(const char* filename)
     return fbuf->read_flag;
 }
 
+
 int file_buffer_ready(const char* filename)
 {
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
@@ -626,8 +625,10 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
     int errno, i;
     void *buf;
     farb_var_t *var;
-    MPI_Request *reqs = NULL;
     buffer_node_t *node;
+    MPI_Offset node_cnt;
+    int ncnt = 0;
+    MPI_Offset *first_el_coord;
 
     /*Receive the header*/
     MPI_Probe(rank, HEADER_TAG, intercomm, &status);
@@ -647,30 +648,72 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
     errno = MPI_Recv(buf, buf_sz, MPI_BYTE, rank, VARS_TAG, intercomm, &status);
     CHECK_MPI(errno);
 
-    unpack_vars(buf_sz, buf, &fbuf->vars, &fbuf->var_cnt);
-
-
-    /*Receive nodes of all variables*/
-    var = fbuf->vars;
-    while(var != NULL){
-        reqs = realloc(reqs, sizeof(MPI_Request)*(int)var->node_cnt);
-        assert(reqs != NULL);
-
-        node = var->nodes;
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Will recv %d nodes", (int)var->node_cnt);
-        for(i = 0; i < var->node_cnt; i++){
-            FARB_DBG(VERBOSE_DBG_LEVEL, "node sz %d offt %d", (int)node->data_sz, (int)node->offset);
-            errno = MPI_Irecv(node->data, (int)node->data_sz, MPI_BYTE, rank, NODE_TAG+i, intercomm, &reqs[i]);
-            CHECK_MPI(errno);
-            node = node->next;
-        }
-        errno = MPI_Waitall(var->node_cnt, reqs, MPI_STATUSES_IGNORE);
-        CHECK_MPI(errno);
-        var = var->next;
-    }
-    free(reqs);
+    unpack_vars(fbuf, buf_sz, buf, &node_cnt, &first_el_coord);
     free(buf);
+    /*Receive memory nodes*/
+    var = fbuf->vars;
+    if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
+        MPI_Request *reqs = NULL, *tmp;
 
+        while(var != NULL){
+            tmp = realloc(reqs, sizeof(MPI_Request)*node_cnt);
+            assert(tmp != NULL);
+            reqs = tmp;
+
+
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Will recv %d nodes", (int)node_cnt);
+            i = 0;
+            node = var->nodes;
+            while(i != node_cnt){
+                if(node->data != NULL){
+                    node = node->next;
+                    continue;
+                }
+                FARB_DBG(VERBOSE_ALL_LEVEL, "Receive node sz %d offt %d", (int)node->data_sz, (int)node->offset);
+                node->data = malloc((size_t)node->data_sz);
+                assert(node->data != NULL);
+                errno = MPI_Irecv(node->data, (int)node->data_sz, MPI_BYTE, rank, NODE_TAG+ncnt, intercomm, &reqs[i]);
+                CHECK_MPI(errno);
+                ncnt++;
+                node = node->next;
+                i++;
+            }
+            errno = MPI_Waitall(node_cnt, reqs, MPI_STATUSES_IGNORE);
+            CHECK_MPI(errno);
+            var = var->next;
+        }
+        free(reqs);
+    } else { /*DISTR_PATTERN_SCATTER*/
+        void *rbuf = NULL, *tmp;
+        int bufsz;
+        int first_el_coord_sz = 0;
+        MPI_Offset written;
+
+        while(var != NULL){
+            if(var->distr_count == NULL){
+                var = var->next;
+                continue;
+            }
+            bufsz = 1;
+            for(i = 0; i < var->ndims; i++)
+                bufsz *= (int)var->distr_count[i];
+            bufsz *= (int)var->el_sz;
+            tmp = realloc(rbuf, bufsz);
+            assert(tmp != NULL);
+            rbuf = tmp;
+            FARB_DBG(VERBOSE_ALL_LEVEL, "Try to recv node of sz %d", (int)bufsz);
+            errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, rank, NODE_TAG+ncnt, intercomm, MPI_STATUS_IGNORE);
+            CHECK_MPI(errno);
+
+            written = mem_noncontig_write(var, &first_el_coord[first_el_coord_sz], var->distr_count, rbuf);
+            assert((int)written == bufsz);
+            first_el_coord_sz += (int)var->ndims;
+            ncnt++;
+            var = var->next;
+        }
+        free(rbuf);
+    }
+    assert(ncnt == (int)node_cnt);
     return 0;
 }
 
@@ -680,42 +723,89 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
     int buf_sz;
     void *buf;
     farb_var_t *var;
-    MPI_Request sreq, *reqs = NULL;
+    MPI_Request sreq;
     buffer_node_t *node;
+    MPI_Offset node_count;
+    int ncnt = 0;
+    int first_el_coord_sz = 0;
+    MPI_Offset *first_el_coord;
 
     /*Send the hearder*/
     errno = MPI_Isend(fbuf->header, (int)fbuf->hdr_sz, MPI_CHAR, rank, HEADER_TAG, intercomm, &sreq);
     CHECK_MPI(errno);
 
     /*Pack the vars info and send it*/
-    //pack_vars(fbuf->var_cnt, fbuf->vars, &buf_sz, &buf);
-    pack_vars(fbuf, rank, &buf_sz, &buf);
+    pack_vars(fbuf, rank, &buf_sz, &buf, &node_count, &first_el_coord);
     errno = MPI_Wait(&sreq, MPI_STATUS_IGNORE);
     CHECK_MPI(errno);
-
     errno = MPI_Send(buf, buf_sz, MPI_BYTE, rank, VARS_TAG, intercomm);
     CHECK_MPI(errno);
 
     /*Send buffer nodes*/
     var = fbuf->vars;
-    while(var != NULL){
-        reqs = realloc(reqs, sizeof(MPI_Request)*(int)var->node_cnt);
-        assert(reqs != NULL);
 
-        node = var->nodes;
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Will send %d nodes", (int)var->node_cnt);
-        for(i = 0; i < var->node_cnt; i++){
-            FARB_DBG(VERBOSE_DBG_LEVEL, "node sz %d offt %d", (int)node->data_sz, (int)node->offset);
-            errno = MPI_Isend(node->data, (int)node->data_sz, MPI_BYTE, rank, NODE_TAG + i, intercomm, &reqs[i]);
+    if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
+        MPI_Request *reqs = NULL, *tmp;
+        while(var != NULL){
+            tmp = (MPI_Request*)realloc(reqs, sizeof(MPI_Request)*(int)var->node_cnt);
+            assert(tmp != NULL);
+            reqs = tmp;
+
+            node = var->nodes;
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Will send %d nodes", (int)var->node_cnt);
+            for(i = 0; i < var->node_cnt; i++){
+                FARB_DBG(VERBOSE_ALL_LEVEL, "node sz %d offt %d", (int)node->data_sz, (int)node->offset);
+                errno = MPI_Isend(node->data, (int)node->data_sz, MPI_BYTE, rank, NODE_TAG + ncnt, intercomm, &reqs[i]);
+                CHECK_MPI(errno);
+                node = node->next;
+                ncnt++;
+            }
+            errno = MPI_Waitall(var->node_cnt, reqs, MPI_STATUSES_IGNORE);
             CHECK_MPI(errno);
-            node = node->next;
+            var = var->next;
         }
-        errno = MPI_Waitall(var->node_cnt, reqs, MPI_STATUSES_IGNORE);
-        CHECK_MPI(errno);
-        var = var->next;
+        free(reqs);
+    } else { /*SCATTER*/
+        void *sbuf = NULL, *tmp;
+        int bufsz;
+        MPI_Offset readsz;
+
+        while(var != NULL){
+            if(var->distr_count == NULL){
+                var = var->next;
+                continue;
+            }
+            //pack multi-dim data into 1d contiguous buffer
+            bufsz = 1;
+            for(i = 0; i < var->ndims; i++)
+                bufsz *= (int)var->distr_count[i];
+            bufsz *= (int)var->el_sz;
+
+            tmp = realloc(sbuf, bufsz);
+            assert(tmp != NULL);
+            sbuf = tmp;
+            for(i = 0; i < var->ndims; i++){
+                FARB_DBG(VERBOSE_ALL_LEVEL, "send data starts at %d", (int)first_el_coord[first_el_coord_sz+i]);
+            }
+            readsz = mem_noncontig_read(var, &first_el_coord[first_el_coord_sz], var->distr_count, sbuf);
+            if( (int)readsz != bufsz ){
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: not enough data to send to rank %d", rank);
+                FARB_DBG(VERBOSE_DBG_LEVEL, "Should read %d but read %d", (int)bufsz, (int)readsz);
+            }
+            //if(readsz != 0){
+            FARB_DBG(VERBOSE_ALL_LEVEL, "Sending node of sz %d", (int)readsz);
+            errno = MPI_Send(sbuf, (int)readsz, MPI_BYTE, rank, NODE_TAG+ncnt, intercomm);
+            CHECK_MPI(errno);
+            ncnt++;
+            first_el_coord_sz += var->ndims;
+            //}
+            var = var->next;
+        }
+
+        free(sbuf);
     }
-    free(reqs);
-    free(buf);
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Total sent mem nodes %d, should have sent %d", ncnt, (int)node_count);
+    assert((int)node_count == ncnt);
     return 0;
 }
 
@@ -750,7 +840,8 @@ void progress_io()
                     CHECK_MPI(errno);
                     receive_data(fbuf, src, gl_comps[i].intercomm);
                     fbuf->distr_ndone++;
-                }
+                } else
+                    fbuf->distr_ndone++;
                 if(fbuf->distr_ndone == fbuf->distr_nranks)
                     fbuf->is_ready = 1;
                 break;
@@ -785,58 +876,114 @@ void progress_io()
 //    struct farb_var *next;
 //}farb_var_t;
 
+static void print_var(farb_var_t *var)
+{
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Var id %d, ndims %d", var->id, var->ndims);
+}
 /*
     vars        [OUT]
     var_cnt     [OUT]
     the rest    [IN]
 */
-void unpack_vars(int buf_sz, void *buf, farb_var_t **vars, int *var_cnt)
+void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *node_cnt, MPI_Offset **first_el_coord)
 {
     size_t offt = 0;
-    MPI_Offset offset, data_sz;
+    MPI_Offset offset, data_sz, ncnt;
+    int var_cnt;
     assert(buf_sz > 0);
     assert(buf != NULL);
+    *node_cnt = 0;
+    *first_el_coord = NULL;
+    int first_el_coord_sz = 0;
 
     FARB_DBG(VERBOSE_DBG_LEVEL, "Unpacking vars sz %d", buf_sz);
 
-    int i, j;
+    int i, j, varid;
     farb_var_t *var;
     buffer_node_t *node;
 
-    memcpy(var_cnt, buf, sizeof(int));
+    var_cnt = *((int*)buf);
     offt += sizeof(int);
+    FARB_DBG(VERBOSE_DBG_LEVEL, "unpack nvars %d", var_cnt);
+    for(i = 0; i < var_cnt; i++){
 
-    for(i = 0; i < *var_cnt; i++){
-        var = new_var(0, 0, NULL);
-        var->id = *((int*)(buf+offt));
-        offt += sizeof(int);
-        var->ndims = *((int*)(buf+offt));
-        offt += sizeof(int);
-        if(var->ndims > 0){
-            var->shape = malloc(var->ndims*sizeof(MPI_Offset));
-            assert(var->shape != NULL);
-            for(j = 0; j < var->ndims; j++){
-                var->shape[j] = *((MPI_Offset*)(buf+offt));
-                offt += sizeof(MPI_Offset);
-            }
-        } else
-            var->shape = NULL;
-        var->node_cnt = *((MPI_Offset*)(buf+offt));
-        offt += sizeof(MPI_Offset);
+        varid = *((int*)(buf+offt));
 
-        for(j = 0; j < var->node_cnt; j++){
-            offset = *((MPI_Offset*)(buf+offt));
-            offt += sizeof(MPI_Offset);
-            data_sz = *((MPI_Offset*)(buf+offt));
-            offt += sizeof(MPI_Offset);
-            node = new_buffer_node(offset, data_sz, 0, NULL); //reader does not need to know coordinate of the first element
-            insert_buffer_node(&var->nodes, node);
+        offt += sizeof(int);
+        var = find_var(fbuf->vars, varid);
+        if(var == NULL){
+            var = new_var(varid, 0, NULL);
+            var->el_sz = *((MPI_Offset*)(buf+offt));
+            offt+=sizeof(MPI_Offset);
+            var->ndims = *((int*)(buf+offt));
+            offt += sizeof(int);
+
+            if(var->ndims > 0){
+                var->shape = malloc(var->ndims*sizeof(MPI_Offset));
+                assert(var->shape != NULL);
+                for(j = 0; j < var->ndims; j++){
+                    var->shape[j] = *((MPI_Offset*)(buf+offt));
+                    offt += sizeof(MPI_Offset);
+                }
+            } else
+                var->shape = NULL;
+
+            add_var(&(fbuf->vars), var);
+            fbuf->var_cnt++;
+        } else {
+            /*Skip the fields that have already been defined*/
+            offt += sizeof(MPI_Offset) + sizeof(int) + sizeof(MPI_Offset)*var->ndims;
         }
 
-        add_var(vars, var);
+        print_var(var);
+
+        ncnt = *((MPI_Offset*)(buf+offt));
+        offt += sizeof(MPI_Offset);
+        /*Unpack data about nodes to receive*/
+        if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
+            var->node_cnt += ncnt;
+            *node_cnt += ncnt;
+
+            /*Unpack node offsets*/
+            for(j = 0; j < (int)ncnt; j++){
+                offset = *((MPI_Offset*)(buf+offt));
+                offt += sizeof(MPI_Offset);
+                data_sz = *((MPI_Offset*)(buf+offt));
+                offt += sizeof(MPI_Offset);
+                node = new_buffer_node(offset, data_sz, 0, NULL, 0); //reader does not need to know coordinate of the first element
+                insert_buffer_node(&var->nodes, node);
+            }
+        } else { /*DIST_PATTERN_SCATTER*/
+            if(ncnt != 0) {
+                (*node_cnt)++;
+                /*Only unpack the info about distr_count[] and first_coord[]*/
+                MPI_Offset *tmp = (MPI_Offset*)realloc(var->distr_count, var->ndims*sizeof(MPI_Offset));
+                assert(tmp != NULL);
+                var->distr_count = tmp;
+                memcpy((void*)var->distr_count, buf+offt, var->ndims*sizeof(MPI_Offset));
+                offt += var->ndims*sizeof(MPI_Offset);
+
+                first_el_coord_sz += var->ndims;
+                tmp = (MPI_Offset*)realloc(*first_el_coord, first_el_coord_sz*sizeof(MPI_Offset));
+                assert(tmp != NULL);
+                *first_el_coord = tmp;
+
+                // need to remember the coordinate of the first (corner) element to be able to unpack
+                // contiguous 1D buffer into multi-dimensional nodes
+                for(j = 0; j < var->ndims; j++){
+                    (*first_el_coord)[first_el_coord_sz - var->ndims + j] = *((MPI_Offset*)(buf+offt));
+                    offt += sizeof(MPI_Offset);
+                }
+            } else {
+                if(var->distr_count != NULL) //could be allocated during recv from another writer rank
+                    free(var->distr_count);
+                var->distr_count = NULL;
+            }
+        }
     }
 
-    assert(offt == buf_sz);
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Unpacking vars: offt is %lu, bufsz is %lu", offt, (size_t)buf_sz);
+    assert(offt == (size_t)buf_sz);
     FARB_DBG(VERBOSE_DBG_LEVEL, "Finished unpacking vars");
 }
 
@@ -847,7 +994,7 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, MPI_Offset *coord)
       MPI_Offset idx = 0, mem=0;
 
       if(ndims == 0) //scalar
-        return 0ll;
+        return 0;
       else if(ndims == 1) //1d array
         return *coord;
 
@@ -860,21 +1007,20 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, MPI_Offset *coord)
     return idx;
 }
 
-void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf)
+void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf, MPI_Offset *node_cnt, MPI_Offset **first_el_coord)
 {
     int i;
     size_t sz = 0, offt=0;
     buffer_node_t *node;
-    /*Count how much space we need. We'll pack necessary fields from farb_var_t
-      + will send the list of offsets and data sizes that we will send.
-      We assume that all nodes will be sent and allocate enough memory.
-      If scatter distribution pattern is used, we adjust later the real size of data
-      to send.*/
     sz += sizeof(fbuf->var_cnt);
+    *node_cnt = 0;
+    *first_el_coord = NULL;
+    int first_el_coord_sz = 0;
+
     farb_var_t *var = fbuf->vars;
     while(var != NULL){
-        sz += sizeof(var->id) + sizeof(MPI_Offset)*var->ndims +
-              sizeof(var->ndims) + sizeof(var->node_cnt) + var->node_cnt*sizeof(MPI_Offset)*2;
+        sz += sizeof(var->id) + sizeof(var->el_sz) + sizeof(var->ndims) + sizeof(MPI_Offset)*var->ndims +
+        sizeof(MPI_Offset) + var->node_cnt*sizeof(MPI_Offset)*2;
         var = var->next;
     }
 
@@ -882,6 +1028,7 @@ void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf)
 
     *buf = malloc(sz);
     assert(*buf != NULL);
+    *node_cnt = 0;
     //write the number of vars
     *((int*)(*buf)) = fbuf->var_cnt;
     offt += sizeof(int);
@@ -890,6 +1037,8 @@ void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf)
     while(var != NULL){
         *((int*)(*buf+offt)) = var->id;
         offt += sizeof(int);
+        *((MPI_Offset*)(*buf+offt)) = var->el_sz;
+        offt += sizeof(MPI_Offset);
         *((int*)(*buf+offt)) = var->ndims;
         offt += sizeof(int);
 
@@ -901,6 +1050,7 @@ void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf)
         if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
             *((MPI_Offset*)(*buf+offt)) = var->node_cnt;
             offt+=sizeof(MPI_Offset);
+            *node_cnt += var->node_cnt;
             /*Pack node offsets*/
             node = var->nodes;
             while(node != NULL){
@@ -911,23 +1061,101 @@ void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf)
                 node = node->next;
             }
         } else { /*DIST_PATTERN_SCATTER*/
-            /* Distribute blocks of count[] elemenets one by one
+            /* We will distribute blocks of count[] elemenets one by one
                to each process in the range. If we fail to read
                exactly count[] elements, it means some values are
                lacking. This will cause the app to abort.
+               Writer process may have
+               written the blocks non-contiguously, so we need
+               to find out the start element of the block that will be sent
+               to given dst_rank.
                //TODO figure out with fill values in pnetcdf
             */
-            node = var->nodes;
+
+            //TODO what if it's a scalar var and we need to send it?
+            if(var->distr_count == NULL){
+                /*If distr_count wasn't set we won't be distributed this variable to
+                  the reader. But print out warning just in case if user forgot
+                  to set distr_count for this variable */
+                  FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: farb_set_distr_count was not called for variable with id %d. \
+                  This variable will not be distributed.", var->id);
+                  *((MPI_Offset*)(*buf+offt)) = 0ull;
+                  offt+=sizeof(MPI_Offset);
+            } else {
+                int j;
+                *((MPI_Offset*)(*buf+offt)) = 1ull;
+                offt+=sizeof(MPI_Offset);
+                (*node_cnt)++;
 
 
+                MPI_Offset offset, index_1d;
+                int rank_idx;
+                MPI_Offset last_el_idx = to_1d_index(var->ndims, var->shape, var->shape) - 1;
+
+                first_el_coord_sz += var->ndims;
+                MPI_Offset *coord = (MPI_Offset*)realloc(*first_el_coord, first_el_coord_sz*sizeof(MPI_Offset));
+                assert(coord != NULL);
+                *first_el_coord = coord;
+
+                coord = &( (*first_el_coord)[first_el_coord_sz - var->ndims] );
+                /*First, find out the coordinate of the start element to send*/
+                memcpy((void*)coord, (void*)var->nodes->first_coord, var->ndims*sizeof(MPI_Offset));
+
+                for(j = 0; j < var->ndims; j++){
+                    FARB_DBG(VERBOSE_ALL_LEVEL, "start with coord %d", (int)coord[j]);
+                }
+                offset = var->nodes->offset;
+                for(rank_idx = 0; rank_idx < fbuf->distr_nranks; rank_idx++){
+                    while(1){
+                        index_1d = to_1d_index(var->ndims, var->shape, coord);
+                        FARB_DBG(VERBOSE_ALL_LEVEL, "1d idx %d", (int)index_1d);
+                        /*Check that we haven' t gone out of bounds*/
+                        if(index_1d > last_el_idx){
+                            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: There is no data to send to rank %d. Incorrect config file?", dst_rank);
+                            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+                        }
+                        offset = var->el_sz * index_1d;
+                        FARB_DBG(VERBOSE_ALL_LEVEL, "offset %d", (int)offset);
+                        if(data_present_at_offt(var->nodes, offset))
+                            break;
+
+                        /*find next offset at which data is present*/
+                        for(i = 0; i < var->ndims; i++)
+                            coord[i] += var->distr_count[i];
+                    }
+
+                    if(fbuf->distr_ranks[rank_idx] == dst_rank)
+                        break;
+                }
+
+                for(j = 0; j < var->ndims; j++){
+                    FARB_DBG(VERBOSE_ALL_LEVEL, "data starts at %d, count %d, shape %d", (int)coord[j], (int)var->distr_count[j], (int)var->shape[j]);
+                }
+                FARB_DBG(VERBOSE_DBG_LEVEL, "Will send to rank %d data starting at idx %d", dst_rank, (int)index_1d);
+                assert(rank_idx != fbuf->distr_nranks);
+                /*Will eventually pack multi-dimensional data to one contiguous
+                  buffer to send.
+                  Save the distr_count[] and first_coord[] values so that
+                  the reader could unpack the data correctly later*/
+
+                for(i=0; i < var->ndims; i++){
+                    *((MPI_Offset*)(*buf+offt)) = var->distr_count[i];
+                    offt+=sizeof(MPI_Offset);
+                }
+                for(i=0; i < var->ndims; i++){
+                    *((MPI_Offset*)(*buf+offt)) = coord[i];
+                    offt+=sizeof(MPI_Offset);
+                }
+            }
         }
+        print_var(var);
         var = var->next;
     }
-    FARB_DBG(VERBOSE_DBG_LEVEL, "packing: offt %d, sz %d", (int)offt, (int)sz);
-    if(fbuf->distr_rule == DISTR_PATTERN_ALL)
-        assert(offt == sz);
+
+    //assert(offt == sz);
 
     *buf_sz = (int)offt;
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Actually packed %d", *buf_sz);
     FARB_DBG(VERBOSE_DBG_LEVEL, "Finish packing vars");
 }
 
@@ -935,52 +1163,19 @@ void notify_file_ready(const char* filename)
 {
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename);
     assert(fbuf != NULL);
-    int comp_id, dest, errno, ndest=0;
+    int comp_id, i, dest, errno;
 
     comp_id = fbuf->reader_id;
+    for(i = 0; i < fbuf->distr_nranks; i++){
+        dest = fbuf->distr_ranks[i];
+        FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
+        errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
+        CHECK_MPI(errno);
 
-    /*First notify the reader rank which matches my rank. This is needed
-    for both: p2p distribution rule and the range rule.*/
-    dest = gl_my_rank;
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
-    errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
-    CHECK_MPI(errno);
-    ndest++;
-
-    if(fbuf->mode == FARB_IO_MODE_FILE)
-        fbuf->distr_ndone++;
-
-    if(fbuf->distr_rule == DISTR_RULE_RANGE){
-        int nranks;
-        MPI_Comm_remote_size(gl_comps[comp_id].intercomm, &nranks);
-        /*Notify everyone to the left from me*/
-        dest -= fbuf->distr_range;
-        while(dest >= 0){
-            FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
-            errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
-            CHECK_MPI(errno);
-            ndest++;
-            if(fbuf->mode == FARB_IO_MODE_FILE)
-                fbuf->distr_ndone++;
-
-            dest -= fbuf->distr_range;
-        }
-        /*Notify everyone to the right from me*/
-        dest = gl_my_rank + fbuf->distr_range;
-        while(dest < nranks){
-            FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
-            errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
-            CHECK_MPI(errno);
-            ndest++;
-
-            if(fbuf->mode == FARB_IO_MODE_FILE)
-                fbuf->distr_ndone++;
-
-            dest += fbuf->distr_range;
-        }
+        if(fbuf->mode == FARB_IO_MODE_FILE)
+            fbuf->distr_ndone++;
     }
 
-    assert(ndest == fbuf->distr_nranks);
 }
 
 void close_file(const char *filename)
@@ -1056,6 +1251,11 @@ int set_distr_count(const char* filename, int varid, int count[])
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
     assert(fbuf != NULL);
 
+    if(fbuf->mode != FARB_IO_MODE_MEMORY){
+        //nothing to do
+        return 0;
+    }
+
     if(fbuf->distr_pattern != DISTR_PATTERN_SCATTER){
         FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: cannot set distribute count. File's distribute pattern must be <scatter>.");
         return 0;
@@ -1063,7 +1263,7 @@ int set_distr_count(const char* filename, int varid, int count[])
 
     farb_var_t *var = find_var(fbuf->vars, varid);
     if(var == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "No variable with such id (%d)", varid);
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: No variable with such id (%d)", varid);
         assert(0);
     }
 
@@ -1083,8 +1283,14 @@ int init_data_distr()
     file_buffer_t *fbuf = gl_filebuf_list;
 
     while(fbuf != NULL){
+        if(fbuf->mode != FARB_IO_MODE_MEMORY)
+            fbuf->distr_rule = DISTR_RULE_P2P;
+
         if(fbuf->distr_rule == DISTR_RULE_P2P){
             fbuf->distr_nranks = 1;
+            fbuf->distr_ranks = malloc(sizeof(int));
+            assert(fbuf->distr_ranks != NULL);
+            *(fbuf->distr_ranks) = gl_my_rank;
         } else if(fbuf->distr_rule == DISTR_RULE_RANGE){
             if(fbuf->writer_id == gl_my_comp_id)
                 MPI_Comm_remote_size(gl_comps[fbuf->reader_id].intercomm, &nranks);
@@ -1092,7 +1298,17 @@ int init_data_distr()
                 MPI_Comm_remote_size(gl_comps[fbuf->writer_id].intercomm, &nranks);
 
             fbuf->distr_nranks = (int)(nranks/fbuf->distr_range);
+            assert(fbuf->distr_nranks > 0);
+            fbuf->distr_ranks = (int*)malloc(fbuf->distr_nranks*sizeof(int));
+            assert(fbuf->distr_ranks != NULL);
+            fbuf->distr_ranks[0] = gl_my_rank % fbuf->distr_range; //
+            int i = 1;
+            while(fbuf->distr_ranks[i-1] + fbuf->distr_range < nranks){
+                fbuf->distr_ranks[i] = fbuf->distr_ranks[i-1] + fbuf->distr_range;
+                i++;
+            }
         }
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Number of ranks to distribute data to/from %d", fbuf->distr_nranks);
         fbuf = fbuf->next;
     }
     return 0;
