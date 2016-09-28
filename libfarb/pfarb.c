@@ -1,10 +1,17 @@
 #include <mpi.h>
 #include <stdio.h>
+#include <assert.h>
+#include <string.h>
 
+
+//TODO figure out with hierarchical way of including headers
+#include "pfarb_common.h"
 #include "pfarb.h"
+#include "pfarb_init_finalize.h"
 #include "pfarb_util.h"
 #include "pfarb_buf_io.h"
-#include <assert.h>
+
+
 
 int lib_initialized=0;
 int gl_verbose;
@@ -61,28 +68,6 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
         verbose = gl_verbose;
         gl_verbose = VERBOSE_ERROR_LEVEL;
     }
-
-    s = getenv("FARB_NODE_SZ");
-    if(s == NULL){
-        gl_sett.node_sz = DEFAULT_BUFFER_NODE_SIZE;
-    } else
-        gl_sett.node_sz = (MPI_Offset)(atoi(s)*1024);
-
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Buffer node size set to %llu bytes", gl_sett.node_sz);
-
-    s = getenv("FARB_MESSAGE_SZ");
-    if(s == NULL){
-        gl_sett.msg_sz = (int)gl_sett.node_sz;
-    } else
-        gl_sett.msg_sz = atoi(s)*1024;
-
-    if( (MPI_Offset)gl_sett.msg_sz > gl_sett.node_sz){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,"FARB Warning: message size for data transfer cannot exceed the memory node size. Setting to same as the node size");
-        gl_sett.msg_sz = (int)gl_sett.node_sz;
-    }
-
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "MPI message size set to %d bytes", gl_sett.msg_sz);
-
     /*Parse ini file and initialize components*/
     errno = load_config(filename, module_name);
     if(errno) goto panic_exit;

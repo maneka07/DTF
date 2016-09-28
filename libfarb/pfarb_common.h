@@ -6,12 +6,12 @@
 #define VERBOSE_DBG_LEVEL    1
 #define VERBOSE_ALL_LEVEL    2
 
-#define FARB_TIMEOUT       1200 /* it's long because letkf and obs are hanging for a long time before they get data from scale*/
+#define FARB_TIMEOUT       1200 /* it's long because letkf and obs are hanging for a long time before they get data from scale*/ //TODO still need it?
 #define FARB_UNDEFINED      -1
 
 #include <string.h>
 #include <mpi.h>
-
+#include <assert.h>
 
 extern struct file_buffer* gl_filebuf_list;        /*List of all file buffers*/
 extern struct component *gl_comps;                 /*List of components*/

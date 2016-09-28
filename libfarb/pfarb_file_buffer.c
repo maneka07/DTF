@@ -158,4 +158,3 @@ farb_var_t* new_var(int varid, int ndims, MPI_Offset *shape)
     return var;
 }
 
-
