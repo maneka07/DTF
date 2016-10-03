@@ -3,7 +3,7 @@
 
 export FARB_GLOBAL_PATH=.
 export LD_LIBRARY_PATH=../../libfarb:$HOME/apps/pnetcdf/lib:$LD_LIBRARY_PATH
-export FARB_VERBOSE_LEVEL=4
+export FARB_VERBOSE_LEVEL=3
 
 rm $FARB_GLOBAL_PATH/port_*
 

@@ -26,7 +26,7 @@
 _EXTERN_C_ int farb_init(const char *filename, char *module_name);
 _EXTERN_C_ int farb_finalize();
 _EXTERN_C_ int farb_set_distr_count(const char* filename, int varid, int count[]);
-
+_EXTERN_C_ int farb_match_ioreqs(const char* filename);
 /*Interfaces to be used by a File I/O library*/
 //_EXTERN_C_ size_t farb_write(const char* filename, const off_t offset, const size_t data_sz, void *const data);
 //_EXTERN_C_ size_t farb_read(const char* filename, const off_t  offset, const size_t data_sz, void *const data);

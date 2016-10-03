@@ -16,11 +16,8 @@ MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *sta
                           const MPI_Offset *count, const MPI_Offset *stride, const MPI_Offset *imap,
                           MPI_Datatype dtype, void *buf, int rw_flag)
 {
-    MPI_Offset el_offt;
-    int el_sz;
-    MPI_Offset data_sz;
     MPI_Offset ret;
-
+    int el_sz;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
     assert(buf!=NULL);
 
@@ -51,24 +48,19 @@ MPI_Offset read_write_var(const char *filename, int varid, const MPI_Offset *sta
         assert(var->el_sz == (MPI_Offset)el_sz);
 
     if(var->ndims <= 1){ /*scalar or 1d array*/
-        el_offt = *start;
-        //byte_offt = el_offt*(MPI_Offset)el_sz;
-        /*Data size to write*/
-        data_sz = (*count)*el_sz;
+        MPI_Offset offt = (*start)*var->el_sz;
+        MPI_Offset data_sz = (*count)*var->el_sz;
 
         if(rw_flag == FARB_READ){
-            FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will read %llu elems of sz %d from element offt %llu ", var->id, *count, el_sz, el_offt);
-            ret = mem_read(var, &el_offt, data_sz, buf);
+            ret = mem_contiguous_read(var, offt, data_sz, buf);
         } else {
-            FARB_DBG(VERBOSE_DBG_LEVEL, "Var %d: will write %llu elems of sz %d to element offt %llu ", var->id, *count, el_sz, el_offt);
-            ret = mem_write(var, &el_offt, data_sz, buf);
+            ret = mem_contiguous_write(var,offt, data_sz, buf);
         }
 
         if(ret != data_sz)
             FARB_DBG(VERBOSE_DBG_LEVEL, "FARB Warning: Meant to read/write %llu bytes but actual val is %llu", data_sz, ret);
 
     } else { /*multi-dimentional array*/
-
         if(rw_flag == FARB_WRITE){
             ret = mem_noncontig_write(var, start, count, buf);
         } else { /*FARB_READ*/
@@ -92,16 +84,6 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
     int ncnt = 0;
     MPI_Offset *first_el_coord;
 
-    /*Receive the header*/
-    MPI_Probe(rank, HEADER_TAG, intercomm, &status);
-    MPI_Get_count(&status, MPI_BYTE, &buf_sz);
-    fbuf->hdr_sz = (MPI_Offset)buf_sz;
-    FARB_DBG(VERBOSE_DBG_LEVEL, "Hdr size to receive %d", buf_sz);
-    fbuf->header = malloc((size_t)buf_sz);
-    assert(fbuf->header != NULL);
-    errno = MPI_Recv(fbuf->header, buf_sz, MPI_BYTE, rank, HEADER_TAG, intercomm, &status);
-    CHECK_MPI(errno);
-
     /*Receive vars*/
     MPI_Probe(rank, VARS_TAG, intercomm, &status);
     MPI_Get_count(&status, MPI_BYTE, &buf_sz);
@@ -114,19 +96,19 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
     free(buf);
     /*Receive memory nodes*/
     var = fbuf->vars;
+
     if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
-        MPI_Request *reqs = NULL, *tmp;
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Will recv %d nodes", (int)node_cnt);
+        MPI_Request *reqs = NULL;
+        reqs = (MPI_Request*)malloc(sizeof(MPI_Request)*node_cnt);
+        assert(reqs != NULL);
+        ncnt = 0;
 
         while(var != NULL){
-            tmp = realloc(reqs, sizeof(MPI_Request)*node_cnt);
-            assert(tmp != NULL);
-            reqs = tmp;
+            print_nodes(var->nodes);
 
-
-            FARB_DBG(VERBOSE_DBG_LEVEL, "Will recv %d nodes", (int)node_cnt);
-            i = 0;
             node = var->nodes;
-            while(i != node_cnt){
+            while(node != NULL){
                 if(node->data != NULL){
                     node = node->next;
                     continue;
@@ -134,16 +116,19 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
                 FARB_DBG(VERBOSE_ALL_LEVEL, "Receive node sz %d offt %d", (int)node->data_sz, (int)node->offset);
                 node->data = malloc((size_t)node->data_sz);
                 assert(node->data != NULL);
-                errno = MPI_Irecv(node->data, (int)node->data_sz, MPI_BYTE, rank, NODE_TAG+ncnt, intercomm, &reqs[i]);
+                errno = MPI_Irecv(node->data, (int)node->data_sz, MPI_BYTE, rank, NODE_TAG+ncnt, intercomm, &reqs[ncnt]);
                 CHECK_MPI(errno);
                 ncnt++;
                 node = node->next;
-                i++;
+                if(ncnt == (int)node_cnt)
+                    break;
             }
-            errno = MPI_Waitall(node_cnt, reqs, MPI_STATUSES_IGNORE);
-            CHECK_MPI(errno);
             var = var->next;
+            if(ncnt == (int)node_cnt)
+                break;
         }
+        errno = MPI_Waitall(node_cnt, reqs, MPI_STATUSES_IGNORE);
+        CHECK_MPI(errno);
         free(reqs);
     } else { /*DISTR_PATTERN_SCATTER*/
         void *rbuf = NULL, *tmp;
@@ -192,13 +177,8 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
     int first_el_coord_sz = 0;
     MPI_Offset *first_el_coord;
 
-    /*Send the hearder*/
-    errno = MPI_Isend(fbuf->header, (int)fbuf->hdr_sz, MPI_CHAR, rank, HEADER_TAG, intercomm, &sreq);
-    CHECK_MPI(errno);
-
     /*Pack the vars info and send it*/
     pack_vars(fbuf, rank, &buf_sz, &buf, &node_count, &first_el_coord);
-    errno = MPI_Wait(&sreq, MPI_STATUS_IGNORE);
     CHECK_MPI(errno);
     errno = MPI_Send(buf, buf_sz, MPI_BYTE, rank, VARS_TAG, intercomm);
     CHECK_MPI(errno);
@@ -340,7 +320,7 @@ void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *node_cn
                 offt += sizeof(MPI_Offset);
                 data_sz = *((MPI_Offset*)(buf+offt));
                 offt += sizeof(MPI_Offset);
-                node = new_buffer_node(offset, data_sz, 0, NULL, 0); //reader does not need to know coordinate of the first element
+                node = new_buffer_node(offset, data_sz, 0);
                 insert_buffer_node(&var->nodes, node);
             }
         } else { /*DIST_PATTERN_SCATTER*/
@@ -470,7 +450,7 @@ void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf, MPI_O
 
                 coord = &( (*first_el_coord)[first_el_coord_sz - var->ndims] );
                 /*First, find out the coordinate of the start element to send*/
-                memcpy((void*)coord, (void*)var->nodes->first_coord, var->ndims*sizeof(MPI_Offset));
+                memcpy((void*)coord, (void*)var->first_coord, var->ndims*sizeof(MPI_Offset));
 
                 for(j = 0; j < var->ndims; j++){
                     FARB_DBG(VERBOSE_ALL_LEVEL, "start with coord %d", (int)coord[j]);

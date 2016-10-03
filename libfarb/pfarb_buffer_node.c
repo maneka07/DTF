@@ -1,7 +1,18 @@
 #include "pfarb_buffer_node.h"
 #include <assert.h>
 #include <string.h>
-buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz, int ndims, MPI_Offset first_el_coord[], int malloc_flag)
+#include "pfarb_common.h"
+
+void print_nodes(buffer_node_t* nodes){
+    buffer_node_t *tmp = nodes;
+
+    while(tmp != NULL){
+        FARB_DBG(VERBOSE_ALL_LEVEL, "node (%lld, %lld)", tmp->offset, tmp->data_sz);
+        tmp = tmp->next;
+    }
+}
+
+buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz, int malloc_flag)
 {
     buffer_node_t *node = malloc(sizeof(buffer_node_t));
     assert(node != NULL);
@@ -13,13 +24,6 @@ buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz, int ndims,
 
     node->data_sz = data_sz;
     node->offset = offset;
-    if(ndims > 1){
-        node->first_coord = (MPI_Offset *)malloc(ndims * sizeof(MPI_Offset));
-        assert(node->first_coord != NULL);
-        memcpy(node->first_coord, first_el_coord, ndims*sizeof(MPI_Offset));
-    } else
-        node->first_coord = NULL;
-
     node->next = NULL;
     node->prev = NULL;
 
@@ -28,6 +32,7 @@ buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz, int ndims,
 
 void insert_buffer_node(buffer_node_t** list, buffer_node_t* node)
 {
+    FARB_DBG(VERBOSE_ALL_LEVEL, "Insert node offt %d, datasz %d", (int)node->offset, (int)node->data_sz);
     if(*list == NULL){
         *list = node;
         return;

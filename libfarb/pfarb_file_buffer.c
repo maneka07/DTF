@@ -1,6 +1,6 @@
+#include <assert.h>
 #include "pfarb_file_buffer.h"
 #include "pfarb.h"
-#include <assert.h>
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path)
 {
     struct file_buffer *ptr = buflist;
@@ -65,7 +65,21 @@ static void delete_var(farb_var_t *var)
         free(node);
         node = var->nodes;
     }
+
+    io_req_t *tmp, *ioreq = var->ioreqs;
+    while(ioreq != NULL){
+        tmp = ioreq->next;
+        if(ioreq->count != NULL )
+            free(ioreq->count);
+        if(ioreq->start != NULL)
+            free(ioreq->start);
+        free(ioreq);
+        ioreq = tmp;
+    }
+
     if(var->distr_count != NULL)
+        free(var->distr_count);
+    if(var->first_coord != NULL)
         free(var->distr_count);
     free(var);
 }
@@ -128,7 +142,7 @@ file_buffer_t* new_file_buffer()
     buf->distr_nranks = 0;
     buf->distr_ranks = NULL;
     buf->distr_ndone = 0;
-   // buf->distr_ranks_expr = NULL;
+    buf->match_completed = 0;
 
     return buf;
 }
@@ -150,11 +164,13 @@ farb_var_t* new_var(int varid, int ndims, MPI_Offset *shape)
     }
     else
         var->shape = NULL;
-
+    var->first_coord = NULL;
     var->ndims = ndims;
     var->distr_count = NULL;
     var->next = NULL;
     var->el_sz = 0;
+    var->ioreqs = NULL;
+    var->ioreq_cnt = 0;
     return var;
 }
 

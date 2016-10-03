@@ -50,6 +50,7 @@ void progress_io()
     int i, flag, src, errno;
     char filename[MAX_FILE_NAME];
     file_buffer_t *fbuf;
+    int bufsz;
 
     for(i = 0; i < gl_ncomp; i++){
         if( i == gl_my_comp_id || gl_comps[i].intercomm == MPI_COMM_NULL)
@@ -73,6 +74,17 @@ void progress_io()
                     /*Notify I am ready to receive*/
                     errno = MPI_Send(filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].intercomm);
                     CHECK_MPI(errno);
+
+                    /*Receive the header*/
+                    MPI_Probe(src, HEADER_TAG, gl_comps[i].intercomm, &status);
+                    MPI_Get_count(&status, MPI_BYTE, &bufsz);
+                    fbuf->hdr_sz = (MPI_Offset)bufsz;
+                    FARB_DBG(VERBOSE_DBG_LEVEL, "Hdr size to receive %d", bufsz);
+                    fbuf->header = malloc((size_t)bufsz);
+                    assert(fbuf->header != NULL);
+                    errno = MPI_Recv(fbuf->header, bufsz, MPI_BYTE, src, HEADER_TAG, gl_comps[i].intercomm, &status);
+                    CHECK_MPI(errno);
+
                     receive_data(fbuf, src, gl_comps[i].intercomm);
                     fbuf->distr_ndone++;
                 } else
@@ -89,7 +101,9 @@ void progress_io()
                 fbuf = find_file_buffer(gl_filebuf_list, filename);
                 assert(fbuf != NULL);
                 FARB_DBG(VERBOSE_DBG_LEVEL, "Receive RECV_READY_TAG notif for %s", filename);
-
+                /*Send the hearder*/
+                errno = MPI_Send(fbuf->header, (int)fbuf->hdr_sz, MPI_BYTE, src, HEADER_TAG, gl_comps[i].intercomm);
+                CHECK_MPI(errno);
                 send_data(fbuf, src, gl_comps[i].intercomm);
 
                 fbuf->distr_ndone++;
@@ -101,7 +115,7 @@ void progress_io()
     }
 }
 
-MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, MPI_Offset *coord)
+MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coord)
 {
       int i, j;
       MPI_Offset idx = 0, mem=0;
@@ -125,17 +139,34 @@ void notify_file_ready(const char* filename)
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename);
     assert(fbuf != NULL);
     int comp_id, i, dest, errno;
+    int nrranks;
 
     comp_id = fbuf->reader_id;
-    for(i = 0; i < fbuf->distr_nranks; i++){
-        dest = fbuf->distr_ranks[i];
-        FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
-        errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
-        CHECK_MPI(errno);
+    switch(gl_conf.distr_mode){
+        case DISTR_MODE_STATIC:
+            for(i = 0; i < fbuf->distr_nranks; i++){
+                dest = fbuf->distr_ranks[i];
+                FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
+                errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
+                CHECK_MPI(errno);
 
-        if(fbuf->mode == FARB_IO_MODE_FILE)
-            fbuf->distr_ndone++;
+                if(fbuf->mode == FARB_IO_MODE_FILE)
+                    fbuf->distr_ndone++;
+            }
+            break;
+        case DISTR_MODE_BUFFERED_REQ_MATCH:
+        case DISTR_MODE_NONBUFFERED_REQ_MATCH:
+            MPI_Comm_remote_size(gl_comps[comp_id].intercomm, &nrranks);
+            if(gl_my_rank < nrranks)
+                FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", gl_my_rank, fbuf->file_path);
+                errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, gl_my_rank, FILE_READY_TAG, gl_comps[comp_id].intercomm);
+                CHECK_MPI(errno);
+            break;
+        default:
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: unknown data distribution mode");
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
+
 
 }
 
@@ -146,9 +177,18 @@ void close_file(const char *filename)
     assert(fbuf != NULL);
 
     if(fbuf->write_flag){
-        notify_file_ready(filename);
-        while(fbuf->distr_ndone != fbuf->distr_nranks)
-            progress_io();
+        if( (gl_conf.distr_mode == DISTR_MODE_STATIC) || (fbuf->mode == FARB_IO_MODE_FILE) ){
+            notify_file_ready(filename);
+            while(fbuf->distr_ndone != fbuf->distr_nranks)
+                progress_io();
+        } else {
+            assert(gl_conf.distr_mode == DISTR_MODE_BUFFERED_REQ_MATCH);
+            //TODO continue
+//            notify_master();
+//            while(!blabla)
+//                progress_io();
+
+        }
     }
 
     delete_file_buffer(&gl_filebuf_list, fbuf);
@@ -180,7 +220,7 @@ void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
 {
     file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename);
     assert(buf!=NULL);
-
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Writing header (sz %d)", (int)hdr_sz);
     buf->hdr_sz = hdr_sz;
     buf->header = malloc(hdr_sz);
     assert(buf->header != NULL);

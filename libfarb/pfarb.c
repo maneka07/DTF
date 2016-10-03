@@ -12,11 +12,10 @@
 #include "pfarb_buf_io.h"
 
 
-
 int lib_initialized=0;
 int gl_verbose;
 int gl_my_rank;
-farb_settings_t gl_sett;
+struct farb_config gl_conf;
 /**
   @brief	Function to initialize the library. Should be called from inside
             the application before any other call to the library. Should be called
@@ -79,6 +78,9 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
     errno = init_data_distr();
     if(errno) goto panic_exit;
 
+    errno = init_req_match_masters();
+    if(errno) goto panic_exit;
+
     lib_initialized = 1;
 
     //enable print setting for other ranks again
@@ -121,6 +123,9 @@ _EXTERN_C_ int farb_finalize()
 
     FARB_DBG(VERBOSE_DBG_LEVEL,"FARB: finalize");
     free(gl_my_comp_name);
+    if(gl_conf.masters != NULL)
+        free(gl_conf.masters);
+
     lib_initialized = 0;
     fflush(stdout);
     fflush(stderr);
@@ -202,12 +207,26 @@ _EXTERN_C_ void farb_open(const char *filename)
 {
     if(!lib_initialized) return;
     FARB_DBG(VERBOSE_DBG_LEVEL,   "Enter farb_open %s", filename);
-
-    if(get_read_flag(filename))
-        while(!file_buffer_ready(filename)){
+    if(get_read_flag(filename)){
+        while(!file_buffer_ready(filename))
             //force progress until the writer finishes with the file.
             progress_io();
-        }
+//        switch(gl_conf.distr_mode){
+//            case DISTR_MODE_STATIC:
+//                while(!file_buffer_ready(filename))
+//                    //force progress until the writer finishes with the file.
+//                    progress_io();
+//                break;
+//            case DISTR_MODE_NONBUFFERED_REQ_MATCH:
+//
+//                break;
+//            default:
+//                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: unknown data distribution mode");
+//                MPI_Abort(0);
+//        }
+    }
+
+    else
     FARB_DBG(VERBOSE_DBG_LEVEL,   "Exit farb_open %s", filename);
 }
 
@@ -239,6 +258,12 @@ _EXTERN_C_ void farb_close(const char* filename)
     if(!lib_initialized) return;
     FARB_DBG(VERBOSE_DBG_LEVEL,   "close %s", filename);
     close_file(filename);
+}
+
+_EXTERN_C_ int farb_match_ioreqs(const char* filename)
+{
+    if(!lib_initialized) return 0;
+    return match_ioreqs(filename);
 }
 
 /**

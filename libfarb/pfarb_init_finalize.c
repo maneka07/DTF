@@ -1,6 +1,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
+#include "pfarb_init_finalize.h"
 #include "pfarb_common.h"
 #include "pfarb_file_buffer.h"
 #include "pfarb_util.h"
@@ -320,6 +321,8 @@ int load_config(const char *ini_name, const char *comp_name){
         return 1 ;
   }
 
+    gl_conf.distr_mode = FARB_UNDEFINED;
+
   while(!feof(in)){
 
     fgets(line, ASCIILINESZ, in);
@@ -358,6 +361,7 @@ int load_config(const char *ini_name, const char *comp_name){
                 FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: filename not set.");
                 goto panic_exit;
             }
+            //TODO file does not have to have a reader if the io mode is "file"
             if( cur_fb->writer_id == -1 || cur_fb->reader_id == -1){
                 FARB_DBG(VERBOSE_ERROR_LEVEL,"FARB Error: file reader or writer not set for file %s.", cur_fb->file_path);
                 goto panic_exit;
@@ -416,7 +420,18 @@ int load_config(const char *ini_name, const char *comp_name){
                     break;
                 }
             }
-        } else if(strcmp(param, "filename") == 0){
+        } else if(strcmp(param, "distr_mode") == 0){
+            if(strcmp(value, "static") == 0)
+                gl_conf.distr_mode = DISTR_MODE_STATIC;
+            else if(strcmp(value, "buf_req_match") == 0)
+                gl_conf.distr_mode = DISTR_MODE_BUFFERED_REQ_MATCH;
+            else if(strcmp(value, "nbuf_req_match") == 0)
+                gl_conf.distr_mode = DISTR_MODE_NONBUFFERED_REQ_MATCH;
+            else{
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: unknown data distribution mode");
+                goto panic_exit;
+            }
+        }else if(strcmp(param, "filename") == 0){
             assert(cur_fb != NULL);
             assert(strlen(value) <= MAX_FILE_NAME);
             strcpy(cur_fb->file_path, value);
@@ -462,8 +477,15 @@ int load_config(const char *ini_name, const char *comp_name){
 
             if(strcmp(value, "file") == 0)
                 cur_fb->mode = FARB_IO_MODE_FILE;
-            else if(strcmp(value, "memory") == 0)
+            else if(strcmp(value, "memory") == 0){
+
+                if(gl_conf.distr_mode == FARB_UNDEFINED){
+                    FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: data distribution mode is not defined.");
+                    goto panic_exit;
+                }
+
                 cur_fb->mode = FARB_IO_MODE_MEMORY;
+            }
 
         } else if(strcmp(param, "distr_rule") == 0){
             if(strcmp(value, "range") == 0)
@@ -616,6 +638,76 @@ int init_data_distr()
         }
         FARB_DBG(VERBOSE_DBG_LEVEL, "Number of ranks to distribute data to/from %d", fbuf->distr_nranks);
         fbuf = fbuf->next;
+    }
+    return 0;
+}
+
+int init_req_match_masters()
+{
+    if(gl_conf.distr_mode == FARB_UNDEFINED){
+        gl_conf.nmasters = 0;
+        gl_conf.masters = NULL;
+        gl_conf.my_workgroup_sz = 0;
+    } else {
+
+        int wg, nranks, nrranks, myrank, i;
+        char* s = getenv("MAX_WORKGROUP_SIZE");
+
+        if(s == NULL)
+            wg = MAX_WORKGROUP_SIZE;
+        else
+            wg = atoi(s);
+        assert(wg > 0);
+
+        /* First, find out my master and, if I am a master, find out the size of my
+           workgroup. Create the list of masters. */
+        MPI_Comm_size(MPI_COMM_WORLD, &nranks);
+        MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+
+        if(nranks <= wg){
+            gl_conf.my_master = 0;
+            gl_conf.my_workgroup_sz = nranks;
+            gl_conf.nmasters = 1;
+        } else {
+            gl_conf.my_master = (int)(myrank/wg) * wg;
+            gl_conf.my_workgroup_sz = wg;
+            gl_conf.nmasters = (int)(nranks/wg);
+
+            if(nranks % wg > (int)(wg/2) ){
+                if(myrank >= gl_conf.nmasters * wg){
+                    gl_conf.my_master = gl_conf.nmasters * wg;
+                    gl_conf.my_workgroup_sz = nranks % wg;
+                }
+                gl_conf.nmasters++;
+            } else if ( (nranks % wg > 0) && (myrank >= (gl_conf.nmasters-1)*wg)){
+                /*Merge last smaller group with the previous group*/
+                gl_conf.my_master = (gl_conf.nmasters-1) * wg;
+                gl_conf.my_workgroup_sz = wg + nranks % wg;
+            }
+        }
+        FARB_DBG(VERBOSE_ALL_LEVEL, "My master %d, my wg size %d", gl_conf.my_master, gl_conf.my_workgroup_sz);
+
+        gl_conf.masters = (int*)malloc(gl_conf.nmasters * sizeof(int));
+        assert(gl_conf.masters != NULL);
+        gl_conf.masters[0] = 0;
+        for(i = 1; i < nranks; i++)
+            gl_conf.masters[i] = gl_conf.masters[i-1] + wg;
+
+        /*For each component, find out to which master I should send read requests*/
+        for(i=0; i < gl_ncomp; i++){
+            if(i == gl_my_comp_id)
+                continue;
+            MPI_Comm_remote_size(gl_comps[i].intercomm, &nrranks);
+
+            if(myrank < nrranks)
+                gl_comps[i].master = gl_conf.my_master; //use same rank
+            else {
+                int nmasters = (int)(nrranks/wg);
+                if( nrranks % wg > (int)(wg/2))
+                   nmasters++;
+                gl_comps[i].master = (nmasters-1)*wg;
+            }
+        }
     }
     return 0;
 }

@@ -19,7 +19,7 @@ extern int gl_my_comp_id;                          /*Id of this compoinent*/
 extern int gl_ncomp;                               /*Number of components*/
 extern int gl_verbose;
 extern int gl_my_rank;                         /*For debug messages*/
-extern struct farb_settings gl_sett;                 /*Framework settings*/
+extern struct farb_config gl_conf;                 /*Framework settings*/
 char _buff[1024];
 char *gl_my_comp_name;
 
