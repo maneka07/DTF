@@ -219,12 +219,13 @@ int benchmark_read(char       *filename,
             count[0] = len;
             count[1] = 1;
             for (j=0; j<len; j++) {
+			    
                 start[1] = s_rank + j * nprocs;
                 err = ncmpi_iget_vara_float(ncid, varid[i], start, count,
                                             flt_b, &reqs[k++]);
                 ERR(err)
                 flt_b += len;
-            }
+           }
 
         }
         else if (i % 4 == 2) {

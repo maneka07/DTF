@@ -282,7 +282,6 @@ int benchmark_write(char       *filename,
                 ERR(err)
                 flt_b += len;
                 if (verbose) printf("*-cyclic i=%d j=%d: start=%lld %lld count=%lld %lld\n",i,j,start[0],start[1],count[0],count[1]);
-
             }
 
         }

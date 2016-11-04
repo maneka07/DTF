@@ -132,6 +132,7 @@ static int create_intercomm(int comp_id, char* global_path){
     int errno, mode, myrank, l1, l2;
     char portfile_name[MAX_FILE_NAME];
     int wait_timeout;
+    int nranks1, nranks2;
 
     mode = gl_comps[comp_id].connect_mode;
     if(mode == FARB_UNDEFINED) return 0;
@@ -152,7 +153,7 @@ static int create_intercomm(int comp_id, char* global_path){
 
      } else {
         FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: connect mode unknown.");
-        goto panic_exit;
+        return 1;
      }
 
      l1 = strlen(global_path);
@@ -160,7 +161,7 @@ static int create_intercomm(int comp_id, char* global_path){
 
      if(l1+l2 > MAX_FILE_NAME){
         FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: Global file path or component name too long.");
-        goto panic_exit;
+        return 1;
      }
 
      strcpy(portfile_name, global_path);
@@ -182,7 +183,7 @@ static int create_intercomm(int comp_id, char* global_path){
 
                 if(wait_timeout == FARB_TIMEOUT){
                     FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: timed out waiting for port file %s.", portfile_name);
-                    goto panic_exit;
+                    return 1;
                 }
             }
 
@@ -199,14 +200,14 @@ static int create_intercomm(int comp_id, char* global_path){
 
                 if(wait_timeout == FARB_TIMEOUT){
                     FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: timed out waiting for port name in %s.", portfile_name);
-                    goto panic_exit;
+                    return 1;
                 }
             }
             fclose(portfile);
 
             if(portname[0] == '\n'){
                 FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: no port specified in the portfile.");
-                goto panic_exit;
+                return 1;
             }
         }
 
@@ -239,10 +240,14 @@ static int create_intercomm(int comp_id, char* global_path){
         CHECK_MPI(errno);
     }
     MPI_Errhandler_set(gl_comps[comp_id].intercomm, MPI_ERRORS_RETURN);
+    /*Check that the number of ranks is the same in both communicators*/
+    MPI_Comm_size(MPI_COMM_WORLD, &nranks1);
+    MPI_Comm_remote_size(gl_comps[comp_id].intercomm, &nranks2);
+    if(nranks1 != nranks2){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB can only work if the number of processes in all components is the same. Aborting.");
+        return 1;
+    }
     return 0;
-panic_exit:
-
-    return 1;
 }
 
 
@@ -321,7 +326,7 @@ int load_config(const char *ini_name, const char *comp_name){
         return 1 ;
   }
 
-    gl_conf.distr_mode = FARB_UNDEFINED;
+  gl_conf.distr_mode = FARB_UNDEFINED;
 
   while(!feof(in)){
 
@@ -423,12 +428,12 @@ int load_config(const char *ini_name, const char *comp_name){
         } else if(strcmp(param, "distr_mode") == 0){
             if(strcmp(value, "static") == 0)
                 gl_conf.distr_mode = DISTR_MODE_STATIC;
-            else if(strcmp(value, "buf_req_match") == 0)
-                gl_conf.distr_mode = DISTR_MODE_BUFFERED_REQ_MATCH;
+//            else if(strcmp(value, "buf_req_match") == 0)
+//                gl_conf.distr_mode = DISTR_MODE_BUFFERED_REQ_MATCH;
             else if(strcmp(value, "nbuf_req_match") == 0)
                 gl_conf.distr_mode = DISTR_MODE_NONBUFFERED_REQ_MATCH;
             else{
-                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: unknown data distribution mode");
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: 3 unknown data distribution mode");
                 goto panic_exit;
             }
         }else if(strcmp(param, "filename") == 0){
@@ -451,7 +456,6 @@ int load_config(const char *ini_name, const char *comp_name){
             for(i = 0; i < gl_ncomp; i++){
                 if(strcmp(value, gl_comps[i].name) == 0){
                     cur_fb->writer_id = i;
-                    if(gl_my_comp_id == i)cur_fb->write_flag = 1;
                     break;
                 }
             }
@@ -467,7 +471,6 @@ int load_config(const char *ini_name, const char *comp_name){
             for(i = 0; i < gl_ncomp; i++){
                 if(strcmp(value, gl_comps[i].name) == 0){
                     cur_fb->reader_id = i;
-                    if(gl_my_comp_id == i) cur_fb->read_flag = 1;
                     break;
                 }
             }
@@ -570,7 +573,6 @@ int init_comp_comm(){
 
     int i, err;
     char *s;
-
     if(gl_comps == NULL || gl_ncomp == 1)
         return 0;
 
@@ -581,7 +583,10 @@ int init_comp_comm(){
     }
 
     for(i = 0; i<gl_ncomp; i++){
-
+        if(i == gl_my_comp_id){
+            MPI_Comm_dup(MPI_COMM_WORLD, &(gl_comps[i].intercomm));
+            continue;
+        }
         err = create_intercomm(gl_comps[i].id, s);
         if(err)
             goto panic_exit;
@@ -620,11 +625,11 @@ int init_data_distr()
             assert(fbuf->distr_ranks != NULL);
             *(fbuf->distr_ranks) = gl_my_rank;
         } else if(fbuf->distr_rule == DISTR_RULE_RANGE){
-            if(fbuf->writer_id == gl_my_comp_id)
-                MPI_Comm_remote_size(gl_comps[fbuf->reader_id].intercomm, &nranks);
-            else
-                MPI_Comm_remote_size(gl_comps[fbuf->writer_id].intercomm, &nranks);
-
+//            if(fbuf->writer_id == gl_my_comp_id)
+//                MPI_Comm_remote_size(gl_comps[fbuf->reader_id].intercomm, &nranks);
+//            else
+//                MPI_Comm_remote_size(gl_comps[fbuf->writer_id].intercomm, &nranks);
+            MPI_Comm_size(MPI_COMM_WORLD, &nranks);
             fbuf->distr_nranks = (int)(nranks/fbuf->distr_range);
             assert(fbuf->distr_nranks > 0);
             fbuf->distr_ranks = (int*)malloc(fbuf->distr_nranks*sizeof(int));
@@ -642,6 +647,7 @@ int init_data_distr()
     return 0;
 }
 
+
 int init_req_match_masters()
 {
     if(gl_conf.distr_mode == FARB_UNDEFINED){
@@ -650,7 +656,7 @@ int init_req_match_masters()
         gl_conf.my_workgroup_sz = 0;
     } else {
 
-        int wg, nranks, nrranks, myrank, i;
+        int wg, nranks, myrank, i;
         char* s = getenv("MAX_WORKGROUP_SIZE");
 
         if(s == NULL)
@@ -672,8 +678,9 @@ int init_req_match_masters()
             gl_conf.my_master = (int)(myrank/wg) * wg;
             gl_conf.my_workgroup_sz = wg;
             gl_conf.nmasters = (int)(nranks/wg);
-
-            if(nranks % wg > (int)(wg/2) ){
+            if(gl_conf.nmasters == 0)
+                gl_conf.nmasters++;
+            else if(nranks % wg > (int)(wg/2) ){
                 if(myrank >= gl_conf.nmasters * wg){
                     gl_conf.my_master = gl_conf.nmasters * wg;
                     gl_conf.my_workgroup_sz = nranks % wg;
@@ -686,28 +693,32 @@ int init_req_match_masters()
             }
         }
         FARB_DBG(VERBOSE_ALL_LEVEL, "My master %d, my wg size %d", gl_conf.my_master, gl_conf.my_workgroup_sz);
+        if(gl_my_rank == 0)
+            FARB_DBG(VERBOSE_ALL_LEVEL, "Nmasters %d", gl_conf.nmasters);
 
         gl_conf.masters = (int*)malloc(gl_conf.nmasters * sizeof(int));
         assert(gl_conf.masters != NULL);
         gl_conf.masters[0] = 0;
-        for(i = 1; i < nranks; i++)
+        for(i = 1; i < gl_conf.nmasters; i++){
             gl_conf.masters[i] = gl_conf.masters[i-1] + wg;
-
-        /*For each component, find out to which master I should send read requests*/
-        for(i=0; i < gl_ncomp; i++){
-            if(i == gl_my_comp_id)
-                continue;
-            MPI_Comm_remote_size(gl_comps[i].intercomm, &nrranks);
-
-            if(myrank < nrranks)
-                gl_comps[i].master = gl_conf.my_master; //use same rank
-            else {
-                int nmasters = (int)(nrranks/wg);
-                if( nrranks % wg > (int)(wg/2))
-                   nmasters++;
-                gl_comps[i].master = (nmasters-1)*wg;
-            }
+            FARB_DBG(VERBOSE_ALL_LEVEL, "Rank %d is a master", gl_conf.masters[i]);
         }
+
+//        /*For each component, find out to which master I should send read requests*/
+//        for(i=0; i < gl_ncomp; i++){
+//            if(i == gl_my_comp_id)
+//                continue;
+//            MPI_Comm_remote_size(gl_comps[i].intercomm, &nrranks);
+//
+//            if(myrank < nrranks)
+//                gl_comps[i].master = gl_conf.my_master; //use same rank
+//            else {
+//                int nmasters = (int)(nrranks/wg);
+//                if( nrranks % wg > (int)(wg/2))
+//                   nmasters++;
+//                gl_comps[i].master = (nmasters-1)*wg;
+//            }
+//        }
     }
     return 0;
 }

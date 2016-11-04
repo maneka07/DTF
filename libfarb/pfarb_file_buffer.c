@@ -1,13 +1,17 @@
 #include <assert.h>
+#include <string.h>
 #include "pfarb_file_buffer.h"
 #include "pfarb.h"
-file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path)
+#include "pfarb_common.h"
+file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid)
 {
     struct file_buffer *ptr = buflist;
 
     while(ptr != NULL)
     {
-        if(strstr(file_path, ptr->file_path) != NULL || ( strlen(ptr->alias_name) != 0 && strstr(file_path, ptr->alias_name) != NULL) )
+        if( (file_path == NULL) && (ncid != -1) && (ptr->ncid == ncid) )
+            break;
+        else if(strstr(file_path, ptr->file_path) != NULL || ( strlen(ptr->alias_name) != 0 && strstr(file_path, ptr->alias_name) != NULL) )
             break;
 
         ptr = ptr->next;
@@ -64,17 +68,6 @@ static void delete_var(farb_var_t *var)
         var->nodes = var->nodes->next;
         free(node);
         node = var->nodes;
-    }
-
-    io_req_t *tmp, *ioreq = var->ioreqs;
-    while(ioreq != NULL){
-        tmp = ioreq->next;
-        if(ioreq->count != NULL )
-            free(ioreq->count);
-        if(ioreq->start != NULL)
-            free(ioreq->start);
-        free(ioreq);
-        ioreq = tmp;
     }
 
     if(var->distr_count != NULL)
@@ -142,12 +135,19 @@ file_buffer_t* new_file_buffer()
     buf->distr_nranks = 0;
     buf->distr_ranks = NULL;
     buf->distr_ndone = 0;
-    buf->match_completed = 0;
-
+    buf->hdr_sent_flag = 0;
+    buf->ioreq_cnt = 0;
+    buf->ioreqs = NULL;
+    buf->iodb.ritems = NULL;
+    buf->iodb.witems = NULL;
+    buf->iodb.nritems = 0;
+    buf->iodb.nranks_completed = 0;
+    buf->iodb.nmst_completed = 0;
+    buf->ncid = -1;
     return buf;
 }
 
-farb_var_t* new_var(int varid, int ndims, MPI_Offset *shape)
+farb_var_t* new_var(int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
 {
     int i;
     farb_var_t *var = malloc(sizeof(farb_var_t));
@@ -168,9 +168,7 @@ farb_var_t* new_var(int varid, int ndims, MPI_Offset *shape)
     var->ndims = ndims;
     var->distr_count = NULL;
     var->next = NULL;
-    var->el_sz = 0;
-    var->ioreqs = NULL;
-    var->ioreq_cnt = 0;
+    var->el_sz = el_sz;
     return var;
 }
 

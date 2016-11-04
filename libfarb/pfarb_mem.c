@@ -1,5 +1,10 @@
-#include "pfarb_mem.h"
 #include <assert.h>
+#include <string.h>
+#include "pfarb_mem.h"
+#include "pfarb.h"
+#include "pfarb_common.h"
+#include "pfarb_util.h"
+
 
 //static MPI_Offset mem_recursive_write(farb_var_t *var, const MPI_Offset start[], const MPI_Offset count[], void *data, int dim, MPI_Offset coord[])
 //{
@@ -31,14 +36,18 @@ MPI_Offset mem_noncontig_write(farb_var_t *var, const MPI_Offset start[], const 
 {
     MPI_Offset written = 0;
     MPI_Offset src_offset = 0;
-    MPI_Offset *ctg_mem;
-    int nelems = 0;
-    int i;
-    get_contig_mem_list(var, start, count, &nelems, &ctg_mem);
+    contig_mem_chunk_t *chunks, *tmp;
 
-    for(i = 0; i < nelems; i = i+2){
-        written += mem_contiguous_write(var, ctg_mem[i], ctg_mem[i+1], data+src_offset);
-        src_offset += ctg_mem[i+1];
+    int nelems = 0;
+    get_contig_mem_list(var, start, count, &nelems, &chunks);
+
+    //for(i = 0; i < nelems; i = i+2){
+    while(chunks != NULL){
+        written += mem_contiguous_write(var, chunks->offset, chunks->data_sz, data+src_offset);
+        src_offset += chunks->data_sz;
+        tmp = chunks;
+        chunks = chunks->next;
+        free(tmp);
     }
     if((var->ndims > 0) && (nelems > 0)){
         if(var->first_coord == NULL){
@@ -55,8 +64,6 @@ MPI_Offset mem_noncontig_write(farb_var_t *var, const MPI_Offset start[], const 
         }
     }
 
-    if(ctg_mem != NULL)
-        free(ctg_mem);
     return written;
 }
 
@@ -159,60 +166,82 @@ MPI_Offset mem_contiguous_write(farb_var_t *var, MPI_Offset offset, MPI_Offset d
     return copied;
 }
 
-static void traverse_dims(farb_var_t* var, const MPI_Offset count[], int dim, MPI_Offset coord[], int *nelems, MPI_Offset **list)
+static void traverse_dims(farb_var_t *var,
+                          const MPI_Offset count[],
+                          const MPI_Offset start[],
+                          int dim,
+                          MPI_Offset coord[],
+                          int *nelems,
+                          contig_mem_chunk_t **list)
 {
     int i;
     if(dim == var->ndims - 1){
+        contig_mem_chunk_t *new_chunk = (contig_mem_chunk_t*)malloc(sizeof(contig_mem_chunk_t));
+        assert(new_chunk!=NULL);
+
         if(*list == NULL){
-            *list = (MPI_Offset*)malloc(2*sizeof(MPI_Offset));
-            assert(*list!=NULL);
+            *list = new_chunk;
         }
         else{
-            MPI_Offset *tmp = (MPI_Offset*)realloc(*list, (*nelems*2)*sizeof(MPI_Offset));
-            assert(tmp != NULL);
-            *list = tmp;
+            contig_mem_chunk_t *tmp = *list;
+            while(tmp->next != NULL)
+                tmp = tmp->next;
+            tmp->next = new_chunk;
         }
-
-        (*list)[*nelems] = to_1d_index(var->ndims, var->shape, coord)*var->el_sz; //offset
-        (*list)[*nelems+1] = count[var->ndims-1]*var->el_sz;    //data_sz
-        FARB_DBG(VERBOSE_ALL_LEVEL,"Added a tuple (%d, %d)", (int)(*list)[*nelems], (int)(*list)[*nelems+1] );
-        *nelems += 2;
+        MPI_Offset *tmp = (MPI_Offset*)malloc(var->ndims*sizeof(MPI_Offset));
+        assert(tmp != NULL);
+        for(i = 0; i < var->ndims; i++){
+            tmp[i] = coord[i] - start[i];
+            FARB_DBG(VERBOSE_ALL_LEVEL, "coord %d", (int)coord[i]);
+        }
+        new_chunk->offset = to_1d_index(var->ndims, var->shape, coord)*var->el_sz; //offset
+        new_chunk->usrbuf_offset = to_1d_index(var->ndims, count, tmp)*var->el_sz; //offset inside the user buffer
+        new_chunk->data_sz = count[var->ndims-1]*var->el_sz;    //data_sz
+        new_chunk->next = NULL;
+        (*nelems)++;
+        free(tmp);
+        FARB_DBG(VERBOSE_ALL_LEVEL,"Added a tuple (off %d, uoff %d, sz %d)", (int)new_chunk->offset, (int)new_chunk->usrbuf_offset, (int)new_chunk->data_sz);
         return;
     }
 
     for(i = 0; i < count[dim]; i++){
-        coord[dim] += i;
-        traverse_dims(var, count, dim+1, coord, nelems, list);
+        coord[dim] = start[dim] + i;
+        traverse_dims(var, count, start, dim+1, coord, nelems, list);
     }
 }
 
 /*Returns an array consisting of tuples (offset, data_sz) of contiguous memory chunks that hold
   the block of data of a multi-dimensional var when it's flattened to a 1d array.
   The data block starts at coordinate start[] and is of size count[].*/
-void get_contig_mem_list(farb_var_t *var, const MPI_Offset start[], const MPI_Offset count[], int *nelems, MPI_Offset **list)
+void get_contig_mem_list(farb_var_t *var,
+                         const MPI_Offset start[],
+                         const MPI_Offset count[],
+                         int *nelems,
+                         contig_mem_chunk_t **list)
 {
     MPI_Offset *cur_coord = (MPI_Offset*)malloc(var->ndims*sizeof(MPI_Offset));
     memcpy((void*)cur_coord, (void*)start, var->ndims*sizeof(MPI_Offset));
-    *nelems = 0;
     *list = NULL;
-    traverse_dims(var, count, 0, cur_coord, nelems, list);
+    *nelems = 0;
+    traverse_dims(var, count, start, 0, cur_coord, nelems, list);
+    free(cur_coord);
 }
 
 MPI_Offset mem_noncontig_read(farb_var_t *var, const MPI_Offset start[], const MPI_Offset count[], void *data)
 {
     MPI_Offset readsz = 0, dst_offset = 0;
-    MPI_Offset *ctg_mem;
+    contig_mem_chunk_t *chunks, *tmp;
     int nelems = 0;
-    int i;
-    get_contig_mem_list(var, start, count, &nelems, &ctg_mem);
+    get_contig_mem_list(var, start, count, &nelems, &chunks);
 
-
-    for(i = 0; i < nelems; i = i+2){
-        readsz += mem_contiguous_read(var, ctg_mem[i], ctg_mem[i+1], data+dst_offset);
-        dst_offset += ctg_mem[i+1];
+    while(chunks != NULL){
+        readsz += mem_contiguous_read(var, chunks->offset, chunks->data_sz, data+dst_offset);
+        dst_offset += chunks->data_sz;
+        tmp = chunks;
+        chunks = chunks->next;
+        free(tmp);
     }
-    if(ctg_mem != NULL)
-        free(ctg_mem);
+
     return readsz;
 }
 

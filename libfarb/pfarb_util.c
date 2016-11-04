@@ -6,36 +6,46 @@
 
 #include <assert.h>
 #include <string.h>
-#include <mpi.h>
+#include <stdlib.h>
+#include <errno.h>
+
 #include "pfarb_util.h"
 #include "pfarb_mem.h"
 #include "pfarb.h"
 #include "pfarb_buf_io.h"
+#include "pfarb_file_buffer.h"
+#include "pfarb_common.h"
 
 int get_write_flag(const char* filename)
 {
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
         FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
         assert(0);
     }
-    return fbuf->write_flag;
+    if(fbuf->writer_id == gl_my_comp_id)
+        return 1;
+    else
+        return 0;
 }
 
 int get_read_flag(const char* filename)
 {
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
         FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
         assert(0);
     }
 
-    return fbuf->read_flag;
+    if(fbuf->reader_id == gl_my_comp_id)
+        return 1;
+    else
+        return 0;
 }
 
 int file_buffer_ready(const char* filename)
 {
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
         FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
         assert(0);
@@ -43,7 +53,18 @@ int file_buffer_ready(const char* filename)
     return fbuf->is_ready;
 }
 
+void create_file(const char *filename, int ncid)
+{
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL){
+        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
+        assert(0);
+    }
 
+    fbuf->ncid = ncid;
+}
+
+/*Used in static data distribution*/
 void progress_io()
 {
     MPI_Status status;
@@ -53,7 +74,7 @@ void progress_io()
     int bufsz;
 
     for(i = 0; i < gl_ncomp; i++){
-        if( i == gl_my_comp_id || gl_comps[i].intercomm == MPI_COMM_NULL)
+        if( gl_comps[i].intercomm == MPI_COMM_NULL)
             continue;
 
         MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, gl_comps[i].intercomm, &flag, &status);
@@ -67,7 +88,7 @@ void progress_io()
                 CHECK_MPI(errno);
                 FARB_DBG(VERBOSE_DBG_LEVEL,   "Receive FILE_READY notif for %s", filename);
 
-                fbuf = find_file_buffer(gl_filebuf_list, filename);
+                fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
                 assert(fbuf != NULL);
 
                 if(fbuf->mode == FARB_IO_MODE_MEMORY){
@@ -98,7 +119,7 @@ void progress_io()
                 errno = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].intercomm, &status);
 
                 CHECK_MPI(errno);
-                fbuf = find_file_buffer(gl_filebuf_list, filename);
+                fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
                 assert(fbuf != NULL);
                 FARB_DBG(VERBOSE_DBG_LEVEL, "Receive RECV_READY_TAG notif for %s", filename);
                 /*Send the hearder*/
@@ -113,6 +134,20 @@ void progress_io()
                 assert(0);
         }
     }
+}
+
+MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape)
+{
+    if(ndims > 0){
+        int i;
+        MPI_Offset *tmp = (MPI_Offset*)malloc(ndims*sizeof(MPI_Offset));
+        assert(tmp != NULL);
+        for(i = 0; i < ndims; i++)
+            tmp[i] = shape[i] - 1;
+        return to_1d_index(ndims, shape, tmp);
+        free(tmp);
+    } else
+        return 0;
 }
 
 MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coord)
@@ -134,37 +169,45 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coo
     return idx;
 }
 
+int fbuf_io_mode(const char *filename)
+{
+    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL)
+        return FARB_IO_MODE_UNDEFINED;
+    return fbuf->mode;
+}
+
 void notify_file_ready(const char* filename)
 {
-    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename);
+    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     assert(fbuf != NULL);
-    int comp_id, i, dest, errno;
-    int nrranks;
+    int comp_id, i, dest, errno, nranks;
 
     comp_id = fbuf->reader_id;
-    switch(gl_conf.distr_mode){
-        case DISTR_MODE_STATIC:
-            for(i = 0; i < fbuf->distr_nranks; i++){
-                dest = fbuf->distr_ranks[i];
-                FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
-                errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
-                CHECK_MPI(errno);
-
-                if(fbuf->mode == FARB_IO_MODE_FILE)
-                    fbuf->distr_ndone++;
-            }
-            break;
-        case DISTR_MODE_BUFFERED_REQ_MATCH:
-        case DISTR_MODE_NONBUFFERED_REQ_MATCH:
-            MPI_Comm_remote_size(gl_comps[comp_id].intercomm, &nrranks);
-            if(gl_my_rank < nrranks)
+    if(fbuf->mode == FARB_IO_MODE_FILE){
+            MPI_Comm_remote_size(gl_comps[comp_id].intercomm, &nranks);
+            if(gl_my_rank < nranks){
                 FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", gl_my_rank, fbuf->file_path);
                 errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, gl_my_rank, FILE_READY_TAG, gl_comps[comp_id].intercomm);
                 CHECK_MPI(errno);
-            break;
-        default:
-            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: unknown data distribution mode");
-            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+            }
+    } else {
+        switch(gl_conf.distr_mode){
+            case DISTR_MODE_STATIC:
+                for(i = 0; i < fbuf->distr_nranks; i++){
+                    dest = fbuf->distr_ranks[i];
+                    FARB_DBG(VERBOSE_DBG_LEVEL,   "Notify reader rank %d that file %s is ready", dest, fbuf->file_path);
+                    errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, dest, FILE_READY_TAG, gl_comps[comp_id].intercomm);
+                    CHECK_MPI(errno);
+
+                    if(fbuf->mode == FARB_IO_MODE_FILE)
+                        fbuf->distr_ndone++;
+                }
+                break;
+            default:
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: 4 unknown data distribution mode");
+                MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        }
     }
 
 
@@ -173,42 +216,28 @@ void notify_file_ready(const char* filename)
 void close_file(const char *filename)
 {
     FARB_DBG(VERBOSE_DBG_LEVEL, "Closing file %s", filename);
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     assert(fbuf != NULL);
 
-    if(fbuf->write_flag){
-        if( (gl_conf.distr_mode == DISTR_MODE_STATIC) || (fbuf->mode == FARB_IO_MODE_FILE) ){
+    if(fbuf->writer_id == gl_my_comp_id){
+        if(fbuf->mode == FARB_IO_MODE_FILE)
+            notify_file_ready(filename);
+        else if((fbuf->mode == FARB_IO_MODE_FILE) && (gl_conf.distr_mode == DISTR_MODE_STATIC)){
             notify_file_ready(filename);
             while(fbuf->distr_ndone != fbuf->distr_nranks)
                 progress_io();
-        } else {
-            assert(gl_conf.distr_mode == DISTR_MODE_BUFFERED_REQ_MATCH);
-            //TODO continue
-//            notify_master();
-//            while(!blabla)
-//                progress_io();
-
         }
     }
 
     delete_file_buffer(&gl_filebuf_list, fbuf);
 }
 
-int get_io_mode(const char* filename)
+int def_var(const char* filename, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
 {
-
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
-    if(fbuf == NULL)
-        return FARB_IO_MODE_UNDEFINED;
-    return fbuf->mode;
-}
-
-int def_var(const char* filename, int varid, int ndims, MPI_Offset *shape)
-{
-    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename);
+    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename, -1);
     assert(buf!=NULL);
 
-    farb_var_t *var = new_var(varid, ndims, shape);
+    farb_var_t *var = new_var(varid, ndims, el_sz, shape);
 
     add_var(&buf->vars, var);
     buf->var_cnt++;
@@ -218,7 +247,7 @@ int def_var(const char* filename, int varid, int ndims, MPI_Offset *shape)
 /*Write pnetcdf header*/
 void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
 {
-    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename);
+    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename, -1);
     assert(buf!=NULL);
     FARB_DBG(VERBOSE_DBG_LEVEL, "Writing header (sz %d)", (int)hdr_sz);
     buf->hdr_sz = hdr_sz;
@@ -231,7 +260,7 @@ void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
 /*Read pnetcdf header*/
 MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
 {
-    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename);
+    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename, -1);
     assert(buf!=NULL);
 
     if(offset+chunk_sz > buf->hdr_sz){
@@ -241,38 +270,4 @@ MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset ch
 
     memcpy(chunk, buf->header+offset, (size_t)chunk_sz);
     return chunk_sz;
-}
-
-/*Set how many elements in each dimension to distribute to ranks.
-  File's distrib_pattern must be set to scatter */
-int set_distr_count(const char* filename, int varid, int count[])
-{
-    int i;
-    MPI_Offset *cnt;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename);
-    assert(fbuf != NULL);
-
-    if(fbuf->mode != FARB_IO_MODE_MEMORY){
-        //nothing to do
-        return 0;
-    }
-
-    if(fbuf->distr_pattern != DISTR_PATTERN_SCATTER){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: cannot set distribute count. File's distribute pattern must be <scatter>.");
-        return 0;
-    }
-
-    farb_var_t *var = find_var(fbuf->vars, varid);
-    if(var == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: No variable with such id (%d)", varid);
-        assert(0);
-    }
-
-    cnt = (MPI_Offset*)realloc(var->distr_count, var->ndims*sizeof(MPI_Offset));
-    assert(cnt != NULL);
-    var->distr_count = cnt;
-    for(i = 0; i < var->ndims; i++)
-        var->distr_count[i] = (MPI_Offset)count[i];
-
-    return 0;
 }

@@ -6,7 +6,7 @@
 #define VERBOSE_DBG_LEVEL    1
 #define VERBOSE_ALL_LEVEL    2
 
-#define FARB_TIMEOUT       1200 /* it's long because letkf and obs are hanging for a long time before they get data from scale*/ //TODO still need it?
+#define FARB_TIMEOUT       1200 /* it's long because letkf and obs are hanging for a long time before they get data from scale*/
 #define FARB_UNDEFINED      -1
 
 #include <string.h>
@@ -23,6 +23,8 @@ extern struct farb_config gl_conf;                 /*Framework settings*/
 char _buff[1024];
 char *gl_my_comp_name;
 
+char error_string[1024];
+
 #define FARB_DBG(dbg_level, ...) do{  \
     if(gl_verbose >= dbg_level){  \
                 memset(_buff,0,1024);                         \
@@ -34,9 +36,8 @@ char *gl_my_comp_name;
 
 #define CHECK_MPI(errcode) do{   \
         if (errcode != MPI_SUCCESS) {   \
-           char error_string[1024];     \
            int length_of_error_string;  \
-           MPI_Error_string(errno, error_string, &length_of_error_string);  \
+           MPI_Error_string(errcode, error_string, &length_of_error_string);  \
            FARB_DBG(VERBOSE_DBG_LEVEL, "error is: %s", error_string);       \
            MPI_Abort(MPI_COMM_WORLD, errcode);                              \
         }                                                                   \

@@ -6,10 +6,10 @@ CC=mpicc
 
 all: reader writer
 
-reader.o: reader.c 
+reader.o: reader-1.c 
 	$(CC) -c -o $@ $< $(CFLAGS)
 
-writer.o: writer.c 
+writer.o: writer-1.c 
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 reader: reader.o
