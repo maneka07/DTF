@@ -327,6 +327,7 @@ int load_config(const char *ini_name, const char *comp_name){
   }
 
   gl_conf.distr_mode = FARB_UNDEFINED;
+  gl_conf.explicit_match = 0;
 
   while(!feof(in)){
 
@@ -366,8 +367,8 @@ int load_config(const char *ini_name, const char *comp_name){
                 FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: filename not set.");
                 goto panic_exit;
             }
-            //TODO file does not have to have a reader if the io mode is "file"
-            if( cur_fb->writer_id == -1 || cur_fb->reader_id == -1){
+
+            if( (cur_fb->mode != FARB_IO_MODE_FILE) && (cur_fb->writer_id == -1 || cur_fb->reader_id == -1) ){
                 FARB_DBG(VERBOSE_ERROR_LEVEL,"FARB Error: file reader or writer not set for file %s.", cur_fb->file_path);
                 goto panic_exit;
             }
@@ -436,7 +437,19 @@ int load_config(const char *ini_name, const char *comp_name){
                 FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: 3 unknown data distribution mode");
                 goto panic_exit;
             }
-        }else if(strcmp(param, "filename") == 0){
+        } else if(strcmp(param, "explicit_match") == 0){
+            gl_conf.explicit_match = atoi(value);
+
+            if(gl_conf.explicit_match == 0)
+                FARB_DBG(VERBOSE_DBG_LEVEL, "FARB: explicit match disabled");
+            else if(gl_conf.explicit_match == 1)
+                FARB_DBG(VERBOSE_DBG_LEVEL, "FARB: explicit match enabled");
+            else {
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: Value for explicit match should be 0 or 1.");
+                goto panic_exit;
+            }
+
+        } else if(strcmp(param, "filename") == 0){
             assert(cur_fb != NULL);
             assert(strlen(value) <= MAX_FILE_NAME);
             strcpy(cur_fb->file_path, value);

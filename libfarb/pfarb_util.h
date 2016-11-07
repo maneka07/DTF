@@ -55,6 +55,8 @@ typedef struct farb_config{
     int my_master;  /*is this rank a master rank*/
     int nmasters;   /*Number of master nodes that hold data for request matching*/
     int *masters;   /*Ranks of master nodes on the writer's side*/
+    int explicit_match;   /*0 - request matching is initiated from inside of pnetcdf;
+                            1 - request matching is initiated by the user*/
     unsigned int my_workgroup_sz;
 }farb_config_t;
 

@@ -48,6 +48,7 @@ _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename,
                                           int rw_flag,
                                           int *request);
 _EXTERN_C_ int farb_match_ioreqs(const char* filename);
+_EXTERN_C_ int farb_match_io(const char *filename, int match_all);
 _EXTERN_C_ void farb_enddef(const char *filename);
 
 /*     Fortran interfaces    */

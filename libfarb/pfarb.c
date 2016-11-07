@@ -252,7 +252,33 @@ _EXTERN_C_ int farb_match_ioreqs(const char* filename)
     if(!lib_initialized) return 0;
     if(fbuf_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
     if(gl_conf.distr_mode != DISTR_MODE_NONBUFFERED_REQ_MATCH) return 0;
+
+    /*User will have to explicitly initiate matching*/
+    if(gl_conf.explicit_match) return 0;
     return match_ioreqs(filename);
+}
+
+/*called by user to do explicit matching*/
+_EXTERN_C_ int farb_match_io(const char *filename, int match_all)
+{
+    if(!lib_initialized) return 0;
+    if(gl_conf.distr_mode != DISTR_MODE_NONBUFFERED_REQ_MATCH) return 0;
+    if(!gl_conf.explicit_match) return 0;
+
+    if(match_all){
+        file_buffer_t *fbuf = gl_filebuf_list;
+        while(fbuf != NULL){
+            if(fbuf->mode == FARB_IO_MODE_MEMORY){
+                match_ioreqs(fbuf->file_path);
+            }
+            fbuf = fbuf->next;
+        }
+
+    } else{
+        if(fbuf_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
+        match_ioreqs(filename);
+    }
+    return 0;
 }
 
 /**

@@ -271,6 +271,8 @@ int benchmark_read(char       *filename,
 #else
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts); ERR(err)
 #endif
+	printf("r%d: after wait\n", rank);
+	farb_match_io(filename, 0);
     /* check status of all requests */
     for (i=0; i<num_reqs; i++) ERR(sts[i])
 
