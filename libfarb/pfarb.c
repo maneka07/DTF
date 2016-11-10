@@ -11,6 +11,11 @@
 #include "pfarb_buf_io.h"
 #include "pfarb_nbuf_io.h"
 
+//TODO !!!!!!!!!!!!!!!!!!!!!!!!implement a tree instead of list
+//TODO change when request is sent to a master
+//TODO unlimited dimension!!
+//1) how do we know current size?
+//NOT all files should be described in the conf file!!
 
 int lib_initialized=0;
 int gl_verbose;
@@ -375,4 +380,9 @@ void farb_init_(const char *filename, char *module_name, int* ierr)
 void farb_finalize_(int* ierr)
 {
     *ierr = farb_finalize();
+}
+
+void farb_match_io_(const char *filename, int match_all, int *ierr)
+{
+    *ierr = farb_match_io(filename, match_all);
 }

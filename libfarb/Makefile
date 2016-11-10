@@ -6,6 +6,11 @@ OBJ = $(SRC:.c=.o)
 CFLAGS=-Wall -g -Wno-comment
 MPICC=mpicc
 
+#K
+#CFLAGS=-Wall -Xg -Wno-comment
+#MPICC=mpifccpx
+
+
 all: $(SNAME) $(DNAME)
 
 $(SNAME): $(OBJ)

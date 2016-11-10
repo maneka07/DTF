@@ -54,5 +54,6 @@ _EXTERN_C_ void farb_enddef(const char *filename);
 /*     Fortran interfaces    */
 void farb_init_(const char *filename, char *module_name, int* ierr);
 void farb_finalize_(int* ierr);
+void farb_match_io_(const char *filename, int match_all, int *ierr);
 
 #endif // FARB_H_INCLUDED
