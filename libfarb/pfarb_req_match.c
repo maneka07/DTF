@@ -1192,6 +1192,9 @@ void send_ioreq(int ncid, io_req_t *ioreq, int rw_flag)
 int match_ioreqs(file_buffer_t *fbuf)
 {
     int errno;
+    io_req_t *ioreq;
+    int rw_flag;
+
     FARB_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %d", fbuf->ncid);
     assert(fbuf->ioreqs != NULL);
     if(gl_conf.my_master == gl_my_rank){
@@ -1200,7 +1203,16 @@ int match_ioreqs(file_buffer_t *fbuf)
         //reset
         fbuf->iodb->nranks_completed = 0;
     }
-
+    if(fbuf->writer_id == gl_my_comp_id)
+        rw_flag = FARB_WRITE;
+    else
+        rw_flag = FARB_READ;
+    ioreq = fbuf->ioreqs;
+    while(ioreq != NULL){
+        /*Forward the info about the request to writer's master rank(s)*/
+        send_ioreq(fbuf->ncid, ioreq, rw_flag);
+        ioreq = ioreq->next;
+    }
     while(fbuf->ioreq_cnt > 0){
         if( (gl_conf.my_master == gl_my_rank) && (fbuf->writer_id == gl_my_comp_id) )
             do_matching(fbuf);

@@ -65,7 +65,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     }
 
     /*Forward the info about the request to writer's master rank(s)*/
-    send_ioreq(fbuf->ncid, req, rw_flag);
+    //send_ioreq(fbuf->ncid, req, rw_flag);
 
     ret = 1;
     for(i = 0; i < var->ndims; i++)
