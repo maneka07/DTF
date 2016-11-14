@@ -1,8 +1,11 @@
 #include <assert.h>
 #include <string.h>
+#include "pfarb_req_match.h"
 #include "pfarb_file_buffer.h"
 #include "pfarb.h"
 #include "pfarb_common.h"
+
+
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid)
 {
     struct file_buffer *ptr = buflist;
@@ -77,38 +80,43 @@ static void delete_var(farb_var_t *var)
     free(var);
 }
 
-void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
+void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
 {
 
     file_buffer_t *prev;
     farb_var_t    *var, *tmp;
-    if(buf == NULL)
+    if(fbuf == NULL)
         return;
 
     assert(buflist != NULL);
 
-    if(buf->header != NULL)
-        free(buf->header);
+    if(fbuf->header != NULL)
+        free(fbuf->header);
 
-    var = buf->vars;
+    var = fbuf->vars;
     while(var != NULL){
         tmp = var->next;
         delete_var(var);
         var = tmp;
     }
 
-    free(buf->distr_ranks);
-
-    if(*buflist == buf)
-        *buflist = buf->next;
-    else{
-        prev = *buflist;
-        while(prev->next != buf)
-            prev = prev->next;
-        prev->next = buf->next;
+    if(fbuf->iodb != NULL){
+        clean_iodb(fbuf->iodb);
+        free(fbuf->iodb);
     }
 
-    free(buf);
+    free(fbuf->distr_ranks);
+
+    if(*buflist == fbuf)
+        *buflist = fbuf->next;
+    else{
+        prev = *buflist;
+        while(prev->next != fbuf)
+            prev = prev->next;
+        prev->next = fbuf->next;
+    }
+
+    free(fbuf);
 }
 
 file_buffer_t* new_file_buffer()
@@ -138,11 +146,7 @@ file_buffer_t* new_file_buffer()
     buf->hdr_sent_flag = 0;
     buf->ioreq_cnt = 0;
     buf->ioreqs = NULL;
-    buf->iodb.ritems = NULL;
-    buf->iodb.witems = NULL;
-    buf->iodb.nritems = 0;
-    buf->iodb.nranks_completed = 0;
-    buf->iodb.nmst_completed = 0;
+    buf->iodb = NULL;
     buf->ncid = -1;
     return buf;
 }

@@ -2,6 +2,8 @@
 #define FARB_UTIL_H_INCLUDED
 
 #include <mpi.h>
+#include "pfarb_file_buffer.h"
+
 
 #define CONNECT_MODE_SERVER     1
 #define CONNECT_MODE_CLIENT     0
@@ -61,20 +63,17 @@ typedef struct farb_config{
 }farb_config_t;
 
 
-int fbuf_io_mode(const char *filename);
-int get_read_flag(const char* filename);
-int get_write_flag(const char* filename);
+struct file_buffer;
+
 void progress_io();
-void notify_file_ready(const char* filename);
-void close_file(const char* filename);
+void notify_file_ready(file_buffer_t *fbuf);
+void close_file(file_buffer_t *fbuf);
 int file_buffer_ready(const char* filename);
-void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header);
-MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
-int def_var(const char* filename, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape);
-void create_file(const char *filename, int ncid);
-
-int set_distr_count(const char* filename, int varid, int count[]);
-
+void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header);
+MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
+int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape);
+int set_distr_count(file_buffer_t *fbuf, int varid, int count[]);
+void open_file(file_buffer_t *fbuf);
 
 MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coord);
 MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape);

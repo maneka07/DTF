@@ -4,6 +4,17 @@
 #include "pfarb_mem.h"
 #include "pfarb.h"
 
+static void init_master_db(file_buffer_t *fbuf)
+{
+    fbuf->iodb = malloc(sizeof(struct master_db));
+    assert(fbuf->iodb != NULL);
+    fbuf->iodb->ritems = NULL;
+    fbuf->iodb->witems = NULL;
+    fbuf->iodb->nritems = 0;
+    fbuf->iodb->nranks_completed = 0;
+    fbuf->iodb->nmst_completed = 0;
+}
+
 static void print_read_dbitem(read_db_item_t *dbitem)
 {
     read_chunk_rec_t *tmp;
@@ -152,7 +163,7 @@ static void do_matching(file_buffer_t *fbuf)
     int rank_idx, var_id, nwriters;
     MPI_Offset matchsz, start_offt;
     write_db_item_t *witem = NULL;
-    read_db_item_t *ritem = fbuf->iodb.ritems;
+    read_db_item_t *ritem = fbuf->iodb->ritems;
     int *writers;
     void **sbuf;
     int *bufsz;
@@ -183,7 +194,7 @@ static void do_matching(file_buffer_t *fbuf)
 
             if( (witem == NULL) || (witem->var_id != var_id)){
                 //find the write record for this var_id
-                witem = fbuf->iodb.witems;
+                witem = fbuf->iodb->witems;
                 while(witem != NULL){
                     if(witem->var_id == var_id)
                         break;
@@ -359,9 +370,9 @@ static void do_matching(file_buffer_t *fbuf)
         /*If we matched all chunks for this rank, then delete this ritem*/
         if(ritem->nchunks == 0){
             read_db_item_t *tmp = ritem;
-            FARB_DBG(VERBOSE_DBG_LEVEL, "Delete db read item of rank %d (left ritems %d)", ritem->rank,  (int)(fbuf->iodb.nritems - 1));
-            if(ritem == fbuf->iodb.ritems)
-                fbuf->iodb.ritems = fbuf->iodb.ritems->next;
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Delete db read item of rank %d (left ritems %d)", ritem->rank,  (int)(fbuf->iodb->nritems - 1));
+            if(ritem == fbuf->iodb->ritems)
+                fbuf->iodb->ritems = fbuf->iodb->ritems->next;
             if(ritem->prev != NULL)
                 ritem->prev->next = ritem->next;
             if(ritem->next != NULL)
@@ -369,7 +380,7 @@ static void do_matching(file_buffer_t *fbuf)
 
             ritem = ritem->next;
             free(tmp);
-            fbuf->iodb.nritems--;
+            fbuf->iodb->nritems--;
         } else {
             FARB_DBG(VERBOSE_ALL_LEVEL, "Not all chunks for rreq from rank %d have been matched (%d left)", ritem->rank, (int)ritem->nchunks);
             ritem = ritem->next;
@@ -382,7 +393,7 @@ static void do_matching(file_buffer_t *fbuf)
     }
 }
 
-static void clean_iodb(master_db_t *iodb)
+void clean_iodb(master_db_t *iodb)
 {
     write_db_item_t *witem;
     read_db_item_t *ritem;
@@ -619,8 +630,12 @@ static void parse_ioreq_wrt_mst(void *buf, int bufsz, int rank)
     fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
     assert(fbuf != NULL);
 
+    if(fbuf->iodb == NULL)
+        init_master_db(fbuf);
+
     /*Find corresponding record in the database*/
-    dbitem = fbuf->iodb.witems;
+    assert(fbuf->iodb!=NULL);
+    dbitem = fbuf->iodb->witems;
     while(dbitem != NULL){
         if(dbitem->var_id == var_id)
             break;
@@ -636,11 +651,11 @@ static void parse_ioreq_wrt_mst(void *buf, int bufsz, int rank)
         dbitem->last = NULL;
 
         //enqueue
-        if(fbuf->iodb.witems == NULL)
-            fbuf->iodb.witems = dbitem;
+        if(fbuf->iodb->witems == NULL)
+            fbuf->iodb->witems = dbitem;
         else{
-            dbitem->next = fbuf->iodb.witems;
-            fbuf->iodb.witems = dbitem;
+            dbitem->next = fbuf->iodb->witems;
+            fbuf->iodb->witems = dbitem;
         }
     }
 
@@ -895,8 +910,11 @@ static void parse_ioreq_rdr_mst(void *buf, int bufsz, int rank)
     fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
     assert(fbuf != NULL);
 
+    if(fbuf->iodb == NULL)
+        init_master_db(fbuf);
+
     /*Find corresponding record in the database*/
-    dbitem = fbuf->iodb.ritems;
+    dbitem = fbuf->iodb->ritems;
     while(dbitem != NULL){
         if(dbitem->rank == rank)
             break;
@@ -913,16 +931,16 @@ static void parse_ioreq_rdr_mst(void *buf, int bufsz, int rank)
         dbitem->nchunks = 0;
 
         //enqueue
-        if(fbuf->iodb.ritems == NULL)
-            fbuf->iodb.ritems = dbitem;
+        if(fbuf->iodb->ritems == NULL)
+            fbuf->iodb->ritems = dbitem;
         else{
-            dbitem->next = fbuf->iodb.ritems;
-            fbuf->iodb.ritems->prev = dbitem;
-            fbuf->iodb.ritems = dbitem;
+            dbitem->next = fbuf->iodb->ritems;
+            fbuf->iodb->ritems->prev = dbitem;
+            fbuf->iodb->ritems = dbitem;
         }
-        fbuf->iodb.nritems++;
+        fbuf->iodb->nritems++;
     }
-    FARB_DBG(VERBOSE_DBG_LEVEL, "Mst recv rreq from rdr %d for ncid %d, var %d (ritems %d)", rank, ncid, var_id, (int)fbuf->iodb.nritems);
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Mst recv rreq from rdr %d for ncid %d, var %d (ritems %d)", rank, ncid, var_id, (int)fbuf->iodb->nritems);
 
     /*add mem chunks to the list for future matching.
       Pick only those mem chunks whose offsets are within
@@ -1171,16 +1189,17 @@ void send_ioreq(int ncid, io_req_t *ioreq, int rw_flag)
 }
 
 
-int match_ioreqs(const char* filename)
+int match_ioreqs(file_buffer_t *fbuf)
 {
     int errno;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(fbuf != NULL);
-
     FARB_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %d", fbuf->ncid);
     assert(fbuf->ioreqs != NULL);
-    //reset
-    fbuf->iodb.nranks_completed = 0;
+    if(gl_conf.my_master == gl_my_rank){
+        if(fbuf->iodb == NULL)
+            init_master_db(fbuf);
+        //reset
+        fbuf->iodb->nranks_completed = 0;
+    }
 
     while(fbuf->ioreq_cnt > 0){
         if( (gl_conf.my_master == gl_my_rank) && (fbuf->writer_id == gl_my_comp_id) )
@@ -1364,17 +1383,10 @@ static void recv_data_rdr(void* buf, int bufsz)
 }
 
 /*Send the file header and info about vars to the reader when the writer finishes the def mode*/
-void send_file_info(const char* filename)
+void send_file_info(file_buffer_t *fbuf)
 {
     void *sbuf;
     int sbuf_sz, errno;
-
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
-        assert(0);
-    }
-
     MPI_Request sreq[3];
     errno = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, gl_my_rank, FILE_READY_TAG, gl_comps[fbuf->reader_id].intercomm, &sreq[0]);
     CHECK_MPI(errno);
@@ -1497,14 +1509,14 @@ void progress_io_matching()
 
 
                     if(comp == gl_my_comp_id){
-                        fbuf->iodb.nmst_completed++; //this message was from another writer master
-                        FARB_DBG(VERBOSE_DBG_LEVEL, "Recevied DONE from mst %d (tot done %u)", status.MPI_SOURCE, fbuf->iodb.nmst_completed);
+                        fbuf->iodb->nmst_completed++; //this message was from another writer master
+                        FARB_DBG(VERBOSE_DBG_LEVEL, "Recevied DONE from mst %d (tot done %u)", status.MPI_SOURCE, fbuf->iodb->nmst_completed);
                     }
                      else{
-                        fbuf->iodb.nranks_completed++; //this message was from a reader
-                        FARB_DBG(VERBOSE_DBG_LEVEL, "Recevied DONE from reader %d (tot done %u)", status.MPI_SOURCE, fbuf->iodb.nranks_completed);
+                        fbuf->iodb->nranks_completed++; //this message was from a reader
+                        FARB_DBG(VERBOSE_DBG_LEVEL, "Recevied DONE from reader %d (tot done %u)", status.MPI_SOURCE, fbuf->iodb->nranks_completed);
 
-                        if(fbuf->iodb.nranks_completed == gl_conf.my_workgroup_sz){
+                        if(fbuf->iodb->nranks_completed == gl_conf.my_workgroup_sz){
                             /*Notify other masters that readers from my workgroup
                               have finished */
                               int i;
@@ -1515,13 +1527,13 @@ void progress_io_matching()
                                 errno = MPI_Send(&ncid, 1, MPI_INT, gl_conf.masters[i], IO_DONE_TAG, gl_comps[gl_my_comp_id].intercomm);
                                 CHECK_MPI(errno);
                               }
-                              fbuf->iodb.nmst_completed++;
+                              fbuf->iodb->nmst_completed++;
                         }
                     }
 
 
 
-                    if(fbuf->iodb.nmst_completed == gl_conf.nmasters){
+                    if(fbuf->iodb->nmst_completed == gl_conf.nmasters){
                         int i;
                         io_req_t *ioreq, *tmp;
                         FARB_DBG(VERBOSE_DBG_LEVEL, "Notify all other ranks that req matching completed");
@@ -1532,7 +1544,7 @@ void progress_io_matching()
                             CHECK_MPI(errno);
                         }
                         /*Check that I don't have any read reqs incompleted*/
-                        assert(fbuf->iodb.nritems == 0);
+                        assert(fbuf->iodb->nritems == 0);
                         /*Complete my own write requests*/
                         ioreq = fbuf->ioreqs;
                         while(ioreq != NULL){
@@ -1543,7 +1555,7 @@ void progress_io_matching()
                         }
                         fbuf->ioreq_cnt = 0;
                         /*Clean my iodb*/
-                        clean_iodb(&(fbuf->iodb));
+                        clean_iodb(fbuf->iodb);
                     }
 
                 } else { /*I am writer*/

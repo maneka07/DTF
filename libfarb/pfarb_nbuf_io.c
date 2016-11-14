@@ -5,7 +5,7 @@
 #include "pfarb_mem.h"
 #include "pfarb_common.h"
 
-MPI_Offset nbuf_read_write_var(const char *filename,
+MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
                                int varid,
                                const MPI_Offset *start,
                                const MPI_Offset *count,
@@ -19,8 +19,6 @@ MPI_Offset nbuf_read_write_var(const char *filename,
     MPI_Offset ret;
     int el_sz;
     io_req_t *req;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(fbuf!=NULL);
     int i;
 
     if(rw_flag == FARB_READ)

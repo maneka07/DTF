@@ -313,6 +313,7 @@ int load_config(const char *ini_name, const char *comp_name){
   //char       comp_name[MAX_COMP_NAME];
   int        i, len, lineno=0;
   struct file_buffer* cur_fb = NULL;
+  int master_flag;
  // ini = iniparser_load(ini_name);
 
   line[0] = 0;
@@ -379,8 +380,8 @@ int load_config(const char *ini_name, const char *comp_name){
                 }
             }
         }
-
-        cur_fb = new_file_buffer();
+        master_flag = (gl_conf.my_master == gl_my_rank) ? 1 : 0;
+        cur_fb = new_file_buffer(master_flag);
         assert(cur_fb != NULL);
 
         add_file_buffer(&gl_filebuf_list, cur_fb);

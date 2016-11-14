@@ -10,12 +10,11 @@
 #include "pfarb_util.h"
 #include "pfarb_buf_io.h"
 #include "pfarb_nbuf_io.h"
-
+#include "pfarb_req_match.h"
 //TODO !!!!!!!!!!!!!!!!!!!!!!!!implement a tree instead of list
 //TODO change when request is sent to a master
 //TODO unlimited dimension!!
 //1) how do we know current size?
-//NOT all files should be described in the conf file!!
 
 int lib_initialized=0;
 int gl_verbose;
@@ -155,27 +154,38 @@ _EXTERN_C_ int farb_finalize()
 _EXTERN_C_ void farb_write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
 {
     if(!lib_initialized) return;
-    if(fbuf_io_mode(filename) != FARB_IO_MODE_MEMORY) return;
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return;
+    if(fbuf->mode != FARB_IO_MODE_MEMORY) return;
+
+
     if(hdr_sz == 0){
         FARB_DBG(VERBOSE_DBG_LEVEL, "Header size for file %s is zero", filename);
         return;
     }
-    write_hdr(filename, hdr_sz, header);
+    write_hdr(fbuf, hdr_sz, header);
     return;
 }
 
 _EXTERN_C_ MPI_Offset farb_read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
 {
-     if(!lib_initialized) return 0;
-     if(fbuf_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
-     return read_hdr_chunk(filename, offset, chunk_sz, chunk);
+    if(!lib_initialized) return 0;
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return 0;
+    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
+    return read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
 }
 
 
 _EXTERN_C_ void farb_create(const char *filename, int ncid)
 {
     if(!lib_initialized) return;
-    create_file(filename, ncid);
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL){
+        FARB_DBG(VERBOSE_ALL_LEVEL, "File %s is not treated by FARB", filename);
+        return;
+    }
+    fbuf->ncid = ncid;
 }
 /**
   @brief	Called when the corresponding file is opened.
@@ -187,39 +197,23 @@ _EXTERN_C_ void farb_create(const char *filename, int ncid)
 _EXTERN_C_ void farb_open(const char *filename)
 {
     if(!lib_initialized) return;
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Enter farb_open %s", filename);
-    if(get_read_flag(filename)){
-        while(!file_buffer_ready(filename))
-            if(fbuf_io_mode(filename) == FARB_IO_MODE_FILE)
-                progress_io();
-            else if(fbuf_io_mode(filename) == FARB_IO_MODE_MEMORY){
-                //force progress until the writer finishes with the file.
-                switch(gl_conf.distr_mode){
-                    case DISTR_MODE_STATIC:
-                        progress_io();
-                        break;
-                    case DISTR_MODE_NONBUFFERED_REQ_MATCH:
-                        progress_io_matching();
-                        break;
-                    default:
-                        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: 1 unknown data distribution mode");
-                        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-                }
-            }
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL){
+        FARB_DBG(VERBOSE_ALL_LEVEL, "File %s is not treated by FARB", filename);
+        return;
     }
-
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "Exit farb_open %s", filename);
+    open_file(fbuf);
 }
 
-
-/*TODO put this into ncmpi_enddef*/
 _EXTERN_C_ void farb_enddef(const char *filename)
 {
     if(!lib_initialized) return;
-    if(fbuf_io_mode(filename) != FARB_IO_MODE_MEMORY) return;
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return;
+    if(fbuf->mode != FARB_IO_MODE_MEMORY) return;
 
-    if(get_write_flag(filename) && gl_conf.distr_mode == DISTR_MODE_NONBUFFERED_REQ_MATCH)
-        send_file_info(filename);
+    if((fbuf->writer_id == gl_my_comp_id) && (gl_conf.distr_mode == DISTR_MODE_NONBUFFERED_REQ_MATCH))
+        send_file_info(fbuf);
 }
 ///**
 //  @brief	Called before the corresponding file is opened. In case if components do normal File I/O
@@ -247,20 +241,24 @@ _EXTERN_C_ void farb_enddef(const char *filename)
 _EXTERN_C_ void farb_close(const char* filename)
 {
     if(!lib_initialized) return;
-    FARB_DBG(VERBOSE_DBG_LEVEL,   "close %s", filename);
-    close_file(filename);
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return;
+    close_file(fbuf);
 }
 
 /*called inside wait function in pnetcdf*/
 _EXTERN_C_ int farb_match_ioreqs(const char* filename)
 {
     if(!lib_initialized) return 0;
-    if(fbuf_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return 0;
+    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
     if(gl_conf.distr_mode != DISTR_MODE_NONBUFFERED_REQ_MATCH) return 0;
 
     /*User will have to explicitly initiate matching*/
     if(gl_conf.explicit_match) return 0;
-    return match_ioreqs(filename);
+
+    return match_ioreqs(fbuf);
 }
 
 /*called by user to do explicit matching*/
@@ -269,19 +267,19 @@ _EXTERN_C_ int farb_match_io(const char *filename, int match_all)
     if(!lib_initialized) return 0;
     if(gl_conf.distr_mode != DISTR_MODE_NONBUFFERED_REQ_MATCH) return 0;
     if(!gl_conf.explicit_match) return 0;
-
     if(match_all){
         file_buffer_t *fbuf = gl_filebuf_list;
         while(fbuf != NULL){
-            if(fbuf->mode == FARB_IO_MODE_MEMORY){
-                match_ioreqs(fbuf->file_path);
-            }
+            if(fbuf->mode == FARB_IO_MODE_MEMORY)
+                match_ioreqs(fbuf);
             fbuf = fbuf->next;
         }
 
     } else{
-        if(fbuf_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
-        match_ioreqs(filename);
+        file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+        if(fbuf == NULL) return 0;
+        if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
+        match_ioreqs(fbuf);
     }
     return 0;
 }
@@ -293,11 +291,10 @@ _EXTERN_C_ int farb_match_io(const char *filename, int match_all)
 */
 _EXTERN_C_ int farb_write_flag(const char* filename)
 {
-    int flag;
     if(!lib_initialized)return 0;
-
-    flag = get_write_flag(filename);
-    return flag;
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return 0;
+    return (fbuf->writer_id == gl_my_comp_id) ? 1 : 0;
 }
 
 /**
@@ -308,7 +305,9 @@ _EXTERN_C_ int farb_write_flag(const char* filename)
 _EXTERN_C_ int farb_read_flag(const char* filename)
 {
     if(!lib_initialized) return 0;
-    return get_read_flag(filename);
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return 0;
+    return (fbuf->reader_id == gl_my_comp_id) ? 1 : 0;
 }
 
 _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename,
@@ -322,18 +321,22 @@ _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename,
                                           int rw_flag,
                                           int *request)
 {
-    if(!lib_initialized) return 0;
     MPI_Offset ret;
-    if(fbuf_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
+
+    if(!lib_initialized) return 0;
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return 0;
+    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
+
     switch(gl_conf.distr_mode){
             case DISTR_MODE_STATIC:
-                ret = buf_read_write_var(filename, varid, start, count, stride, imap, dtype, buf, rw_flag);
+                ret = buf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
                 break;
             case DISTR_MODE_NONBUFFERED_REQ_MATCH:
                 if(request == NULL)
-                    ret = nbuf_read_write_var(filename, varid, start, count, stride, imap, dtype, buf, rw_flag, NULL);
+                    ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, NULL);
                 else
-                    ret = nbuf_read_write_var(filename, varid, start, count, stride, imap, dtype, buf, rw_flag, request);
+                    ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, request);
                 break;
             default:
                 FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: 2 unknown data distribution mode");
@@ -348,26 +351,33 @@ _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename,
     @param  filename    name of the file
     @return the io mode
 */
+//TODO do we really need it?
 _EXTERN_C_ int farb_io_mode(const char* filename)
 {
     if(!lib_initialized) return 0;
-    return fbuf_io_mode(filename);
+    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL)
+        return FARB_IO_MODE_UNDEFINED;
+    return fbuf->mode;
 }
 
 _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
 {
     if(!lib_initialized) return 0;
-
-    if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
+    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return 0;
+    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
     FARB_DBG(VERBOSE_ALL_LEVEL, "el_sz %d", (int)el_sz);
-    return def_var(filename, varid, ndims, el_sz, shape);
+    return def_var(fbuf, varid, ndims, el_sz, shape);
 }
 
 _EXTERN_C_ int farb_set_distr_count(const char* filename, int varid, int count[])
 {
     if(!lib_initialized) return 0;
-    if(farb_io_mode(filename) != FARB_IO_MODE_MEMORY) return 0;
-    return set_distr_count(filename, varid, count);
+    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return 0;
+    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
+    return set_distr_count(fbuf, varid, count);
 }
 
 /*  Fortran Interfaces  */

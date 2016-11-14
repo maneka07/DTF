@@ -11,9 +11,8 @@
 #include "pfarb_mem.h"
 #include "pfarb_common.h"
 
-
 //TODO remove addressing file by name to addressing by ncid
-MPI_Offset buf_read_write_var(const char *filename,
+MPI_Offset buf_read_write_var( file_buffer_t *fbuf,
                                int varid,
                                const MPI_Offset *start,
                                const MPI_Offset *count,
@@ -25,9 +24,6 @@ MPI_Offset buf_read_write_var(const char *filename,
 {
     MPI_Offset ret;
     int el_sz;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(fbuf!=NULL);
-
     if(rw_flag == FARB_READ)
          assert(fbuf->is_ready);
 
@@ -426,18 +422,10 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
 
 /*Set how many elements in each dimension to distribute to ranks.
   File's distrib_pattern must be set to scatter */
-int set_distr_count(const char* filename, int varid, int count[])
+int set_distr_count(file_buffer_t *fbuf, int varid, int count[])
 {
     int i;
     MPI_Offset *cnt;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(fbuf != NULL);
-
-    if(fbuf->mode != FARB_IO_MODE_MEMORY){
-        //nothing to do
-        return 0;
-    }
-
     if(fbuf->distr_pattern != DISTR_PATTERN_SCATTER){
         FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: cannot set distribute count. File's distribute pattern must be <scatter>.");
         return 0;

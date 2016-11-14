@@ -3,6 +3,7 @@
 
 #include <mpi.h>
 #include "pfarb_file_buffer.h"
+#include "pfarb_req_match.h"
 
 //MPI_Offset mem_write(farb_var_t *var, MPI_Offset offset,  MPI_Offset data_sz, void *data);
 MPI_Offset mem_contiguous_write(farb_var_t *var, MPI_Offset offset, MPI_Offset data_sz, void *data);

@@ -9,7 +9,7 @@
 int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm);
 int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm);
 
-MPI_Offset buf_read_write_var(const char *filename,
+MPI_Offset buf_read_write_var( file_buffer_t *fbuf,
                                int varid,
                                const MPI_Offset *start,
                                const MPI_Offset *count,

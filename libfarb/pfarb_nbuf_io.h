@@ -3,7 +3,7 @@
 
 #include <mpi.h>
 
-MPI_Offset nbuf_read_write_var(const char *filename,
+MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
                                int varid,
                                const MPI_Offset *start,
                                const MPI_Offset *count,

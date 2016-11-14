@@ -15,33 +15,35 @@
 #include "pfarb_buf_io.h"
 #include "pfarb_file_buffer.h"
 #include "pfarb_common.h"
+#include "pfarb_req_match.h"
 
-int get_write_flag(const char* filename)
-{
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
-        assert(0);
-    }
-    if(fbuf->writer_id == gl_my_comp_id)
-        return 1;
-    else
-        return 0;
-}
+//int get_write_flag(const char* filename)
+//{
+//    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+//    if(fbuf == NULL){
+//        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
+//        assert(0);
+//    }
+//    if(fbuf->writer_id == gl_my_comp_id)
+//        return 1;
+//    else
+//        return 0;
+//}
+//
 
-int get_read_flag(const char* filename)
-{
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
-        assert(0);
-    }
-
-    if(fbuf->reader_id == gl_my_comp_id)
-        return 1;
-    else
-        return 0;
-}
+//int get_read_flag(const char* filename)
+//{
+//    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+//    if(fbuf == NULL){
+//        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
+//        assert(0);
+//    }
+//
+//    if(fbuf->reader_id == gl_my_comp_id)
+//        return 1;
+//    else
+//        return 0;
+//}
 
 int file_buffer_ready(const char* filename)
 {
@@ -53,16 +55,6 @@ int file_buffer_ready(const char* filename)
     return fbuf->is_ready;
 }
 
-void create_file(const char *filename, int ncid)
-{
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: file %s not in the configuration file", filename);
-        assert(0);
-    }
-
-    fbuf->ncid = ncid;
-}
 
 /*Used in static data distribution*/
 void progress_io()
@@ -169,18 +161,8 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coo
     return idx;
 }
 
-int fbuf_io_mode(const char *filename)
+void notify_file_ready(file_buffer_t *fbuf)
 {
-    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL)
-        return FARB_IO_MODE_UNDEFINED;
-    return fbuf->mode;
-}
-
-void notify_file_ready(const char* filename)
-{
-    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(fbuf != NULL);
     int comp_id, i, dest, errno, nranks;
 
     comp_id = fbuf->reader_id;
@@ -213,17 +195,14 @@ void notify_file_ready(const char* filename)
 
 }
 
-void close_file(const char *filename)
+void close_file(file_buffer_t *fbuf)
 {
-    FARB_DBG(VERBOSE_DBG_LEVEL, "Closing file %s", filename);
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(fbuf != NULL);
-
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Closing file %s", fbuf->file_path);
     if(fbuf->writer_id == gl_my_comp_id){
         if(fbuf->mode == FARB_IO_MODE_FILE)
-            notify_file_ready(filename);
+            notify_file_ready(fbuf);
         else if((fbuf->mode == FARB_IO_MODE_FILE) && (gl_conf.distr_mode == DISTR_MODE_STATIC)){
-            notify_file_ready(filename);
+            notify_file_ready(fbuf);
             while(fbuf->distr_ndone != fbuf->distr_nranks)
                 progress_io();
         }
@@ -232,42 +211,58 @@ void close_file(const char *filename)
     delete_file_buffer(&gl_filebuf_list, fbuf);
 }
 
-int def_var(const char* filename, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
+void open_file(file_buffer_t *fbuf)
 {
-    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(buf!=NULL);
+    FARB_DBG(VERBOSE_DBG_LEVEL,   "Enter farb_open %s", fbuf->file_path);
+    if(fbuf->reader_id == gl_my_comp_id){
+        while(!fbuf->is_ready)
+            if(fbuf->mode == FARB_IO_MODE_FILE)
+                progress_io();
+            else if(fbuf->mode == FARB_IO_MODE_MEMORY){
+                //force progress until the writer finishes with the file.
+                switch(gl_conf.distr_mode){
+                    case DISTR_MODE_STATIC:
+                        progress_io();
+                        break;
+                    case DISTR_MODE_NONBUFFERED_REQ_MATCH:
+                        progress_io_matching();
+                        break;
+                    default:
+                        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: 1 unknown data distribution mode");
+                        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+                }
+            }
+    }
+    FARB_DBG(VERBOSE_DBG_LEVEL,   "Exit farb_open %s", fbuf->file_path);
+}
 
+int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
+{
     farb_var_t *var = new_var(varid, ndims, el_sz, shape);
-
-    add_var(&buf->vars, var);
-    buf->var_cnt++;
+    add_var(&fbuf->vars, var);
+    fbuf->var_cnt++;
     return 0;
 }
 
 /*Write pnetcdf header*/
-void write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
+void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header)
 {
-    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(buf!=NULL);
     FARB_DBG(VERBOSE_DBG_LEVEL, "Writing header (sz %d)", (int)hdr_sz);
-    buf->hdr_sz = hdr_sz;
-    buf->header = malloc(hdr_sz);
-    assert(buf->header != NULL);
-    memcpy(buf->header, header, (size_t)hdr_sz);
+    fbuf->hdr_sz = hdr_sz;
+    fbuf->header = malloc(hdr_sz);
+    assert(fbuf->header != NULL);
+    memcpy(fbuf->header, header, (size_t)hdr_sz);
     return;
 }
 
 /*Read pnetcdf header*/
-MPI_Offset read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
+MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
 {
-    file_buffer_t *buf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(buf!=NULL);
-
-    if(offset+chunk_sz > buf->hdr_sz){
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Warning: trying to read %llu at offt %llu but hdr sz is %llu", chunk_sz, offset, buf->hdr_sz);
-        chunk_sz = buf->hdr_sz - offset;
+    if(offset+chunk_sz > fbuf->hdr_sz){
+        FARB_DBG(VERBOSE_ALL_LEVEL, "Warning: trying to read %llu at offt %llu but hdr sz is %llu", chunk_sz, offset, fbuf->hdr_sz);
+        chunk_sz = fbuf->hdr_sz - offset;
     }
 
-    memcpy(chunk, buf->header+offset, (size_t)chunk_sz);
+    memcpy(chunk, fbuf->header+offset, (size_t)chunk_sz);
     return chunk_sz;
 }

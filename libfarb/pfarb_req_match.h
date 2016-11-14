@@ -2,6 +2,7 @@
 #define PFARB_REQ_MATCH_H_INCLUDED
 
 #include <mpi.h>
+#include "pfarb_file_buffer.h"
 
 typedef struct contig_mem_chunk{
     MPI_Offset              offset;
@@ -76,11 +77,13 @@ io_req_t *new_ioreq(int id,
                     const MPI_Offset *count,
                     void *buf,
                     int rw_flag);
-void add_ioreq(io_req_t **list, io_req_t *ioreq);
-int match_ioreqs(const char* filename);
-void progress_io_matching();
-void send_file_info(const char* filename);
-void send_ioreq(int ncid, io_req_t *ioreq, int rw_flag);
 
+
+void add_ioreq(io_req_t **list, io_req_t *ioreq);
+int match_ioreqs(file_buffer_t *fbuf);
+void progress_io_matching();
+void send_file_info(file_buffer_t *fbuf);
+void send_ioreq(int ncid, io_req_t *ioreq, int rw_flag);
+void clean_iodb(master_db_t *iodb);
 
 #endif // PFARB_REQ_MATCH_H_INCLUDED
