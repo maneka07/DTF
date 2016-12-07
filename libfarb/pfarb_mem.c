@@ -43,7 +43,7 @@ MPI_Offset mem_noncontig_write(farb_var_t *var, const MPI_Offset start[], const 
 
     //for(i = 0; i < nelems; i = i+2){
     while(chunks != NULL){
-        written += mem_contiguous_write(var, chunks->offset, chunks->data_sz, data+src_offset);
+        written += mem_contiguous_write(var, chunks->offset, chunks->data_sz, (unsigned char*)data+src_offset);
         src_offset += chunks->data_sz;
         tmp = chunks;
         chunks = chunks->next;
@@ -108,7 +108,7 @@ MPI_Offset mem_contiguous_write(farb_var_t *var, MPI_Offset offset, MPI_Offset d
             var->node_cnt++;
             FARB_DBG(VERBOSE_ALL_LEVEL, "Copy %d to node with offt %d (sz %d) at node offt 0",
                      (int)to_cpy, (int)new_node->offset, (int)new_node->data_sz);
-            memcpy(new_node->data, data+copied, (size_t)to_cpy);
+            memcpy(new_node->data, (unsigned char*)data+copied, (size_t)to_cpy);
             insert_buffer_node(&(var->nodes), new_node);
 
         } else if(offset > node->offset + node->data_sz){ /*the offset is > the last node*/
@@ -117,7 +117,7 @@ MPI_Offset mem_contiguous_write(farb_var_t *var, MPI_Offset offset, MPI_Offset d
             to_cpy = left;
             FARB_DBG(VERBOSE_ALL_LEVEL, "Copy %d to node with offt %d (sz %d) at node offt 0",
                      (int)to_cpy, (int)new_node->offset, (int)new_node->data_sz);
-            memcpy(new_node->data, data+copied, (size_t)to_cpy);
+            memcpy(new_node->data, (unsigned char*)data+copied, (size_t)to_cpy);
             insert_buffer_node(&(var->nodes), new_node);
         } else if(offset == node->offset + node->data_sz){
             //need to extend the buffer
@@ -134,7 +134,7 @@ MPI_Offset mem_contiguous_write(farb_var_t *var, MPI_Offset offset, MPI_Offset d
             FARB_DBG(VERBOSE_ALL_LEVEL, "Copy %d to node with offt %d (sz %d) at node offt %d",
                     (int)to_cpy, (int)node->offset, (int)node->data_sz+(int)ext_sz, (int)(offset - node->offset));
 
-            memcpy(node->data+node->data_sz, data+copied, (size_t)to_cpy);
+            memcpy( (unsigned char*)node->data+node->data_sz,  (unsigned char*)data+copied, (size_t)to_cpy);
             node->data_sz += ext_sz;
         } else { /*overlapping*/
             //do we need to extend the buffer?
@@ -153,7 +153,7 @@ MPI_Offset mem_contiguous_write(farb_var_t *var, MPI_Offset offset, MPI_Offset d
 
             FARB_DBG(VERBOSE_ALL_LEVEL, "Copy %d to node with offt %d (sz %d) at node offt %d",
                     (int)to_cpy, (int)node->offset, (int)node->data_sz, (int)(offset - node->offset));
-            memcpy(node->data+(offset - node->offset), data+copied, (size_t)to_cpy);
+            memcpy( (unsigned char*)node->data+(offset - node->offset),  (unsigned char*)data+copied, (size_t)to_cpy);
         }
 
         copied += to_cpy;
@@ -235,7 +235,7 @@ MPI_Offset mem_noncontig_read(farb_var_t *var, const MPI_Offset start[], const M
     get_contig_mem_list(var, start, count, &nelems, &chunks);
 
     while(chunks != NULL){
-        readsz += mem_contiguous_read(var, chunks->offset, chunks->data_sz, data+dst_offset);
+        readsz += mem_contiguous_read(var, chunks->offset, chunks->data_sz,  (unsigned char*)data+dst_offset);
         dst_offset += chunks->data_sz;
         tmp = chunks;
         chunks = chunks->next;
@@ -265,7 +265,7 @@ MPI_Offset mem_contiguous_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset d
     }
 
     if(tmp == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB warning: there is no data at offset %llu", offset);
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: there is no data at offset %llu", offset);
         return 0;
     }
     copied = 0;
@@ -279,7 +279,7 @@ MPI_Offset mem_contiguous_read(farb_var_t *var, MPI_Offset offset,  MPI_Offset d
             to_cpy = tmp->data_sz - node_offt;
 
         FARB_DBG(VERBOSE_ALL_LEVEL, "From node with offt %d Will copy %d bytes from node_offt %d", (int)tmp->offset, (int)to_cpy, (int)node_offt);
-        memcpy(data+copied, tmp->data+node_offt, (size_t)to_cpy);
+        memcpy( (unsigned char*)data+copied,  (unsigned char*)tmp->data+node_offt, (size_t)to_cpy);
         copied += to_cpy;
 
         tmp = tmp->next;

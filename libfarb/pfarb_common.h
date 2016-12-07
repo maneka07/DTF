@@ -1,10 +1,12 @@
 #ifndef VARS_H_INCLUDED
 #define VARS_H_INCLUDED
 
+typedef unsigned char byte;
 
-#define VERBOSE_ERROR_LEVEL  0
-#define VERBOSE_DBG_LEVEL    1
-#define VERBOSE_ALL_LEVEL    2
+#define VERBOSE_ERROR_LEVEL   0
+#define VERBOSE_WARNING_LEVEL 1
+#define VERBOSE_DBG_LEVEL     2
+#define VERBOSE_ALL_LEVEL     3
 
 #define FARB_TIMEOUT       1200 /* it's long because letkf and obs are hanging for a long time before they get data from scale*/
 #define FARB_UNDEFINED      -1

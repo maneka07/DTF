@@ -76,14 +76,16 @@ io_req_t *new_ioreq(int id,
                     const MPI_Offset *start,
                     const MPI_Offset *count,
                     void *buf,
-                    int rw_flag);
+                    int rw_flag,
+                    int buffered);
 
 
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
-int match_ioreqs(file_buffer_t *fbuf);
 void progress_io_matching();
 void send_file_info(file_buffer_t *fbuf);
 void send_ioreq(int ncid, io_req_t *ioreq, int rw_flag);
 void clean_iodb(master_db_t *iodb);
+int  match_ioreqs(file_buffer_t *fbuf);
+void match_ioreqs_all(int rw_flag);
 
 #endif // PFARB_REQ_MATCH_H_INCLUDED

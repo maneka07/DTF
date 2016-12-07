@@ -12,14 +12,16 @@
 #include "pfarb_nbuf_io.h"
 #include "pfarb_req_match.h"
 //TODO !!!!!!!!!!!!!!!!!!!!!!!!implement a tree instead of list
-//TODO change when request is sent to a master
-//TODO unlimited dimension!!
-//1) how do we know current size?
+
+//TODO check for dimension size and not tresspasing when writing
+//TODO rename all to pfarb
 
 int lib_initialized=0;
 int gl_verbose;
 int gl_my_rank;
 struct farb_config gl_conf;
+int frt_indexing = 0;
+
 /**
   @brief	Function to initialize the library. Should be called from inside
             the application before any other call to the library. Should be called
@@ -61,7 +63,7 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
 
     s = getenv("FARB_VERBOSE_LEVEL");
     if(s == NULL)
-        gl_verbose = VERBOSE_ERROR_LEVEL;
+        gl_verbose = VERBOSE_DBG_LEVEL;
     else
         gl_verbose = atoi(s);
 
@@ -156,7 +158,7 @@ _EXTERN_C_ void farb_write_hdr(const char *filename, MPI_Offset hdr_sz, void *he
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
-    if(fbuf->mode != FARB_IO_MODE_MEMORY) return;
+    if(fbuf->iomode != FARB_IO_MODE_MEMORY) return;
 
 
     if(hdr_sz == 0){
@@ -172,7 +174,7 @@ _EXTERN_C_ MPI_Offset farb_read_hdr_chunk(const char *filename, MPI_Offset offse
     if(!lib_initialized) return 0;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
-    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
+    if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
     return read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
 }
 
@@ -182,8 +184,10 @@ _EXTERN_C_ void farb_create(const char *filename, int ncid)
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
-        FARB_DBG(VERBOSE_ALL_LEVEL, "File %s is not treated by FARB", filename);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "File %s is not treated by FARB", filename);
         return;
+    } else {
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Created file %s", filename);
     }
     fbuf->ncid = ncid;
 }
@@ -194,13 +198,27 @@ _EXTERN_C_ void farb_create(const char *filename, int ncid)
   @return	void
 
  */
-_EXTERN_C_ void farb_open(const char *filename)
+_EXTERN_C_ void farb_open(const char *filename, MPI_Comm comm)
 {
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
-        FARB_DBG(VERBOSE_ALL_LEVEL, "File %s is not treated by FARB", filename);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "File %s is not treated by FARB", filename);
         return;
+    }
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
+    /*A hack for scale-letkf: if we are trying to open an alias,
+    create an empty file, otherwise letkf will crash because
+    it won't  find the file*/
+    if( (fbuf->iomode == FARB_IO_MODE_MEMORY) && (strlen(fbuf->alias_name) > 0) && (strstr(filename, fbuf->alias_name) !=NULL)){
+        MPI_File fh;
+        int err;
+        err = MPI_File_open(comm, (char*)filename, MPI_MODE_WRONLY | MPI_MODE_CREATE, MPI_INFO_NULL, &fh );
+        CHECK_MPI(err);
+        err = MPI_File_close(&fh);
+        CHECK_MPI(err);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Created a dummy alias file");
+
     }
     open_file(fbuf);
 }
@@ -210,9 +228,9 @@ _EXTERN_C_ void farb_enddef(const char *filename)
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
-    if(fbuf->mode != FARB_IO_MODE_MEMORY) return;
+    if(fbuf->iomode != FARB_IO_MODE_MEMORY) return;
 
-    if((fbuf->writer_id == gl_my_comp_id) && (gl_conf.distr_mode == DISTR_MODE_NONBUFFERED_REQ_MATCH))
+    if((fbuf->writer_id == gl_my_comp_id) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH))
         send_file_info(fbuf);
 }
 ///**
@@ -252,36 +270,56 @@ _EXTERN_C_ int farb_match_ioreqs(const char* filename)
     if(!lib_initialized) return 0;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
-    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
-    if(gl_conf.distr_mode != DISTR_MODE_NONBUFFERED_REQ_MATCH) return 0;
+    if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
+    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return 0;
 
     /*User will have to explicitly initiate matching*/
-    if(gl_conf.explicit_match) return 0;
-
+    if(fbuf->explicit_match) return 0;
+    //TODO continue from here
     return match_ioreqs(fbuf);
 }
 
 /*called by user to do explicit matching*/
-_EXTERN_C_ int farb_match_io(const char *filename, int match_all)
+_EXTERN_C_ int farb_match_io(const char *filename, int ncid)//, int match_all)
 {
     if(!lib_initialized) return 0;
-    if(gl_conf.distr_mode != DISTR_MODE_NONBUFFERED_REQ_MATCH) return 0;
-    if(!gl_conf.explicit_match) return 0;
-    if(match_all){
-        file_buffer_t *fbuf = gl_filebuf_list;
-        while(fbuf != NULL){
-            if(fbuf->mode == FARB_IO_MODE_MEMORY)
-                match_ioreqs(fbuf);
-            fbuf = fbuf->next;
+    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return 0;
+//    if(match_all){
+//        file_buffer_t *fbuf = gl_filebuf_list;
+//        while(fbuf != NULL){
+//            if(fbuf->iomode == FARB_IO_MODE_MEMORY)
+//                match_ioreqs(fbuf);
+//            fbuf = fbuf->next;
+//        }
+//
+//    } else{
+        file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
+        if(fbuf == NULL){
+            if(filename == NULL)
+                FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: file with ncid %d is not treated by FARB (not in configuration file). Explicit matching ignored.", ncid);
+            else
+                FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: file %s is not treated by FARB (not in configuration file). Explicit matching ignored.", filename);
+            return 0;
         }
-
-    } else{
-        file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-        if(fbuf == NULL) return 0;
-        if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
+        if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
+        if(!fbuf->explicit_match){
+            FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: calling farb_match_io but explicit match for file %s not enabled. Ignored.", filename);
+            return 0;
+        }
         match_ioreqs(fbuf);
-    }
+  // }
     return 0;
+}
+/* The user has to state whether the process needs to match all read or write requests.
+   Because the process of matching for a reader and writer is not the same. */
+_EXTERN_C_ void farb_match_io_all(int rw_flag)
+{
+    if(!lib_initialized) return;
+    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
+
+    match_ioreqs_all(rw_flag);
+
+    return;
 }
 
 /**
@@ -326,13 +364,17 @@ _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename,
     if(!lib_initialized) return 0;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
-    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
+    if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
+
+    if(boundary_check(fbuf, varid, start, count ))
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+
 
     switch(gl_conf.distr_mode){
             case DISTR_MODE_STATIC:
                 ret = buf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
                 break;
-            case DISTR_MODE_NONBUFFERED_REQ_MATCH:
+            case DISTR_MODE_REQ_MATCH:
                 if(request == NULL)
                     ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, NULL);
                 else
@@ -358,17 +400,46 @@ _EXTERN_C_ int farb_io_mode(const char* filename)
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL)
         return FARB_IO_MODE_UNDEFINED;
-    return fbuf->mode;
+    return fbuf->iomode;
 }
 
 _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
 {
+    int i, ret;
     if(!lib_initialized) return 0;
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
-    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
-    FARB_DBG(VERBOSE_ALL_LEVEL, "el_sz %d", (int)el_sz);
-    return def_var(fbuf, varid, ndims, el_sz, shape);
+    if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
+//TODO make this work for fixed distr matching as well
+    /*Check if there is an UNLIMITED dimension: currently it's not supported*/
+    for(i = 0; i < ndims; i++)
+        FARB_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d size %llu", varid, i, shape[i]);
+    /*For now, can only support unlimited dimension if it's the first dimension array*/
+    if( (ndims > 0) && (shape[0] == FARB_UNLIMITED))
+        FARB_DBG(VERBOSE_DBG_LEVEL, "var has unlimited dimension");
+    for(i = 1; i < ndims; i++){
+        //we can support unlimited dimension if it's the first dimension
+        //else abort
+        if(shape[i] == FARB_UNLIMITED){
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: currently cannot support when unlimited dimension is not in the slowest changing dimension (dim 0). Aborting..");
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        }
+    }
+    if(frt_indexing && ndims > 0){
+        MPI_Offset *cshape = (MPI_Offset*)malloc(sizeof(MPI_Offset)*ndims);
+        assert(cshape != NULL);
+
+        for(i = 0; i < ndims; i++)
+            if(shape[i] != FARB_UNLIMITED)
+                cshape[i] = shape[i] + 1;
+            else
+                cshape[i] = 0;
+        ret = def_var(fbuf, varid, ndims, el_sz, cshape);
+        free(cshape);
+    } else
+      ret = def_var(fbuf, varid, ndims, el_sz, shape);
+
+    return ret;
 }
 
 _EXTERN_C_ int farb_set_distr_count(const char* filename, int varid, int count[])
@@ -376,7 +447,7 @@ _EXTERN_C_ int farb_set_distr_count(const char* filename, int varid, int count[]
     if(!lib_initialized) return 0;
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
-    if(fbuf->mode != FARB_IO_MODE_MEMORY) return 0;
+    if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
     return set_distr_count(fbuf, varid, count);
 }
 
@@ -384,6 +455,8 @@ _EXTERN_C_ int farb_set_distr_count(const char* filename, int varid, int count[]
 
 void farb_init_(const char *filename, char *module_name, int* ierr)
 {
+    frt_indexing = 1;
+    FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: Dealing with fortran. Increment each dimension by 1");
     *ierr = farb_init(filename, module_name);
 }
 
@@ -392,7 +465,12 @@ void farb_finalize_(int* ierr)
     *ierr = farb_finalize();
 }
 
-void farb_match_io_(const char *filename, int match_all, int *ierr)
+void farb_match_io_(const char *filename, int ncid, int *ierr)
 {
-    *ierr = farb_match_io(filename, match_all);
+    *ierr = farb_match_io(filename, ncid);
+}
+
+void farb_match_io_all_(int rw_flag)
+{
+    farb_match_io_all(rw_flag);
 }

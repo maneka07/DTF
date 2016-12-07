@@ -39,16 +39,33 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: could not find var with id %d", varid);
         return 0;
     }
+    FARB_DBG(VERBOSE_DBG_LEVEL, "rw %d call for ncid %d var %d", rw_flag, fbuf->ncid, var->id);
+    /*check number of elements to read*/
+    if(count != NULL){
+        MPI_Offset nelems;
+        int i;
+        nelems = count[0];
+        for(i = 1; i < var->ndims; i++)
+            nelems *= count[i];
 
+        if(nelems == 0){
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Nothing to read or write");
+            return 0;
+        }
+
+    }
     MPI_Type_size(dtype, &el_sz);
     assert(el_sz > 0);
     if(var->el_sz == 0){
         var->el_sz = (MPI_Offset)el_sz;
-    } else
-        assert(var->el_sz == (MPI_Offset)el_sz);
+    } else {
+        if(var->el_sz != (MPI_Offset)el_sz)
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Warning: el_sz mismatch (written as %llu-bit,read as %d-bit var). Using the original size.", var->el_sz, el_sz);
+        //assert(var->el_sz == (MPI_Offset)el_sz);
+    }
 
     /*Create an io request*/
-    req = new_ioreq(fbuf->ioreq_cnt, varid, var->ndims, var->el_sz, start, count, buf, rw_flag);
+    req = new_ioreq(fbuf->ioreq_cnt, varid, var->ndims, var->el_sz, start, count, buf, rw_flag, gl_conf.buffered_req_match);
     if(request != NULL)
         *request = req->id;
     fbuf->ioreq_cnt++;
@@ -63,9 +80,6 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         req->next = fbuf->ioreqs;
         fbuf->ioreqs = req;
     }
-
-    /*Forward the info about the request to writer's master rank(s)*/
-    //send_ioreq(fbuf->ncid, req, rw_flag);
 
     ret = 1;
     for(i = 0; i < var->ndims; i++)

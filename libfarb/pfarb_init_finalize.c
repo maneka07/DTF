@@ -86,7 +86,7 @@ static void print_config(){
     while(fb != NULL){
         FARB_DBG(VERBOSE_DBG_LEVEL,   "File %s, version %d, writer %s, reader %s ",
                 fb->file_path, fb->version, gl_comps[fb->writer_id].name, gl_comps[fb->reader_id].name);
-        switch(fb->mode){
+        switch(fb->iomode){
             case FARB_IO_MODE_UNDEFINED:
                 FARB_DBG(VERBOSE_DBG_LEVEL,   "I/O mode: undefined ");
                 break;
@@ -97,7 +97,7 @@ static void print_config(){
                 FARB_DBG(VERBOSE_DBG_LEVEL,   "I/O mode: direct transfer ");
                 break;
             default:
-                FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: unknown file mode %d", fb->mode);
+                FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: unknown file mode %d", fb->iomode);
         }
 
         fprintf(stdout, "\n");
@@ -113,7 +113,7 @@ static int check_config()
 
     while(fbuf!= NULL){
 
-        if(fbuf->mode == FARB_IO_MODE_UNDEFINED){
+        if(fbuf->iomode == FARB_IO_MODE_UNDEFINED){
             FARB_DBG(VERBOSE_ERROR_LEVEL,   " FARB Error: I/O mode for file %s underfined", fbuf->file_path);
             return 1;
         }
@@ -215,7 +215,7 @@ static int create_intercomm(int comp_id, char* global_path){
         CHECK_MPI(errno);
         FARB_DBG(VERBOSE_DBG_LEVEL,   "%s will connect to service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
-        errno = MPI_Comm_connect(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].intercomm));
+        errno = MPI_Comm_connect(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].comm));
         CHECK_MPI(errno);
     } else if(mode == CONNECT_MODE_SERVER){
         FARB_DBG(VERBOSE_DBG_LEVEL,   "Creating connection for %s.", service_name);
@@ -232,17 +232,17 @@ static int create_intercomm(int comp_id, char* global_path){
 
         FARB_DBG(VERBOSE_DBG_LEVEL,   "%s starts listening for service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
-        errno = MPI_Comm_accept(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].intercomm) );
+        errno = MPI_Comm_accept(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].comm) );
         CHECK_MPI(errno);
         FARB_DBG(VERBOSE_DBG_LEVEL,   "%s accepted connection on service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
         errno = MPI_Close_port(portname);
         CHECK_MPI(errno);
     }
-    MPI_Errhandler_set(gl_comps[comp_id].intercomm, MPI_ERRORS_RETURN);
+    MPI_Errhandler_set(gl_comps[comp_id].comm, MPI_ERRORS_RETURN);
     /*Check that the number of ranks is the same in both communicators*/
     MPI_Comm_size(MPI_COMM_WORLD, &nranks1);
-    MPI_Comm_remote_size(gl_comps[comp_id].intercomm, &nranks2);
+    MPI_Comm_remote_size(gl_comps[comp_id].comm, &nranks2);
     if(nranks1 != nranks2){
         FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB can only work if the number of processes in all components is the same. Aborting.");
         return 1;
@@ -260,9 +260,9 @@ static void destroy_intercomm(int comp_id){
     mode = gl_comps[comp_id].connect_mode;
 
     if(mode == FARB_UNDEFINED) return;
-    if(gl_comps[comp_id].intercomm == MPI_COMM_NULL) return;
+    if(gl_comps[comp_id].comm == MPI_COMM_NULL) return;
 
-    MPI_Comm_disconnect(&(gl_comps[comp_id].intercomm));
+    MPI_Comm_disconnect(&(gl_comps[comp_id].comm));
 
     //rank 0 of the server component will remove the file
     if(gl_my_rank == 0 && mode == CONNECT_MODE_SERVER){
@@ -328,7 +328,7 @@ int load_config(const char *ini_name, const char *comp_name){
   }
 
   gl_conf.distr_mode = FARB_UNDEFINED;
-  gl_conf.explicit_match = 0;
+  gl_conf.buffered_req_match = 0;
 
   while(!feof(in)){
 
@@ -369,7 +369,7 @@ int load_config(const char *ini_name, const char *comp_name){
                 goto panic_exit;
             }
 
-            if( (cur_fb->mode != FARB_IO_MODE_FILE) && (cur_fb->writer_id == -1 || cur_fb->reader_id == -1) ){
+            if( (cur_fb->iomode != FARB_IO_MODE_FILE) && (cur_fb->writer_id == -1 || cur_fb->reader_id == -1) ){
                 FARB_DBG(VERBOSE_ERROR_LEVEL,"FARB Error: file reader or writer not set for file %s.", cur_fb->file_path);
                 goto panic_exit;
             }
@@ -413,7 +413,7 @@ int load_config(const char *ini_name, const char *comp_name){
                 gl_comps[i].id = i;
                 gl_comps[i].connect_mode = FARB_UNDEFINED;
                 gl_comps[i].name[0] = 0;
-                gl_comps[i].intercomm = MPI_COMM_NULL;
+                gl_comps[i].comm = MPI_COMM_NULL;
             }
 
         } else if(strcmp(param, "comp_name") == 0){
@@ -432,18 +432,30 @@ int load_config(const char *ini_name, const char *comp_name){
                 gl_conf.distr_mode = DISTR_MODE_STATIC;
 //            else if(strcmp(value, "buf_req_match") == 0)
 //                gl_conf.distr_mode = DISTR_MODE_BUFFERED_REQ_MATCH;
-            else if(strcmp(value, "nbuf_req_match") == 0)
-                gl_conf.distr_mode = DISTR_MODE_NONBUFFERED_REQ_MATCH;
+            else if(strcmp(value, "req_match") == 0)
+                gl_conf.distr_mode = DISTR_MODE_REQ_MATCH;
             else{
                 FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: 3 unknown data distribution mode");
                 goto panic_exit;
             }
-        } else if(strcmp(param, "explicit_match") == 0){
-            gl_conf.explicit_match = atoi(value);
+        } else if(strcmp(param, "buffered_req_match") == 0){
 
-            if(gl_conf.explicit_match == 0)
+            gl_conf.buffered_req_match = atoi(value);
+            if(gl_conf.buffered_req_match == 0)
+                FARB_DBG(VERBOSE_DBG_LEVEL, "FARB: buffered_req_match disabled");
+            else if(gl_conf.buffered_req_match == 1)
+                FARB_DBG(VERBOSE_DBG_LEVEL, "FARB: buffered_req_match enabled");
+            else {
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: Value for buffered_req_match should be 0 or 1.");
+                goto panic_exit;
+            }
+        } else if(strcmp(param, "explicit_match") == 0){
+            assert(cur_fb != NULL);
+            cur_fb->explicit_match = atoi(value);
+
+            if(cur_fb->explicit_match == 0)
                 FARB_DBG(VERBOSE_DBG_LEVEL, "FARB: explicit match disabled");
-            else if(gl_conf.explicit_match == 1)
+            else if(cur_fb->explicit_match == 1)
                 FARB_DBG(VERBOSE_DBG_LEVEL, "FARB: explicit match enabled");
             else {
                 FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: Value for explicit match should be 0 or 1.");
@@ -493,7 +505,7 @@ int load_config(const char *ini_name, const char *comp_name){
             assert(cur_fb != NULL);
 
             if(strcmp(value, "file") == 0)
-                cur_fb->mode = FARB_IO_MODE_FILE;
+                cur_fb->iomode = FARB_IO_MODE_FILE;
             else if(strcmp(value, "memory") == 0){
 
                 if(gl_conf.distr_mode == FARB_UNDEFINED){
@@ -501,7 +513,7 @@ int load_config(const char *ini_name, const char *comp_name){
                     goto panic_exit;
                 }
 
-                cur_fb->mode = FARB_IO_MODE_MEMORY;
+                cur_fb->iomode = FARB_IO_MODE_MEMORY;
             }
 
         } else if(strcmp(param, "distr_rule") == 0){
@@ -598,7 +610,7 @@ int init_comp_comm(){
 
     for(i = 0; i<gl_ncomp; i++){
         if(i == gl_my_comp_id){
-            MPI_Comm_dup(MPI_COMM_WORLD, &(gl_comps[i].intercomm));
+            MPI_Comm_dup(MPI_COMM_WORLD, &(gl_comps[i].comm));
             continue;
         }
         err = create_intercomm(gl_comps[i].id, s);
@@ -630,33 +642,36 @@ int init_data_distr()
     file_buffer_t *fbuf = gl_filebuf_list;
 
     while(fbuf != NULL){
-        if(fbuf->mode != FARB_IO_MODE_MEMORY)
+        if(fbuf->iomode != FARB_IO_MODE_MEMORY)
             fbuf->distr_rule = DISTR_RULE_P2P;
 
-        if(fbuf->distr_rule == DISTR_RULE_P2P){
-            fbuf->distr_nranks = 1;
-            fbuf->distr_ranks = malloc(sizeof(int));
-            assert(fbuf->distr_ranks != NULL);
-            *(fbuf->distr_ranks) = gl_my_rank;
-        } else if(fbuf->distr_rule == DISTR_RULE_RANGE){
-//            if(fbuf->writer_id == gl_my_comp_id)
-//                MPI_Comm_remote_size(gl_comps[fbuf->reader_id].intercomm, &nranks);
-//            else
-//                MPI_Comm_remote_size(gl_comps[fbuf->writer_id].intercomm, &nranks);
-            MPI_Comm_size(MPI_COMM_WORLD, &nranks);
-            fbuf->distr_nranks = (int)(nranks/fbuf->distr_range);
-            assert(fbuf->distr_nranks > 0);
-            fbuf->distr_ranks = (int*)malloc(fbuf->distr_nranks*sizeof(int));
-            assert(fbuf->distr_ranks != NULL);
-            fbuf->distr_ranks[0] = gl_my_rank % fbuf->distr_range; //
-            int i = 1;
-            while(fbuf->distr_ranks[i-1] + fbuf->distr_range < nranks){
-                fbuf->distr_ranks[i] = fbuf->distr_ranks[i-1] + fbuf->distr_range;
-                i++;
+        if(gl_conf.distr_mode == DISTR_MODE_STATIC){
+            if(fbuf->distr_rule == DISTR_RULE_P2P){
+                fbuf->distr_nranks = 1;
+                fbuf->distr_ranks = malloc(sizeof(int));
+                assert(fbuf->distr_ranks != NULL);
+                *(fbuf->distr_ranks) = gl_my_rank;
+            } else if(fbuf->distr_rule == DISTR_RULE_RANGE){
+    //            if(fbuf->writer_id == gl_my_comp_id)
+    //                MPI_Comm_remote_size(gl_comps[fbuf->reader_id].comm, &nranks);
+    //            else
+    //                MPI_Comm_remote_size(gl_comps[fbuf->writer_id].comm, &nranks);
+                MPI_Comm_size(MPI_COMM_WORLD, &nranks);
+                fbuf->distr_nranks = (int)(nranks/fbuf->distr_range);
+                assert(fbuf->distr_nranks > 0);
+                fbuf->distr_ranks = (int*)malloc(fbuf->distr_nranks*sizeof(int));
+                assert(fbuf->distr_ranks != NULL);
+                fbuf->distr_ranks[0] = gl_my_rank % fbuf->distr_range; //
+                int i = 1;
+                while(fbuf->distr_ranks[i-1] + fbuf->distr_range < nranks){
+                    fbuf->distr_ranks[i] = fbuf->distr_ranks[i-1] + fbuf->distr_range;
+                    i++;
+                }
             }
-        }
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Number of ranks to distribute data to/from %d", fbuf->distr_nranks);
-        fbuf = fbuf->next;
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Number of ranks to distribute data to/from %d", fbuf->distr_nranks);
+
+        } // else if (gl_conf.distr_mode == DISTR_MODE_NONBUFFERED_REQ_MATCH)
+       fbuf = fbuf->next;
     }
     return 0;
 }
@@ -722,7 +737,7 @@ int init_req_match_masters()
 //        for(i=0; i < gl_ncomp; i++){
 //            if(i == gl_my_comp_id)
 //                continue;
-//            MPI_Comm_remote_size(gl_comps[i].intercomm, &nrranks);
+//            MPI_Comm_remote_size(gl_comps[i].comm, &nrranks);
 //
 //            if(myrank < nrranks)
 //                gl_comps[i].master = gl_conf.my_master; //use same rank

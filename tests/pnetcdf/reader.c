@@ -203,10 +203,12 @@ int benchmark_read(char       *filename,
     for (i=0; i<NVARS; i++) {
         if (i % 4 == 0) {
             int *int_b = (int*) buf[i];
-            start[0] = len * (s_rank % psizes[0]);
-            start[1] = len * ((s_rank / psizes[1]) % psizes[1]);
-            count[0] = len;
-            count[1] = len;
+            //start[0] = len * (s_rank % psizes[0]);
+            //start[1] = len * ((s_rank / psizes[1]) % psizes[1]);
+			start[0] = len * (rank % psizes[0])*len*psizes[1]+len * ((rank / psizes[1]) % psizes[1]);
+            //start[1] = len * ((s_rank / psizes[1]) % psizes[1]);
+            count[0] = len*len;
+            //count[1] = len;
             err = ncmpi_iget_vara_int(ncid, varid[i], start, count, int_b,
                                       &reqs[k++]);
             ERR(err)
@@ -272,7 +274,7 @@ int benchmark_read(char       *filename,
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts); ERR(err)
 #endif
 	printf("r%d: after wait\n", rank);
-	farb_match_io(filename, 0);
+    farb_match_io(filename, -1);
     /* check status of all requests */
     for (i=0; i<num_reqs; i++) ERR(sts[i])
 
@@ -348,7 +350,7 @@ int main(int argc, char** argv) {
     MPI_Comm_size(comm, &nprocs);
     farb_init("farb.ini", "ireader");
 
-    len = 2;
+    len = 4;
 
     benchmark_read (filename, len, &r_size, &r_info_used, timing+6);
 

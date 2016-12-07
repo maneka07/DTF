@@ -30,35 +30,39 @@ struct master_db;
 struct io_req;
 
 typedef struct file_buffer{
-  char file_path[MAX_FILE_NAME];    /* path of the file */
-  char alias_name[MAX_FILE_NAME];	/* alias name for the file */
-  int  ncid;                        /*handler that pnetcdf assigns to a file*/
-  void          *header;            /*buffer to store netcdf header*/
-  MPI_Offset    hdr_sz;             /*size of the netcdf header*/
-  struct farb_var *vars;              /*Variables in the file*/
-  int           var_cnt;            /*Number of defined variables*/
-  int           version;            /*To keep track in case the component generates
+  char                      file_path[MAX_FILE_NAME];    /* path of the file */
+  char                      alias_name[MAX_FILE_NAME];	/* alias name for the file */
+  int                       ncid;                        /*handler that pnetcdf assigns to a file*/
+  void                      *header;            /*buffer to store netcdf header*/
+  MPI_Offset                hdr_sz;             /*size of the netcdf header*/
+  struct farb_var           *vars;              /*Variables in the file*/
+  int                       var_cnt;            /*Number of defined variables*/
+  int                       version;            /*To keep track in case the component generates
                                     several output files with the same name pattern*/
-  int           writer_id;
-  int           reader_id;
-  int           is_ready;           /*Used to let the reader know that the file is either
+  int                       writer_id;
+  int                       reader_id;
+  int                       is_ready;           /*Used to let the reader know that the file is either
                                       - received from the writer (mode = FARB_IO_MODE_MEMORY)
                                       - finished being written (mode = FARB_IO_MODE_FILE)
                                     */
-  int           mode;               /*Do normal File I/O or direct data transfer?*/
+  int                       iomode;               /*Do normal File I/O or direct data transfer?*/
   /*Static data distribution related stuff*/
-  int distr_rule;                   /*Rule for distribution from writer to readers(range or list of ranks)*/
-  int distr_pattern;                /*Scatter portions of data or send all data*/
-  int distr_range;                  /*Range for distribution*/
-  int distr_nranks;                 /*writer: how many ranks I distribute to; reader: how many ranks I receive from*/
-  int *distr_ranks;                 /*writer: ranks I distribute to; reader: ranks I receive from*/
-  int distr_ndone;                  /*number of completed distributions*/
+  int                       distr_rule;                   /*Rule for distribution from writer to readers(range or list of ranks)*/
+  int                       distr_pattern;                /*Scatter portions of data or send all data*/
+  int                       distr_range;                  /*Range for distribution*/
+  int                       distr_nranks;                 /*writer: how many ranks I distribute to; reader: how many ranks I receive from*/
+  int                       *distr_ranks;                 /*writer: ranks I distribute to; reader: ranks I receive from*/
+  int                       distr_ndone;                  /*number of completed distributions*/
   /*Data distribution through request matching*/
-  int hdr_sent_flag;
-  struct io_req *ioreqs;                 /*Read or write I/O requests*/
-  int ioreq_cnt;                    /*Request counter, will be used to assign a unique id to io requests.*/
-  struct master_db *iodb;            /*Relevant only for masters. They store requests from readers and info from writers*/
-  struct file_buffer *next;         /* pointer to the next record */
+  int                       hdr_sent_flag;
+  struct io_req             *ioreqs;           /*Read or write I/O requests*/
+  int                       explicit_match;   /*0 - request matching is initiated from inside of pnetcdf;
+                                                1 - request matching is initiated by the user*/
+  int                       ioreq_cnt;         /*Request counter, will be used to assign a unique id to io requests.*/
+  int                       done_matching_flag;     /*Flag used to complete matching requests*/
+  int                       fclosed_flag;           /*Flag set to 1 when reader closes the file*/
+  struct master_db          *iodb;             /*Relevant only for masters. They store requests from readers and info from writers*/
+  struct file_buffer        *next;             /* pointer to the next record */
 
 }file_buffer_t;
 
@@ -70,4 +74,6 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
 farb_var_t* find_var(farb_var_t* varlist, int varid);
 farb_var_t* new_var(int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape);
 void add_var(farb_var_t **vars, farb_var_t *var);
+int has_unlim_dim(farb_var_t *var);
+int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
 #endif

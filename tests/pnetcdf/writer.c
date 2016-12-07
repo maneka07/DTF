@@ -140,13 +140,13 @@ int benchmark_write(char       *filename,
                     double     *timing)  /* [6] */
 {
     int i, j, k, verbose, rank, nprocs, err, num_reqs;
-    int ncid, cmode, varid[NVARS], dimid[6], *reqs, *sts, psizes[2];
+    int ncid, cmode, varid[NVARS], dimid[7], *reqs, *sts, psizes[2];
     void *buf[NVARS];
     double start_t, end_t;
     MPI_Comm comm=MPI_COMM_WORLD;
     MPI_Offset gsizes[2], start[2], count[2];
     MPI_Info info=MPI_INFO_NULL;
-
+    int *arr;
     verbose = 0;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &nprocs);
@@ -188,7 +188,10 @@ int benchmark_write(char       *filename,
 
     /* create a new file for writing -----------------------------------------*/
     cmode = NC_CLOBBER | NC_64BIT_DATA;
-    err = ncmpi_create(comm, filename, cmode, info, &ncid); ERR(err)
+    err = ncmpi_create(comm, filename, cmode, info, &ncid);
+    ERR(err)
+
+							      
     start_t = MPI_Wtime();
     timing[1] = start_t - timing[0];
     MPI_Info_free(&info);
@@ -205,7 +208,20 @@ int benchmark_write(char       *filename,
     err = ncmpi_def_dim(ncid, "Cyclic_X",       len*nprocs, &dimid[3]); ERR(err)
     err = ncmpi_def_dim(ncid, "Block_Y",        len*nprocs, &dimid[4]); ERR(err)
     err = ncmpi_def_dim(ncid, "Star_X",         len,        &dimid[5]); ERR(err)
+	err = ncmpi_def_dim(ncid, "unlim",          0,    &dimid[6]); ERR(err)
 
+    int ncid2, varid2, dimid2;
+    MPI_Offset offt = rank*2, sz = 2, len2 = nprocs*2;
+    arr = (int*)malloc(len2*sizeof(int));
+    for(i = 0; i < nprocs*2; i++)
+      arr[i] = rank;
+    err = ncmpi_create(comm, "bla.nc", cmode,info, &ncid2);  ERR(err) 									  
+    err = ncmpi_def_dim(ncid2, "linear",        len2,        &dimid2);  ERR(err)
+    err = ncmpi_def_var(ncid2, "varrr", NC_INT, 1, &dimid2, &varid2);  ERR(err)
+    err = ncmpi_enddef(ncid2);  ERR(err)
+    err = ncmpi_put_vara_int_all(ncid2, varid2, &offt, &sz, &arr[rank*2]);  ERR(err);
+  
+    free(arr);
     /* define variables */
     num_reqs = 0;
     for (i=0; i<NVARS; i++) {
@@ -213,7 +229,8 @@ int benchmark_write(char       *filename,
         if (i % 4 == 0) {
             /* variables are block-block partitioned */
             sprintf(var_name,"block_block_var_%d",i);
-            err = ncmpi_def_var(ncid, var_name, NC_INT, 2, dimid, &varid[i]);
+            //err = ncmpi_def_var(ncid, var_name, NC_INT, 2, dimid, &varid[i]);
+            err = ncmpi_def_var(ncid, var_name, NC_INT, 1, &dimid[6], &varid[i]);	
             ERR(err)
             num_reqs++; /* complete in 1 nonblocking call */
         }
@@ -239,6 +256,8 @@ int benchmark_write(char       *filename,
             num_reqs++; /* complete in 1 nonblocking call */
         }
     }
+
+    
     reqs = (int*) malloc(num_reqs * sizeof(int));
 
     err = ncmpi_enddef(ncid); ERR(err)
@@ -251,10 +270,12 @@ int benchmark_write(char       *filename,
       int j1, j2;
         if (i % 4 == 0) {
             int *int_b = (int*) buf[i];
-            start[0] = len * (rank % psizes[0]);
-            start[1] = len * ((rank / psizes[1]) % psizes[1]);
-            count[0] = len;
-            count[1] = len;
+            //start[0] = len * (rank % psizes[0]);
+            //start[1] = len * ((rank / psizes[1]) % psizes[1]);
+            start[0] = len * (rank % psizes[0])*len*psizes[1]+len * ((rank / psizes[1]) % psizes[1]);
+            //start[1] = len * ((rank / psizes[1]) % psizes[1]);
+            count[0] = len*len;
+            //count[1] = len;
             err = ncmpi_iput_vara_int(ncid, varid[i], start, count, int_b,
                                       &reqs[k++]);
             ERR(err)
@@ -347,7 +368,7 @@ int benchmark_write(char       *filename,
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts); ERR(err)
 #endif
 	printf("w%d: after wait\n", rank);
-	farb_match_io(filename, 0);
+    farb_match_io(filename, -1);
     /* check status of all requests */
     for (i=0; i<num_reqs; i++) ERR(sts[i])
 
@@ -356,9 +377,9 @@ int benchmark_write(char       *filename,
     start_t = end_t;
 
     /* get the true I/O amount committed */
-    err = ncmpi_inq_put_size(ncid, w_size); ERR(err)
+    err = ncmpi_inq_put_size(ncid2, w_size); ERR(err)
     printf("total put size %d\n", (int)(*w_size));
-					
+	  err = ncmpi_close(ncid2);
     /* get all the hints used */
     err = ncmpi_get_file_info(ncid, w_info_used); ERR(err)
 						    
@@ -391,7 +412,7 @@ int main(int argc, char** argv) {
     MPI_Comm_size(comm, &nprocs);
     farb_init("farb.ini", "iwriter");
 
-    len = 2;
+    len = 4;
 
     benchmark_write(filename, len, &w_size, &w_info_used, timing);
 

@@ -170,7 +170,7 @@ int main(int argc, char** argv) {
     }
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts);
     ERR
-
+    farb_match_io(filename, 0);
     /* check status of all requests */
     for (i=0; i<num_reqs; i++)
         if (sts[i] != NC_NOERR)

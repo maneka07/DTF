@@ -43,6 +43,21 @@ MPI_Offset buf_read_write_var( file_buffer_t *fbuf,
         return 0;
     }
 
+    /*check number of elements to read*/
+    if(count != NULL){
+        MPI_Offset nelems;
+        int i;
+        nelems = count[0];
+        for(i = 1; i < var->ndims; i++)
+            nelems *= count[i];
+
+        if(nelems == 0){
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Nothing to read or write");
+            return 0;
+        }
+
+    }
+
     MPI_Type_size(dtype, &el_sz);
     assert(el_sz > 0);
     if(var->el_sz == 0){
@@ -61,7 +76,7 @@ MPI_Offset buf_read_write_var( file_buffer_t *fbuf,
         }
 
         if(ret != data_sz)
-            FARB_DBG(VERBOSE_DBG_LEVEL, "FARB Warning: Meant to read/write %llu bytes but actual val is %llu", data_sz, ret);
+            FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: Meant to read/write %llu bytes but actual val is %llu", data_sz, ret);
 
     } else { /*multi-dimentional array*/
         if(rw_flag == FARB_WRITE){
@@ -90,6 +105,7 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
     *node_cnt = 0;
     *first_el_coord = NULL;
     int first_el_coord_sz = 0;
+    unsigned char *chbuf = (unsigned char*)buf;
 
     FARB_DBG(VERBOSE_DBG_LEVEL, "Unpacking vars sz %d", buf_sz);
 
@@ -97,26 +113,26 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
     farb_var_t *var;
     buffer_node_t *node;
 
-    var_cnt = *((int*)buf);
+    var_cnt = *((int*)chbuf);
     offt += sizeof(int);
     FARB_DBG(VERBOSE_DBG_LEVEL, "unpack nvars %d", var_cnt);
     for(i = 0; i < var_cnt; i++){
 
-        varid = *((int*)(buf+offt));
+        varid = *((int*)(chbuf+offt));
 
         offt += sizeof(int);
         var = find_var(fbuf->vars, varid);
         if(var == NULL){
             var = new_var(varid, 0, 0, NULL);
-            var->el_sz = *((MPI_Offset*)(buf+offt));
+            var->el_sz = *((MPI_Offset*)(chbuf+offt));
             offt+=sizeof(MPI_Offset);
-            var->ndims = *((int*)(buf+offt));
+            var->ndims = *((int*)(chbuf+offt));
             offt += sizeof(int);
 
             if(var->ndims > 0){
                 var->shape = malloc(var->ndims*sizeof(MPI_Offset));
                 assert(var->shape != NULL);
-                memcpy((void*)var->shape, buf+offt, sizeof(MPI_Offset)*var->ndims);
+                memcpy((void*)var->shape, chbuf+offt, sizeof(MPI_Offset)*var->ndims);
                 offt += sizeof(MPI_Offset)*var->ndims;
             } else
                 var->shape = NULL;
@@ -128,7 +144,7 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
             offt += sizeof(MPI_Offset) + sizeof(int) + sizeof(MPI_Offset)*var->ndims;
         }
 
-        ncnt = *((MPI_Offset*)(buf+offt));
+        ncnt = *((MPI_Offset*)(chbuf+offt));
         offt += sizeof(MPI_Offset);
         /*Unpack data about nodes to receive*/
         if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
@@ -137,9 +153,9 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
 
             /*Unpack node offsets*/
             for(j = 0; j < (int)ncnt; j++){
-                offset = *((MPI_Offset*)(buf+offt));
+                offset = *((MPI_Offset*)(chbuf+offt));
                 offt += sizeof(MPI_Offset);
-                data_sz = *((MPI_Offset*)(buf+offt));
+                data_sz = *((MPI_Offset*)(chbuf+offt));
                 offt += sizeof(MPI_Offset);
                 node = new_buffer_node(offset, data_sz, 0);
                 insert_buffer_node(&var->nodes, node);
@@ -151,7 +167,7 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
                 MPI_Offset *tmp = (MPI_Offset*)realloc(var->distr_count, var->ndims*sizeof(MPI_Offset));
                 assert(tmp != NULL);
                 var->distr_count = tmp;
-                memcpy((void*)var->distr_count, buf+offt, var->ndims*sizeof(MPI_Offset));
+                memcpy((void*)var->distr_count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
                 offt += var->ndims*sizeof(MPI_Offset);
 
                 first_el_coord_sz += var->ndims;
@@ -162,7 +178,7 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
                 // need to remember the coordinate of the first (corner) element to be able to unpack
                 // contiguous 1D buffer into multi-dimensional nodes
                 for(j = 0; j < var->ndims; j++){
-                    (*first_el_coord)[first_el_coord_sz - var->ndims + j] = *((MPI_Offset*)(buf+offt));
+                    (*first_el_coord)[first_el_coord_sz - var->ndims + j] = *((MPI_Offset*)(chbuf+offt));
                     offt += sizeof(MPI_Offset);
                 }
             } else {
@@ -192,10 +208,10 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
 
     /*Receive vars*/
     MPI_Probe(rank, VARS_TAG, intercomm, &status);
-    MPI_Get_count(&status, MPI_BYTE, &buf_sz);
+    MPI_Get_count(&status, MPI_UNSIGNED_CHAR, &buf_sz);
     buf = malloc((size_t)buf_sz);
     assert(buf != NULL);
-    errno = MPI_Recv(buf, buf_sz, MPI_BYTE, rank, VARS_TAG, intercomm, &status);
+    errno = MPI_Recv(buf, buf_sz, MPI_UNSIGNED_CHAR, rank, VARS_TAG, intercomm, &status);
     CHECK_MPI(errno);
 
     unpack_vars(fbuf, buf_sz, buf, &node_cnt, &first_el_coord);
@@ -280,7 +296,7 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
     *node_cnt = 0;
     *first_el_coord = NULL;
     int first_el_coord_sz = 0;
-
+    unsigned char* chbuf;
     farb_var_t *var = fbuf->vars;
     while(var != NULL){
         sz += sizeof(var->id) + sizeof(var->el_sz) + sizeof(var->ndims) + sizeof(MPI_Offset)*var->ndims +
@@ -293,32 +309,33 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
     *buf = malloc(sz);
     assert(*buf != NULL);
     *node_cnt = 0;
+    chbuf = (unsigned char*)(*buf);
     //write the number of vars
-    *((int*)(*buf)) = fbuf->var_cnt;
+    *((int*)(chbuf)) = fbuf->var_cnt;
     offt += sizeof(int);
 
     var = fbuf->vars;
     while(var != NULL){
-        *((int*)(*buf+offt)) = var->id;
+        *((int*)(chbuf+offt)) = var->id;
         offt += sizeof(int);
-        *((MPI_Offset*)(*buf+offt)) = var->el_sz;
+        *((MPI_Offset*)(chbuf+offt)) = var->el_sz;
         offt += sizeof(MPI_Offset);
-        *((int*)(*buf+offt)) = var->ndims;
+        *((int*)(chbuf+offt)) = var->ndims;
         offt += sizeof(int);
 
-        memcpy(*buf+offt, (void*)var->shape, sizeof(MPI_Offset)*var->ndims);
+        memcpy(chbuf+offt, (void*)var->shape, sizeof(MPI_Offset)*var->ndims);
         offt += sizeof(MPI_Offset)*var->ndims;
 
         if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
-            *((MPI_Offset*)(*buf+offt)) = var->node_cnt;
+            *((MPI_Offset*)(chbuf+offt)) = var->node_cnt;
             offt+=sizeof(MPI_Offset);
             *node_cnt += var->node_cnt;
             /*Pack node offsets*/
             node = var->nodes;
             while(node != NULL){
-                *((MPI_Offset*)(*buf+offt)) = node->offset;
+                *((MPI_Offset*)(chbuf+offt)) = node->offset;
                 offt+=sizeof(MPI_Offset);
-                *((MPI_Offset*)(*buf+offt)) = node->data_sz;
+                *((MPI_Offset*)(chbuf+offt)) = node->data_sz;
                 offt+=sizeof(MPI_Offset);
                 node = node->next;
             }
@@ -339,13 +356,13 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
                 /*If distr_count wasn't set we won't be distributed this variable to
                   the reader. But print out warning just in case if user forgot
                   to set distr_count for this variable */
-                  FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: farb_set_distr_count was not called for variable with id %d. \
+                  FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: farb_set_distr_count was not called for variable with id %d. \
                   This variable will not be distributed.", var->id);
-                  *((MPI_Offset*)(*buf+offt)) = 0;
+                  *((MPI_Offset*)(chbuf+offt)) = 0;
                   offt+=sizeof(MPI_Offset);
             } else {
                 int j;
-                *((MPI_Offset*)(*buf+offt)) = 1;
+                *((MPI_Offset*)(chbuf+offt)) = 1;
                 offt+=sizeof(MPI_Offset);
                 (*node_cnt)++;
 
@@ -400,11 +417,11 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
                   the reader could unpack the data correctly later*/
 
                 for(i=0; i < var->ndims; i++){
-                    *((MPI_Offset*)(*buf+offt)) = var->distr_count[i];
+                    *((MPI_Offset*)(chbuf+offt)) = var->distr_count[i];
                     offt+=sizeof(MPI_Offset);
                 }
                 for(i=0; i < var->ndims; i++){
-                    *((MPI_Offset*)(*buf+offt)) = coord[i];
+                    *((MPI_Offset*)(chbuf+offt)) = coord[i];
                     offt+=sizeof(MPI_Offset);
                 }
             }
@@ -427,14 +444,14 @@ int set_distr_count(file_buffer_t *fbuf, int varid, int count[])
     int i;
     MPI_Offset *cnt;
     if(fbuf->distr_pattern != DISTR_PATTERN_SCATTER){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: cannot set distribute count. File's distribute pattern must be <scatter>.");
+        FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: cannot set distribute count. File's distribute pattern must be <scatter>.");
         return 0;
     }
 
     farb_var_t *var = find_var(fbuf->vars, varid);
     if(var == NULL){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: No variable with such id (%d)", varid);
-        assert(0);
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: set_distr_count(): No variable with such id (%d). Ignored.", varid);
+        return 1;
     }
 
     cnt = (MPI_Offset*)realloc(var->distr_count, var->ndims*sizeof(MPI_Offset));

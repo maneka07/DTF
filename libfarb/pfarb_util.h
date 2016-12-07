@@ -21,35 +21,30 @@
 #define IO_READ_REQ_TAG     6       /*reader -> master*/
 #define IO_DATA_REQ_TAG     7       /*master -> writer*/
 #define IO_DATA_TAG         8       /*writer -> reader*/
-#define IO_DONE_TAG         9
-#define NODE_TAG            10      /*This tag should be always last!!*/
+#define IO_DONE_TAG         9       /*reader->master, master->writers*/
+#define IO_CLOSE_FILE_TAG       10      /*reader->master, master->writers*/
+#define NODE_TAG            11      /*This tag should be always last!!*/
 
 /*
     DISTR_MODE_STATIC - configure data distribution through config file and
                         farb_set_distr_count(). Buffering happens on both sides:
                         reader's and writer's.
 
-    DISTR_MODE_BUFFERED_REQ_MATCH - writer buffers all data, req matching
-                        happens when the file is closed on writer side. Thanks to buffering,
-                        it does not matter in what order the reader posts read requests and if this
-                        order mismatches the write calls on the writer side. A deadlock should never happen.
-
-    DISTR_MODE_NONBUFFERED_REQ_MATCH - writer does not buffer data, request matching happens inside wait().
+    DISTR_MODE_REQ_MATCH - //TODO.
                         Reader and writer are obliged to match the order of write and read requests, otherwise
                         a deadlock can happen. Reader must notify all writers that all its read requests have been
                         matched in order for the writer to return from a wait function.
 */
 #define DISTR_MODE_STATIC                   0
-#define DISTR_MODE_BUFFERED_REQ_MATCH       1
-#define DISTR_MODE_NONBUFFERED_REQ_MATCH    2
+#define DISTR_MODE_REQ_MATCH    1
 
 //TODO: remove all asserts in the code and replace with proper error handling
 typedef struct component{
-    unsigned int id;
+    unsigned int    id;
     //TODO remove +1
-    char name[MAX_COMP_NAME+1];
-    int connect_mode; /*0 - I am server, 1 - I am client, -1 - undefined (no interconnection)*/
-    MPI_Comm intercomm;
+    char            name[MAX_COMP_NAME+1];
+    int             connect_mode; /*0 - I am server, 1 - I am client, -1 - undefined (no interconnection)*/
+    MPI_Comm        comm;   /*intra or inter component communicator*/
 }component_t;
 
 typedef struct farb_config{
@@ -57,10 +52,11 @@ typedef struct farb_config{
     int my_master;  /*is this rank a master rank*/
     int nmasters;   /*Number of master nodes that hold data for request matching*/
     int *masters;   /*Ranks of master nodes on the writer's side*/
-    int explicit_match;   /*0 - request matching is initiated from inside of pnetcdf;
-                            1 - request matching is initiated by the user*/
     unsigned int my_workgroup_sz;
+    int buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
 }farb_config_t;
+
+
 
 
 struct file_buffer;
@@ -74,7 +70,6 @@ MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chu
 int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape);
 int set_distr_count(file_buffer_t *fbuf, int varid, int count[]);
 void open_file(file_buffer_t *fbuf);
-
 MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coord);
 MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape);
 #endif
