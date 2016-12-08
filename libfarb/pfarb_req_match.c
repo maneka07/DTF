@@ -62,7 +62,7 @@ void delete_ioreq(io_req_t **ioreq);
 static void delete_ioreqs(file_buffer_t *fbuf)
 {
     io_req_t *tmp, *ioreq;
-
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Delete write requests for file %s", fbuf->file_path);
     ioreq = fbuf->ioreqs;
     while(ioreq != NULL){
         ioreq->completed = 1;
@@ -649,8 +649,11 @@ static void parse_ioreq_wrt2mst(void *buf, int bufsz, int rank)
             for(mst = 0; mst < gl_conf.nmasters; mst++)
                 if(gl_conf.masters[mst] == gl_my_rank)
                     break;
-            FARB_DBG(VERBOSE_DBG_LEVEL, "Changing offset from %d to %d", (int)offset, (int)(offt_range*mst));
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Changing offset from %llu to %llu, datasz from %llu to %llu",
+                     offset, offt_range*mst, data_sz, data_sz - (offt_range*mst - offset));
+            data_sz -= offt_range*mst - offset;
             offset = offt_range*mst;
+
         } else if (gl_conf.masters[mst2] != gl_my_rank){
             for(mst = 0; mst < gl_conf.nmasters; mst++)
                 if(gl_conf.masters[mst] == gl_my_rank)
@@ -820,7 +823,9 @@ static void parse_ioreq_rdr2mst(void *buf, int bufsz, int rank)
                 if(gl_conf.masters[mst] == gl_my_rank)
                     break;
             assert(mst != gl_conf.nmasters);
-            FARB_DBG(VERBOSE_DBG_LEVEL, "Changing offset from %d to %d", (int)offset, (int)(offt_range*mst));
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Changing offset from %llu to %llu, datasz from %llu to %llu",
+                     offset, offt_range*mst, data_sz, data_sz - (offt_range*mst - offset));
+            data_sz -= offt_range*mst - offset;
             offset = offt_range*mst;
         } else if(gl_conf.masters[mst2] != gl_my_rank){
             for(mst = 0; mst < gl_conf.nmasters; mst++)
@@ -1033,28 +1038,73 @@ void send_ioreq(int ncid, io_req_t *ioreq, int rw_flag)
 void match_ioreqs_all(int rw_flag)
 {
     file_buffer_t *fbuf;
-    int fbuf_cnt = 0;
+    io_req_t *ioreq;
+    int fbuf_cnt = 0, tmp_cnt;
 
-    /*Count for how many files we need to match ioreqs*/
+    /*Note: rw_flag should be FARB_WRITE (checked this in higher level)*/
+
+    /*Do preparations*/
     fbuf = gl_filebuf_list;
     while(fbuf != NULL){
         if( (fbuf->iomode != FARB_IO_MODE_MEMORY) ||
-            ( (rw_flag == FARB_WRITE) && (fbuf->writer_id != gl_my_comp_id)) ||
-            ( (rw_flag == FARB_READ) && (fbuf->reader_id != gl_my_comp_id)) ){
+            (!fbuf->explicit_match) ||
+            ( (rw_flag == FARB_WRITE) && (fbuf->writer_id != gl_my_comp_id))){
 
             fbuf = fbuf->next;
             continue;
         }
-        if(fbuf->ioreq_cnt > 0)
-            fbuf_cnt++;
+        /*Count for how many files we need to match ioreqs.*/
+        fbuf_cnt++;
+        /*Init master's db*/
+        if(gl_conf.my_master == gl_my_rank){
+            if(fbuf->iodb == NULL)
+                init_master_db(fbuf);
+            //reset
+            fbuf->iodb->nranks_completed = 0;
+        }
+        /*Send ioreqs to master(s)*/
+        ioreq = fbuf->ioreqs;
+        while(ioreq != NULL){
+            send_ioreq(fbuf->ncid, ioreq, rw_flag);
+            ioreq = ioreq->next;
+        }
+        //reset
+        fbuf->done_matching_flag = 0;
+        fbuf = fbuf->next;
     }
+    if(fbuf_cnt == 0){
+        FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: there are no files to match ioreqs. Forgot to enable explicit matching?");
+        return;
+    } else
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Will match ioreqs for %d files", fbuf_cnt);
 
-    FARB_DBG(VERBOSE_DBG_LEVEL, "Will match ioreqs for %d files", fbuf_cnt);
-
-
+    /*Keep iterating over files and trying to progress I/O*/
     while(fbuf_cnt){
-        progress_io();
+        tmp_cnt = 0;
+        fbuf = gl_filebuf_list;
+        while(fbuf != NULL){
+            if( (fbuf->iomode != FARB_IO_MODE_MEMORY) ||
+                (!fbuf->explicit_match) ||
+                ( (rw_flag == FARB_WRITE) && (fbuf->writer_id != gl_my_comp_id))){
+
+                fbuf = fbuf->next;
+                continue;
+            }
+            if(fbuf->ioreq_cnt == 0){
+                tmp_cnt++;
+                fbuf = fbuf->next;
+                continue;
+            }
+            progress_io_matching();
+            if( gl_conf.my_master == gl_my_rank  )
+                do_matching(fbuf);
+
+            fbuf = fbuf->next;
+        }
+        if(tmp_cnt == fbuf_cnt)
+            break;
     }
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Finished matching I/O for all files");
 }
 
 int match_ioreqs(file_buffer_t *fbuf)
@@ -1189,7 +1239,9 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
             }
             ioreq = ioreq->next;
         }
+        FARB_DBG(VERBOSE_ALL_LEVEL, "BEfore assert");
         assert(ioreq != NULL);
+        FARB_DBG(VERBOSE_ALL_LEVEL, "After assert");
         assert(chunk != NULL);
         /*Copy data*/
         assert(chunk_offt - ioreq->mem_chunks->offset >= 0);
@@ -1385,7 +1437,7 @@ void progress_io_matching()
                     rbuf = malloc(bufsz);
                     assert(rbuf != NULL);
                     src = status.MPI_SOURCE;
-                    FARB_DBG(VERBOSE_DBG_LEVEL, "Recv data req from mst src");
+                    FARB_DBG(VERBOSE_DBG_LEVEL, "Recv data req from mst %d", src);
                     errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_DATA_REQ_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(errno);
                     send_data_wrt2rdr(rbuf, bufsz);
@@ -1432,7 +1484,7 @@ void progress_io_matching()
                         }
 
                         if(fbuf->iodb->nmst_completed == gl_conf.nmasters){
-                            FARB_DBG(VERBOSE_DBG_LEVEL, "Notify all other ranks that req matching completed");
+                            FARB_DBG(VERBOSE_DBG_LEVEL, "Notify all other ranks that req matching for %s completed", fbuf->file_path);
                             /*Tell other writer ranks that they can complete matching*/
                             for(i = 1; i < gl_conf.my_workgroup_sz; i++){
                                 errno = MPI_Send(&ncid, 1, MPI_INT, gl_my_rank+i, IO_DONE_TAG, gl_comps[gl_my_comp_id].comm);
@@ -1442,7 +1494,6 @@ void progress_io_matching()
                             assert(fbuf->iodb->nritems == 0);
                             fbuf->done_matching_flag = 1;
                             if(fbuf->fclosed_flag){
-                                FARB_DBG(VERBOSE_DBG_LEVEL, "Delete my write requests");
                                 /*Complete my own write requests*/
                                 delete_ioreqs(fbuf);
                                 /*Clean my iodb*/
@@ -1471,7 +1522,7 @@ void progress_io_matching()
                         break;
 
                     if(gl_my_rank == gl_conf.my_master){ //I am master
-                        FARB_DBG(VERBOSE_DBG_LEVEL, "Notify all other ranks that they can close the file");
+                        FARB_DBG(VERBOSE_DBG_LEVEL, "Notify all other ranks that they can close the file %s", fbuf->file_path);
                         /*Tell other writer ranks that they can close the file*/
                         for(i = 1; i < gl_conf.my_workgroup_sz; i++){
                             errno = MPI_Send(&ncid, 1, MPI_INT, gl_my_rank+i, IO_CLOSE_FILE_TAG, gl_comps[gl_my_comp_id].comm);

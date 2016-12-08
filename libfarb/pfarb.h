@@ -16,8 +16,8 @@
 #define FARB_IO_MODE_MEMORY       3
 #endif
 
-#define FARB_READ   0
-#define FARB_WRITE  1
+#define FARB_READ   1
+#define FARB_WRITE  2
 
 #define FARB_UNLIMITED  0L  /*Unlimited dimension*/
 

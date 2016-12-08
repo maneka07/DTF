@@ -192,7 +192,7 @@ static void traverse_dims(farb_var_t *var,
         assert(tmp != NULL);
         for(i = 0; i < var->ndims; i++){
             tmp[i] = coord[i] - start[i];
-            FARB_DBG(VERBOSE_ALL_LEVEL, "coord %d", (int)coord[i]);
+            //FARB_DBG(VERBOSE_ALL_LEVEL, "coord %d", (int)coord[i]);
         }
         new_chunk->offset = to_1d_index(var->ndims, var->shape, coord)*var->el_sz; //offset
         new_chunk->usrbuf_offset = to_1d_index(var->ndims, count, tmp)*var->el_sz; //offset inside the user buffer

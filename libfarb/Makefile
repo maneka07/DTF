@@ -3,7 +3,7 @@ SNAME=libpfarb.a
 SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
 
-CFLAGS=-Wall -g -Wno-comment
+CFLAGS=-Wall -g -Wno-comment -pedantic
 MPICC=mpicc
 
 #K

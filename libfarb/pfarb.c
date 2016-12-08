@@ -261,6 +261,8 @@ _EXTERN_C_ void farb_close(const char* filename)
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
+    if(fbuf->reader_id == gl_my_comp_id)
+        MPI_Barrier(MPI_COMM_WORLD);
     close_file(fbuf);
 }
 
@@ -317,6 +319,11 @@ _EXTERN_C_ void farb_match_io_all(int rw_flag)
     if(!lib_initialized) return;
     if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
 
+    if(rw_flag == FARB_READ){
+        FARB_DBG(VERBOSE_WARNING_LEVEL, "farb_match_io_all() cannot be used in processes that read files. Ignoring.");
+        return;
+    }
+
     match_ioreqs_all(rw_flag);
 
     return;
@@ -369,7 +376,10 @@ _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename,
     if(boundary_check(fbuf, varid, start, count ))
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 
-
+    if( rw_flag != FARB_READ && rw_flag != FARB_WRITE){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "rw_flag value incorrect (%d)", rw_flag);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
     switch(gl_conf.distr_mode){
             case DISTR_MODE_STATIC:
                 ret = buf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
