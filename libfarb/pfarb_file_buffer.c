@@ -12,13 +12,12 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
 
     while(ptr != NULL)
     {
-        if(file_path == NULL){
-            if(ptr->ncid == ncid)
+       if((ncid != -1) && (ptr->ncid == ncid))
                 break;
-        } else {
-            if(strstr(file_path, ptr->file_path) != NULL || ( strlen(ptr->alias_name) != 0 && strstr(file_path, ptr->alias_name) != NULL) )
+       if( (file_path != NULL && strlen(file_path)!=0 && strstr(file_path, ptr->file_path)!=NULL) ||
+                (strlen(ptr->alias_name)!=0 && strstr(file_path, ptr->alias_name)!=NULL) )
                 break;
-        }
+
         ptr = ptr->next;
     }
 

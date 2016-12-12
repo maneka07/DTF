@@ -201,7 +201,8 @@ int main(int argc, char** argv) {
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts);
     ERR
     //printf("writer %d finished wait all\n", rank);
-      farb_match_io(filename, 0);
+      //farb_match_io(filename, 0);
+      farb_match_io_all(FARB_WRITE);
      //printf("writer %d closes file\n", rank);
       //      printf("app %d: finished write\n", rank);
     /* check status of all requests */

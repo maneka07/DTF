@@ -16,6 +16,10 @@ typedef struct io_req{
     int                     var_id;
     int                     completed;
     void                    *user_buf;
+    //MPI_Offset              user_buf_el_sz;     //In case this does
+//    MPI_Datatype            dtype;                /*need to save the type passed in the request
+//                                                    in case there is mismatch with the type passed
+//                                                    when the var was defined*/
     MPI_Offset              user_buf_sz;
     MPI_Offset              *start;
     MPI_Offset              *count;

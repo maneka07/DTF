@@ -297,10 +297,11 @@ _EXTERN_C_ int farb_match_io(const char *filename, int ncid)//, int match_all)
 //    } else{
         file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
         if(fbuf == NULL){
-            if(filename == NULL)
+
+            if(strlen(filename) == 0)
                 FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: file with ncid %d is not treated by FARB (not in configuration file). Explicit matching ignored.", ncid);
             else
-                FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: file %s is not treated by FARB (not in configuration file). Explicit matching ignored.", filename);
+                FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: file %s (ncid %d) is not treated by FARB (not in configuration file). Explicit matching ignored.", filename, ncid);
             return 0;
         }
         if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;

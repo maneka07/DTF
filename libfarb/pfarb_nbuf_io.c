@@ -21,9 +21,17 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     io_req_t *req;
     int i;
 
-    if(rw_flag == FARB_READ)
-         assert(fbuf->is_ready);
-
+    if(rw_flag == FARB_READ){
+        if(fbuf->reader_id==gl_my_comp_id){
+            if(!fbuf->is_ready){
+                FARB_DBG(VERBOSE_DBG_LEVEL, "FARB Error trying to read file %s that is not ready", fbuf->file_path);
+                assert(fbuf->is_ready);
+            }
+        } else{
+            FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: writer process tries to read file %s (var %d)", fbuf->file_path, varid);
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        }
+    }
     if(imap != NULL){
         FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: writing mapped vars is not impelemented yet. Ignore.");
         return 0;
@@ -39,7 +47,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: could not find var with id %d", varid);
         return 0;
     }
-    FARB_DBG(VERBOSE_DBG_LEVEL, "rw %d call for ncid %d var %d", rw_flag, fbuf->ncid, var->id);
+    FARB_DBG(VERBOSE_DBG_LEVEL, "rw %d call for %s (ncid %d) var %d", rw_flag,fbuf->file_path, fbuf->ncid, var->id);
     /*check number of elements to read*/
     if(count != NULL){
         MPI_Offset nelems;
@@ -60,8 +68,8 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         var->el_sz = (MPI_Offset)el_sz;
     } else {
         if(var->el_sz != (MPI_Offset)el_sz)
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Warning: el_sz mismatch (written as %llu-bit,read as %d-bit var). Using the original size.", var->el_sz, el_sz);
-        //assert(var->el_sz == (MPI_Offset)el_sz);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Warning: el_sz mismatch (defined as %llu-bit, accessed as %d-bit var). Using the original size.", var->el_sz, el_sz);
+        assert(var->el_sz == (MPI_Offset)el_sz);
     }
 
     /*Create an io request*/

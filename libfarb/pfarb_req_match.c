@@ -966,7 +966,7 @@ void send_ioreq(int ncid, io_req_t *ioreq, int rw_flag)
     *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->var_id;
     offt += sizeof(MPI_Offset);
 
-    fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
+    fbuf = find_file_buffer(gl_filebuf_list, "", ncid);
     assert(fbuf != NULL);
     var = find_var(fbuf->vars, ioreq->var_id);
     assert(var != NULL);
