@@ -103,7 +103,7 @@ static void pack_vars(file_buffer_t *fbuf, int *bufsz, void **buf)
     while(var != NULL){
         *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)var->id;
         offt += sizeof(MPI_Offset);
-        *((MPI_Offset*)(chbuf+offt)) = var->el_sz;
+        *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)mpitype2int(var->dtype);
         offt += sizeof(MPI_Offset);
         *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)var->ndims;
         offt += sizeof(MPI_Offset);
@@ -143,6 +143,7 @@ static void unpack_vars(file_buffer_t *fbuf, int bufsz, void *buf)
     int i, varid, var_cnt;
     farb_var_t *var;
     size_t offt = 0;
+    int type;
     unsigned char *chbuf = (unsigned char*)buf;
    // char filename[MAX_FILE_NAME];
 
@@ -160,7 +161,8 @@ static void unpack_vars(file_buffer_t *fbuf, int bufsz, void *buf)
         var = find_var(fbuf->vars, varid);
         assert(var == NULL);
         var = new_var(varid, 0, 0, NULL);
-        var->el_sz = *((MPI_Offset*)(chbuf+offt));
+        type = (int)(*((MPI_Offset*)(chbuf+offt)));
+        var->dtype = int2mpitype(type);
         offt+=sizeof(MPI_Offset);
         var->ndims = (int)(*((MPI_Offset*)(chbuf+offt)));
         offt += sizeof(MPI_Offset);
@@ -614,9 +616,11 @@ static void parse_ioreq_wrt2mst(void *buf, int bufsz, int rank)
     if(has_unlim_dim(var))
         offt_range = 0;
     else {
-        FARB_DBG(VERBOSE_ALL_LEVEL, "last idx %d, offt %d", (int)last_1d_index(var->ndims, var->shape), (int)(last_1d_index(var->ndims, var->shape)*var->el_sz));
+        int el_sz;
+        MPI_Type_size(var->dtype, &el_sz);
+        FARB_DBG(VERBOSE_ALL_LEVEL, "last idx %d, offt %d", (int)last_1d_index(var->ndims, var->shape), (int)(last_1d_index(var->ndims, var->shape)*el_sz));
         offt_range = (MPI_Offset)((last_1d_index(var->ndims, var->shape) + 1)/gl_conf.nmasters);
-        offt_range *= var->el_sz;
+        offt_range *= el_sz;
     }
 
     FARB_DBG(VERBOSE_ALL_LEVEL, "offt_range %d", (int)offt_range);
@@ -792,8 +796,10 @@ static void parse_ioreq_rdr2mst(void *buf, int bufsz, int rank)
     if(has_unlim_dim(var)){
         offt_range = 0;
     } else {
+        int el_sz;
+        MPI_Type_size(var->dtype, &el_sz);
         offt_range = (MPI_Offset)((last_1d_index(var->ndims, var->shape)+1)/gl_conf.nmasters);
-        offt_range *= var->el_sz;
+        offt_range *= el_sz;
     }
 
     FARB_DBG(VERBOSE_ALL_LEVEL, "offt_range %d", (int)offt_range);
@@ -864,7 +870,7 @@ static void parse_ioreq_rdr2mst(void *buf, int bufsz, int rank)
 io_req_t *new_ioreq(int id,
                     int var_id,
                     int ndims,
-                    MPI_Offset el_sz,
+                    MPI_Datatype dtype,
                     const MPI_Offset *start,
                     const MPI_Offset *count,
                     void *buf,
@@ -874,8 +880,10 @@ io_req_t *new_ioreq(int id,
 
     io_req_t *ioreq = (io_req_t*)malloc(sizeof(io_req_t));
     assert(ioreq != NULL);
-    if(ndims > 0){
+    int el_sz;
+    MPI_Type_size(dtype, &el_sz);
 
+    if(ndims > 0){
         ioreq->user_buf_sz = el_sz * (last_1d_index(ndims, count) + 1);
         FARB_DBG(VERBOSE_ALL_LEVEL, "req %d, var %d, user bufsz %d", id, var_id, (int)ioreq->user_buf_sz);
         ioreq->start = (MPI_Offset*)malloc(sizeof(MPI_Offset)*ndims);
@@ -905,6 +913,7 @@ io_req_t *new_ioreq(int id,
     ioreq->nchunks = 0;
     ioreq->get_sz = 0;
     ioreq->prev = NULL;
+    ioreq->dtype = dtype;
     return ioreq;
 }
 
@@ -977,8 +986,10 @@ void send_ioreq(int ncid, io_req_t *ioreq, int rw_flag)
         offt_range = 0;
         FARB_DBG(VERBOSE_DBG_LEVEL, "Req for a var with unlim dim");
     } else {
+        int el_sz;
+        MPI_Type_size(var->dtype, &el_sz);
         offt_range = (MPI_Offset)(( last_1d_index(var->ndims, var->shape) + 1 )/gl_conf.nmasters);
-        offt_range *= var->el_sz;
+        offt_range *= el_sz;
     }
     FARB_DBG(VERBOSE_DBG_LEVEL, "Offset range is %d", (int)offt_range);
 
@@ -1161,15 +1172,18 @@ int match_ioreqs(file_buffer_t *fbuf)
 /*writer->reader*/
 static void send_data_wrt2rdr(void* buf, int bufsz)
 {
-    int ncid, var_id, rdr_rank, errno;
+    int ncid, var_id, rdr_rank, errno, i;
     io_req_t *ioreq = NULL;
     file_buffer_t *fbuf;
+    farb_var_t *var;
     size_t rofft = 0, sofft = 0;
     unsigned char *sbuf = NULL;
     size_t sbufsz = 0;
-    MPI_Offset chunk_offt, chunk_sz, dbuf_offt;
+    MPI_Offset read_offt, read_sz, dbuf_offt;
     contig_mem_chunk_t *chunk;
+    int def_el_sz, req_el_sz;
     unsigned char *rbuf = (unsigned char*)buf;
+
 
     rdr_rank = (int)(*(MPI_Offset*)rbuf);
     rofft += sizeof(MPI_Offset);
@@ -1185,11 +1199,11 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
     rofft += sizeof(MPI_Offset)*2;
     sbufsz = sizeof(MPI_Offset); //ncid
     while(rofft < bufsz){
-        chunk_sz = *(MPI_Offset*)(rbuf+rofft);
+        read_sz = *(MPI_Offset*)(rbuf+rofft);
         //padding
-        chunk_sz += chunk_sz%sizeof(MPI_Offset);
+        read_sz += read_sz%sizeof(MPI_Offset);
         //var_id+start_offt+chunk_sz+chunk
-        sbufsz += sizeof(MPI_Offset)+sizeof(MPI_Offset)*2+(size_t)chunk_sz;
+        sbufsz += sizeof(MPI_Offset)+sizeof(MPI_Offset)*2+(size_t)read_sz;
         //skip until next chunk_sz
         rofft += sizeof(MPI_Offset)+sizeof(MPI_Offset)*2;
     }
@@ -1206,20 +1220,20 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
         var_id = (int)(*(MPI_Offset*)(rbuf+rofft));
         rofft += sizeof(MPI_Offset);
 
-        chunk_offt = *(MPI_Offset*)(rbuf+rofft);
+        read_offt = *(MPI_Offset*)(rbuf+rofft);
         rofft += sizeof(MPI_Offset);
-        chunk_sz = *(MPI_Offset*)(rbuf+rofft);
+        read_sz = *(MPI_Offset*)(rbuf+rofft);
         rofft += sizeof(MPI_Offset);
 
         /*Save info about the memory chunk*/
         *(MPI_Offset*)(sbuf+sofft) = (MPI_Offset)var_id;
         sofft += sizeof(MPI_Offset);
-        *(MPI_Offset*)(sbuf+sofft) = chunk_offt;
+        *(MPI_Offset*)(sbuf+sofft) = read_offt;
         sofft += sizeof(MPI_Offset);
-        *(MPI_Offset*)(sbuf+sofft) = chunk_sz;
+        *(MPI_Offset*)(sbuf+sofft) = read_sz;
         sofft += sizeof(MPI_Offset);
 
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Will copy (var %d, offt %d, sz %d), padding %d", var_id, (int)chunk_offt, (int)chunk_sz, (int)(chunk_sz%sizeof(MPI_Offset)));
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Will copy (var %d, offt %d, sz %d), padding %d", var_id, (int)read_offt, (int)read_sz, (int)(read_sz%sizeof(MPI_Offset)));
 
         /*Find the ioreq that has info about this mem chunk*/
         ioreq = fbuf->ioreqs;
@@ -1227,9 +1241,9 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
             if(ioreq->var_id == var_id){
                 chunk = ioreq->mem_chunks;
                 while(chunk != NULL){
-                    if( (chunk_offt >= chunk->offset) &&
-                        (chunk_offt < chunk->offset+chunk->data_sz) &&
-                        (chunk_offt+chunk_sz <= chunk->offset+chunk->data_sz))
+                    if( (read_offt >= chunk->offset) &&
+                        (read_offt < chunk->offset+chunk->data_sz) &&
+                        (read_offt+read_sz <= chunk->offset+chunk->data_sz))
                         break;
 
                     chunk = chunk->next;
@@ -1239,17 +1253,65 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
             }
             ioreq = ioreq->next;
         }
-        FARB_DBG(VERBOSE_ALL_LEVEL, "BEfore assert");
+        //FARB_DBG(VERBOSE_ALL_LEVEL, "BEfore assert");
         assert(ioreq != NULL);
-        FARB_DBG(VERBOSE_ALL_LEVEL, "After assert");
+        //FARB_DBG(VERBOSE_ALL_LEVEL, "After assert");
         assert(chunk != NULL);
-        /*Copy data*/
-        assert(chunk_offt - ioreq->mem_chunks->offset >= 0);
-        dbuf_offt = chunk->usrbuf_offset + chunk_offt - chunk->offset;
-        //FARB_DBG(VERBOSE_ALL_LEVEL, "dbuf offt %d, chunk usr buf offt %d (usrbuf sz %d)", (int)dbuf_offt, (int)chunk->usrbuf_offset, (int)ioreq->user_buf_sz);
-        assert(dbuf_offt < ioreq->user_buf_sz);
-        memcpy(sbuf+sofft, (unsigned char*)ioreq->user_buf+dbuf_offt, (size_t)chunk_sz);
-        sofft += (size_t)chunk_sz+(size_t)(chunk_sz%sizeof(MPI_Offset));
+
+        var = find_var(fbuf->vars, var_id);
+        /*Copy data: if the var datatype passed in I/O function differs
+        from the datatype with which the var was defined then we will
+        need to do type conversion*/
+        MPI_Type_size(ioreq->dtype, &req_el_sz);
+        MPI_Type_size(var->dtype, &def_el_sz);
+        if(req_el_sz == def_el_sz){
+            assert(read_offt - ioreq->mem_chunks->offset >= 0);
+            dbuf_offt = chunk->usrbuf_offset + read_offt - chunk->offset;
+            //FARB_DBG(VERBOSE_ALL_LEVEL, "dbuf offt %d, chunk usr buf offt %d (usrbuf sz %d)", (int)dbuf_offt, (int)chunk->usrbuf_offset, (int)ioreq->user_buf_sz);
+            assert(dbuf_offt < ioreq->user_buf_sz);
+            memcpy(sbuf+sofft, (unsigned char*)ioreq->user_buf+dbuf_offt, (size_t)read_sz);
+            sofft += (size_t)read_sz+/*padding*/(size_t)(read_sz%sizeof(MPI_Offset));
+        } else {
+            void *cpbuf;
+            MPI_Offset offt_within_chunk;
+            int nelems_to_read;
+
+            FARB_DBG(VERBOSE_ALL_LEVEL, "Converting from %d-bit to %d bit type for var %d", req_el_sz, def_el_sz, var_id);
+            assert(read_offt - ioreq->mem_chunks->offset >= 0);
+            assert((read_offt - chunk->offset)%def_el_sz == 0);
+            offt_within_chunk = (MPI_Offset)((read_offt - chunk->offset)/def_el_sz)*req_el_sz;
+            nelems_to_read = (int)(read_sz/def_el_sz);
+
+            cpbuf = malloc(read_sz);
+            assert(cpbuf != NULL);
+            dbuf_offt = chunk->usrbuf_offset + offt_within_chunk;
+
+            if(var->dtype == MPI_FLOAT){
+                double *ubuf;
+                /*MPI_DOUBLE->MPI_FLOAT*/
+                assert(ioreq->dtype == MPI_DOUBLE);
+                ubuf = (double*)((unsigned char*)ioreq->user_buf+dbuf_offt);
+                for(i = 0; i < nelems_to_read; i++){
+                    ((float*)cpbuf)[i] = (float)(ubuf[i]);
+                    FARB_DBG(VERBOSE_ALL_LEVEL, "Send: uval %.10f, bval %.10f",ubuf[i], ((float*)cpbuf)[i]);
+                }
+            } else if (var->dtype == MPI_DOUBLE){
+                float *ubuf;
+                /*MPI_FLOAT->MPI_DOUBLE*/
+                assert(ioreq->dtype == MPI_FLOAT);
+                ubuf = (float*)((unsigned char*)ioreq->user_buf+dbuf_offt);
+                for(i = 0; i < nelems_to_read; i++){
+                    ((double*)cpbuf)[i] = (double)(ubuf[i]);
+                    FARB_DBG(VERBOSE_ALL_LEVEL, "Send: uval %.10f, bval %.10f",ubuf[i], ((double*)cpbuf)[i]);
+                }
+            } else {
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "This conversion type is not supported. Aborting.");
+                assert(0);
+            }
+            memcpy(sbuf+sofft, cpbuf, (size_t)read_sz);
+            sofft += (size_t)read_sz+/*padding*/(size_t)(read_sz%sizeof(MPI_Offset));
+            free(cpbuf);
+        }
     }
     FARB_DBG(VERBOSE_ALL_LEVEL, "Sofft %d, sbufsz %d", (int)sofft, (int)sbufsz);
     assert(sofft == sbufsz);
@@ -1261,11 +1323,13 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
 /*writer->reader*/
 static void recv_data_rdr(void* buf, int bufsz)
 {
-    int ncid, var_id;
+    int ncid, var_id, i;
+    int def_el_sz, req_el_sz;
+    farb_var_t *var;
     io_req_t *ioreq = NULL;
     file_buffer_t *fbuf;
     size_t offt = 0;
-    MPI_Offset chunk_offt, chunk_sz, dbuf_offt;
+    MPI_Offset read_offt, read_sz, dbuf_offt;
     contig_mem_chunk_t *chunk;
     unsigned char *chbuf = (unsigned char*)buf;
     ncid = (int)(*(MPI_Offset*)(chbuf));
@@ -1277,12 +1341,12 @@ static void recv_data_rdr(void* buf, int bufsz)
     while(offt != bufsz){
         var_id = (int)(*(MPI_Offset*)(chbuf+offt));
         offt += sizeof(MPI_Offset);
-        chunk_offt = *(MPI_Offset*)(chbuf+offt);
+        read_offt = *(MPI_Offset*)(chbuf+offt);
         offt += sizeof(MPI_Offset);
-        chunk_sz = *(MPI_Offset*)(chbuf+offt);
+        read_sz = *(MPI_Offset*)(chbuf+offt);
         offt += sizeof(MPI_Offset);
 
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Will recv (var %d, offt %d, sz %d)", var_id, (int)chunk_offt, (int)chunk_sz);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Will recv (var %d, offt %d, sz %d)", var_id, (int)read_offt, (int)read_sz);
 
         /*Find the ioreq*/
         ioreq = fbuf->ioreqs;
@@ -1290,9 +1354,9 @@ static void recv_data_rdr(void* buf, int bufsz)
             if(ioreq->var_id == var_id){
                 chunk = ioreq->mem_chunks;
                 while(chunk != NULL){
-                    if( (chunk_offt >= chunk->offset) &&
-                        (chunk_offt < chunk->offset+chunk->data_sz) &&
-                        (chunk_offt+chunk_sz <= chunk->offset+chunk->data_sz))
+                    if( (read_offt >= chunk->offset) &&
+                        (read_offt < chunk->offset+chunk->data_sz) &&
+                        (read_offt+read_sz <= chunk->offset+chunk->data_sz))
                         break;
 
                     chunk = chunk->next;
@@ -1304,16 +1368,64 @@ static void recv_data_rdr(void* buf, int bufsz)
         }
         assert(ioreq != NULL);
         assert(chunk != NULL);
+
+        var = find_var(fbuf->vars, var_id);
         /*Copy data*/
-        assert(chunk_offt - ioreq->mem_chunks->offset >= 0);
-        dbuf_offt = chunk->usrbuf_offset + chunk_offt - chunk->offset;
-        FARB_DBG(VERBOSE_ALL_LEVEL, "dbuf offt %d", (int)dbuf_offt);
-        assert(dbuf_offt < ioreq->user_buf_sz);
-        memcpy((unsigned char*)(ioreq->user_buf)+dbuf_offt, (unsigned char*)buf+offt, (size_t)chunk_sz);
-        offt += (size_t)chunk_sz+(size_t)(chunk_sz%sizeof(MPI_Offset));
+        MPI_Type_size(ioreq->dtype, &req_el_sz);
+        MPI_Type_size(var->dtype, &def_el_sz);
+        if(req_el_sz == def_el_sz){
+            assert(read_offt - ioreq->mem_chunks->offset >= 0);
+            dbuf_offt = chunk->usrbuf_offset + read_offt - chunk->offset;
+            FARB_DBG(VERBOSE_ALL_LEVEL, "dbuf offt %d", (int)dbuf_offt);
+            assert(dbuf_offt < ioreq->user_buf_sz);
+            memcpy((unsigned char*)(ioreq->user_buf)+dbuf_offt, (unsigned char*)buf+offt, (size_t)read_sz);
+            offt += (size_t)read_sz+/*padding*/(size_t)(read_sz%sizeof(MPI_Offset));
+            ioreq->get_sz += read_sz;
+        } else {
+            void *cpbuf;
+            MPI_Offset offt_within_chunk;
+            int nelems_to_read;
 
-        ioreq->get_sz += chunk_sz;
+            FARB_DBG(VERBOSE_ALL_LEVEL, "Converting from %d-bit to %d bit type for var %d", req_el_sz, def_el_sz, var_id);
+            assert(read_offt - ioreq->mem_chunks->offset >= 0);
+            assert((read_offt - chunk->offset)%def_el_sz == 0);
+            offt_within_chunk = (MPI_Offset)((read_offt - chunk->offset)/def_el_sz)*req_el_sz;
+            dbuf_offt = chunk->usrbuf_offset + offt_within_chunk;
 
+            cpbuf = malloc(read_sz);
+            assert(cpbuf != NULL);
+
+            /*Copy the data to temporary buffer and then do the conversion*/
+            memcpy(cpbuf, (unsigned char*)buf+offt, (size_t)read_sz);
+            offt += (size_t)read_sz+/*padding*/(size_t)(read_sz%sizeof(MPI_Offset));
+
+            nelems_to_read = (int)(read_sz/def_el_sz);
+            if(var->dtype == MPI_FLOAT){
+                double *ubuf;
+                /*MPI_DOUBLE->MPI_FLOAT*/
+                assert(ioreq->dtype == MPI_DOUBLE);
+                ubuf = (double*)((unsigned char*)ioreq->user_buf+dbuf_offt);
+                for(i = 0; i < nelems_to_read; i++){
+                    ubuf[i] = (double)(((float*)cpbuf)[i]);
+                    FARB_DBG(VERBOSE_ALL_LEVEL, "Recv: uval %.10f, bval %.10f",ubuf[i], ((double*)cpbuf)[i]);
+                }
+            } else if (var->dtype == MPI_DOUBLE){
+                float *ubuf;
+                /*MPI_FLOAT->MPI_DOUBLE*/
+                assert(ioreq->dtype == MPI_FLOAT);
+                ubuf = (float*)((unsigned char*)ioreq->user_buf+dbuf_offt);
+                for(i = 0; i < nelems_to_read; i++){
+                    ubuf[i] = (float)(((double*)cpbuf)[i]);
+                    FARB_DBG(VERBOSE_ALL_LEVEL, "Recv: uval %.10f, bval %.10f",ubuf[i], ((float*)cpbuf)[i]);
+                }
+            } else {
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "This conversion type is not supported. Aborting.");
+                assert(0);
+            }
+            free(cpbuf);
+
+            ioreq->get_sz += (MPI_Offset)(read_sz/def_el_sz)*req_el_sz;
+        }
         FARB_DBG(VERBOSE_ALL_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, ioreq->var_id, (int)ioreq->get_sz, (int)ioreq->user_buf_sz);
 
         if(ioreq->get_sz == ioreq->user_buf_sz){

@@ -60,14 +60,13 @@ MPI_Offset buf_read_write_var( file_buffer_t *fbuf,
 
     MPI_Type_size(dtype, &el_sz);
     assert(el_sz > 0);
-    if(var->el_sz == 0){
-        var->el_sz = (MPI_Offset)el_sz;
-    } else
-        assert(var->el_sz == (MPI_Offset)el_sz);
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "Mismatch of var's datatype");
+    assert(var->dtype == dtype);
+    //TODO implement type conversion
 
     if(var->ndims <= 1){ /*scalar or 1d array*/
-        MPI_Offset offt = (*start)*var->el_sz;
-        MPI_Offset data_sz = (*count)*var->el_sz;
+        MPI_Offset offt = (*start)*el_sz;
+        MPI_Offset data_sz = (*count)*el_sz;
 
         if(rw_flag == FARB_READ){
             ret = mem_contiguous_read(var, offt, data_sz, buf);
@@ -106,6 +105,7 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
     *first_el_coord = NULL;
     int first_el_coord_sz = 0;
     unsigned char *chbuf = (unsigned char*)buf;
+    int type;
 
     FARB_DBG(VERBOSE_DBG_LEVEL, "Unpacking vars sz %d", buf_sz);
 
@@ -124,7 +124,8 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
         var = find_var(fbuf->vars, varid);
         if(var == NULL){
             var = new_var(varid, 0, 0, NULL);
-            var->el_sz = *((MPI_Offset*)(chbuf+offt));
+            type = (int)(*((MPI_Offset*)(chbuf+offt)));
+            var->dtype = int2mpitype(type);
             offt+=sizeof(MPI_Offset);
             var->ndims = *((int*)(chbuf+offt));
             offt += sizeof(int);
@@ -257,6 +258,7 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
         int bufsz;
         int first_el_coord_sz = 0;
         MPI_Offset written;
+        int el_sz;
 
         while(var != NULL){
             if(var->distr_count == NULL){
@@ -266,7 +268,8 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
             bufsz = 1;
             for(i = 0; i < var->ndims; i++)
                 bufsz *= (int)var->distr_count[i];
-            bufsz *= (int)var->el_sz;
+            MPI_Type_size(var->dtype, &el_sz);
+            bufsz *= el_sz;
             tmp = realloc(rbuf, bufsz);
             assert(tmp != NULL);
             rbuf = tmp;
@@ -299,7 +302,7 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
     unsigned char* chbuf;
     farb_var_t *var = fbuf->vars;
     while(var != NULL){
-        sz += sizeof(var->id) + sizeof(var->el_sz) + sizeof(var->ndims) + sizeof(MPI_Offset)*var->ndims +
+        sz += sizeof(var->id) + sizeof(MPI_Offset)/*dtype*/ + sizeof(var->ndims) + sizeof(MPI_Offset)*var->ndims +
         sizeof(MPI_Offset) + var->node_cnt*sizeof(MPI_Offset)*2;
         var = var->next;
     }
@@ -318,7 +321,7 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
     while(var != NULL){
         *((int*)(chbuf+offt)) = var->id;
         offt += sizeof(int);
-        *((MPI_Offset*)(chbuf+offt)) = var->el_sz;
+        *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)mpitype2int(var->dtype);
         offt += sizeof(MPI_Offset);
         *((int*)(chbuf+offt)) = var->ndims;
         offt += sizeof(int);
@@ -365,10 +368,13 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
                 *((MPI_Offset*)(chbuf+offt)) = 1;
                 offt+=sizeof(MPI_Offset);
                 (*node_cnt)++;
+                int el_sz;
 
                 MPI_Offset offset, index_1d;
                 int rank_idx;
                 MPI_Offset last_el_idx = last_1d_index(var->ndims, var->shape);
+
+                MPI_Type_size(var->dtype, &el_sz);
 
                 first_el_coord_sz += var->ndims;
                 MPI_Offset *coord = (MPI_Offset*)realloc(*first_el_coord, first_el_coord_sz*sizeof(MPI_Offset));
@@ -392,7 +398,7 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
                             FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: There is no data to send to rank %d. Incorrect config file?", dst_rank);
                             MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
                         }
-                        offset = var->el_sz * index_1d;
+                        offset = (MPI_Offset)el_sz * index_1d;
                         FARB_DBG(VERBOSE_ALL_LEVEL, "offset %d", (int)offset);
                         if(data_present_at_offt(var->nodes, offset))
                             break;
@@ -509,6 +515,7 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
         void *sbuf = NULL, *tmp;
         int bufsz;
         MPI_Offset readsz;
+        int el_sz;
 
         while(var != NULL){
             if(var->distr_count == NULL){
@@ -516,10 +523,11 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
                 continue;
             }
             //pack multi-dim data into 1d contiguous buffer
+            MPI_Type_size(var->dtype, &el_sz);
             bufsz = 1;
             for(i = 0; i < var->ndims; i++)
                 bufsz *= (int)var->distr_count[i];
-            bufsz *= (int)var->el_sz;
+            bufsz *= el_sz;
 
             tmp = realloc(sbuf, bufsz);
             assert(tmp != NULL);

@@ -14,8 +14,8 @@
 
 typedef struct farb_var{
     int                     id;         /* varid assigned by pnetcdf*/
-    MPI_Offset              el_sz;      /* byte size of 1 array element */
-   // MPI_Datatype            dtype;      /*Datatype of the variable*/
+    //MPI_Offset              el_sz;      /* byte size of 1 array element */
+    MPI_Datatype            dtype;      /*Datatype of the variable*/
     MPI_Offset              *shape;     /* dim->size of each dim */
     int                     ndims;      /* number of dimensions */
     buffer_node_t           *nodes;     /*head buffer node that stores the data*/
@@ -73,7 +73,7 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf);
 file_buffer_t* new_file_buffer();
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid);
 farb_var_t* find_var(farb_var_t* varlist, int varid);
-farb_var_t* new_var(int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape);
+farb_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 void add_var(farb_var_t **vars, farb_var_t *var);
 int has_unlim_dim(farb_var_t *var);
 int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );

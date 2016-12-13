@@ -414,7 +414,7 @@ _EXTERN_C_ int farb_io_mode(const char* filename)
     return fbuf->iomode;
 }
 
-_EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
+_EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 {
     int i, ret;
     if(!lib_initialized) return 0;
@@ -432,9 +432,13 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Offs
         //we can support unlimited dimension if it's the first dimension
         //else abort
         if(shape[i] == FARB_UNLIMITED){
-            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: currently cannot support when unlimited dimension is not in the slowest changing dimension (dim 0). Aborting..");
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: currently cannot support when unlimited dimension is not in the slowest changing dimension (dim 0). Aborting.");
             MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
         }
+    }
+    if(dtype == MPI_DATATYPE_NULL){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: datatype for var %d (file %s) is null. Aborting.", varid, fbuf->file_path);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     if(frt_indexing && ndims > 0){
         MPI_Offset *cshape = (MPI_Offset*)malloc(sizeof(MPI_Offset)*ndims);
@@ -445,10 +449,10 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Offs
                 cshape[i] = shape[i] + 1;
             else
                 cshape[i] = 0;
-        ret = def_var(fbuf, varid, ndims, el_sz, cshape);
+        ret = def_var(fbuf, varid, ndims, dtype, cshape);
         free(cshape);
     } else
-      ret = def_var(fbuf, varid, ndims, el_sz, shape);
+      ret = def_var(fbuf, varid, ndims, dtype, shape);
 
     return ret;
 }

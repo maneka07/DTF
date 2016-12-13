@@ -256,9 +256,9 @@ void open_file(file_buffer_t *fbuf)
     FARB_DBG(VERBOSE_DBG_LEVEL,   "Exit farb_open %s", fbuf->file_path);
 }
 
-int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
+int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 {
-    farb_var_t *var = new_var(varid, ndims, el_sz, shape);
+    farb_var_t *var = new_var(varid, ndims, dtype, shape);
     add_var(&fbuf->vars, var);
     fbuf->var_cnt++;
     return 0;
@@ -285,4 +285,46 @@ MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chu
 
     memcpy(chunk, (unsigned char*)fbuf->header+offset, (size_t)chunk_sz);
     return chunk_sz;
+}
+
+
+int mpitype2int(MPI_Datatype dtype)
+{
+
+    if(dtype == MPI_SIGNED_CHAR)     return 1;
+    if(dtype == MPI_CHAR)            return 2;
+    if(dtype == MPI_SHORT)           return 3;
+    if(dtype == MPI_INT)             return 4;
+    if(dtype == MPI_FLOAT)           return 5;
+    if(dtype == MPI_DOUBLE)          return 6;
+    if(dtype == MPI_UNSIGNED_CHAR)   return 7;
+    if(dtype == MPI_UNSIGNED_SHORT)  return 8;
+    if(dtype == MPI_UNSIGNED)        return 9;
+    if(dtype == MPI_LONG_LONG_INT)   return 10;
+    if(dtype == MPI_UNSIGNED_LONG_LONG) return 11;
+
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "Unknown mpi type");
+    MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    return 0;
+}
+
+MPI_Datatype int2mpitype(int num)
+{
+    switch(num){
+        case 1 :      return MPI_SIGNED_CHAR;
+        case 2 :      return MPI_CHAR;
+        case 3 :      return MPI_SHORT;
+        case 4 :      return MPI_INT;
+        case 5 :      return MPI_FLOAT;
+        case 6 :      return MPI_DOUBLE;
+        case 7 :      return MPI_UNSIGNED_CHAR;
+        case 8 :      return MPI_UNSIGNED_SHORT;
+        case 9 :      return MPI_UNSIGNED;
+        case 10 :     return MPI_LONG_LONG_INT;
+        case 11 :     return MPI_UNSIGNED_LONG_LONG;
+        default:
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "Unknown mpi type");
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    return MPI_DATATYPE_NULL;
 }

@@ -37,9 +37,12 @@ MPI_Offset mem_noncontig_write(farb_var_t *var, const MPI_Offset start[], const 
     MPI_Offset written = 0;
     MPI_Offset src_offset = 0;
     contig_mem_chunk_t *chunks, *tmp;
+    int el_sz;
+
+    MPI_Type_size(var->dtype, &el_sz);
 
     int nelems = 0;
-    get_contig_mem_list(var, start, count, &nelems, &chunks);
+    get_contig_mem_list(var, var->dtype, start, count, &nelems, &chunks);
 
     //for(i = 0; i < nelems; i = i+2){
     while(chunks != NULL){
@@ -59,7 +62,7 @@ MPI_Offset mem_noncontig_write(farb_var_t *var, const MPI_Offset start[], const 
             MPI_Offset idx2 = to_1d_index(var->ndims, var->shape, start);
             if(idx2 < idx1){
                 memcpy((void*)var->first_coord, (void*)start, var->ndims*sizeof(MPI_Offset));
-                assert(var->nodes->offset == idx2*var->el_sz);
+                assert(var->nodes->offset == idx2*el_sz);
             }
         }
     }
@@ -167,6 +170,7 @@ MPI_Offset mem_contiguous_write(farb_var_t *var, MPI_Offset offset, MPI_Offset d
 }
 
 static void traverse_dims(farb_var_t *var,
+                          MPI_Datatype dtype,
                           const MPI_Offset count[],
                           const MPI_Offset start[],
                           int dim,
@@ -176,6 +180,7 @@ static void traverse_dims(farb_var_t *var,
 {
     int i;
     if(dim == var->ndims - 1){
+        int def_el_sz, usr_el_sz;
         contig_mem_chunk_t *new_chunk = (contig_mem_chunk_t*)malloc(sizeof(contig_mem_chunk_t));
         assert(new_chunk!=NULL);
 
@@ -194,9 +199,11 @@ static void traverse_dims(farb_var_t *var,
             tmp[i] = coord[i] - start[i];
             //FARB_DBG(VERBOSE_ALL_LEVEL, "coord %d", (int)coord[i]);
         }
-        new_chunk->offset = to_1d_index(var->ndims, var->shape, coord)*var->el_sz; //offset
-        new_chunk->usrbuf_offset = to_1d_index(var->ndims, count, tmp)*var->el_sz; //offset inside the user buffer
-        new_chunk->data_sz = count[var->ndims-1]*var->el_sz;    //data_sz
+        MPI_Type_size(var->dtype, &def_el_sz);
+        MPI_Type_size(dtype, &usr_el_sz);
+        new_chunk->offset = to_1d_index(var->ndims, var->shape, coord)*def_el_sz; //offset
+        new_chunk->usrbuf_offset = to_1d_index(var->ndims, count, tmp)*usr_el_sz; //offset inside the user buffer
+        new_chunk->data_sz = count[var->ndims-1]*def_el_sz;    //data_sz
         new_chunk->next = NULL;
         (*nelems)++;
         free(tmp);
@@ -206,7 +213,7 @@ static void traverse_dims(farb_var_t *var,
 
     for(i = 0; i < count[dim]; i++){
         coord[dim] = start[dim] + i;
-        traverse_dims(var, count, start, dim+1, coord, nelems, list);
+        traverse_dims(var, dtype, count, start, dim+1, coord, nelems, list);
     }
 }
 
@@ -214,6 +221,7 @@ static void traverse_dims(farb_var_t *var,
   the block of data of a multi-dimensional var when it's flattened to a 1d array.
   The data block starts at coordinate start[] and is of size count[].*/
 void get_contig_mem_list(farb_var_t *var,
+                         MPI_Datatype dtype,
                          const MPI_Offset start[],
                          const MPI_Offset count[],
                          int *nelems,
@@ -223,7 +231,7 @@ void get_contig_mem_list(farb_var_t *var,
     memcpy((void*)cur_coord, (void*)start, var->ndims*sizeof(MPI_Offset));
     *list = NULL;
     *nelems = 0;
-    traverse_dims(var, count, start, 0, cur_coord, nelems, list);
+    traverse_dims(var, dtype, count, start, 0, cur_coord, nelems, list);
     free(cur_coord);
 }
 
@@ -232,7 +240,7 @@ MPI_Offset mem_noncontig_read(farb_var_t *var, const MPI_Offset start[], const M
     MPI_Offset readsz = 0, dst_offset = 0;
     contig_mem_chunk_t *chunks, *tmp;
     int nelems = 0;
-    get_contig_mem_list(var, start, count, &nelems, &chunks);
+    get_contig_mem_list(var, var->dtype, start, count, &nelems, &chunks);
 
     while(chunks != NULL){
         readsz += mem_contiguous_read(var, chunks->offset, chunks->data_sz,  (unsigned char*)data+dst_offset);

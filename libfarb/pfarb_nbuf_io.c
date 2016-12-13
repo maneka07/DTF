@@ -62,22 +62,22 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         }
 
     }
-    MPI_Type_size(dtype, &el_sz);
-    assert(el_sz > 0);
-    if(var->el_sz == 0){
-        var->el_sz = (MPI_Offset)el_sz;
-    } else {
-        if(var->el_sz != (MPI_Offset)el_sz)
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Warning: el_sz mismatch (defined as %llu-bit, accessed as %d-bit var). Using the original size.", var->el_sz, el_sz);
-        assert(var->el_sz == (MPI_Offset)el_sz);
+
+    if(var->dtype != dtype){
+        int el_sz1, el_sz2;
+        MPI_Type_size(var->dtype, &el_sz1);
+        MPI_Type_size(dtype, &el_sz2);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Warning: el_sz mismatch (defined as %d-bit, accessed as %d-bit var). Using the original size.", el_sz1, el_sz2);
     }
+    //assert(var->dtype == dtype);
+
 
     /*Create an io request*/
-    req = new_ioreq(fbuf->ioreq_cnt, varid, var->ndims, var->el_sz, start, count, buf, rw_flag, gl_conf.buffered_req_match);
+    req = new_ioreq(fbuf->ioreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
     if(request != NULL)
         *request = req->id;
     fbuf->ioreq_cnt++;
-    get_contig_mem_list(var, start, count, &(req->nchunks), &(req->mem_chunks));
+    get_contig_mem_list(var, dtype, start, count, &(req->nchunks), &(req->mem_chunks));
     assert(req->mem_chunks != NULL);
 
     /*Enqueue the request*/
@@ -89,10 +89,11 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         fbuf->ioreqs = req;
     }
 
+    MPI_Type_size(dtype, &el_sz);
     ret = 1;
     for(i = 0; i < var->ndims; i++)
         ret *= count[i];
-    ret *= var->el_sz;
+    ret *= el_sz;
 
     return ret;
 }

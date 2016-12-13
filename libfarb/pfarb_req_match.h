@@ -17,9 +17,9 @@ typedef struct io_req{
     int                     completed;
     void                    *user_buf;
     //MPI_Offset              user_buf_el_sz;     //In case this does
-//    MPI_Datatype            dtype;                /*need to save the type passed in the request
-//                                                    in case there is mismatch with the type passed
-//                                                    when the var was defined*/
+    MPI_Datatype            dtype;                /*need to save the type passed in the request
+                                                    in case there is mismatch with the type passed
+                                                    when the var was defined*/
     MPI_Offset              user_buf_sz;
     MPI_Offset              *start;
     MPI_Offset              *count;
@@ -76,7 +76,7 @@ typedef struct master_db{
 io_req_t *new_ioreq(int id,
                     int var_id,
                     int ndims,
-                    MPI_Offset el_sz,
+                    MPI_Datatype dtyp,
                     const MPI_Offset *start,
                     const MPI_Offset *count,
                     void *buf,

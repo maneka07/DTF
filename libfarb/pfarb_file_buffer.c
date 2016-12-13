@@ -166,7 +166,7 @@ int has_unlim_dim(farb_var_t *var)
     return ret;
 }
 
-farb_var_t* new_var(int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
+farb_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 {
     int i;
     farb_var_t *var = malloc(sizeof(farb_var_t));
@@ -187,7 +187,7 @@ farb_var_t* new_var(int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape)
     var->ndims = ndims;
     var->distr_count = NULL;
     var->next = NULL;
-    var->el_sz = el_sz;
+    var->dtype = dtype;
     return var;
 }
 

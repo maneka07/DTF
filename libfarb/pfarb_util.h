@@ -60,6 +60,8 @@ typedef struct farb_config{
 
 
 struct file_buffer;
+int mpitype2int(MPI_Datatype dtype);
+MPI_Datatype int2mpitype(int num);
 
 void progress_io();
 void notify_file_ready(file_buffer_t *fbuf);
@@ -67,7 +69,7 @@ void close_file(file_buffer_t *fbuf);
 int file_buffer_ready(const char* filename);
 void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header);
 MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
-int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Offset el_sz, MPI_Offset *shape);
+int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 int set_distr_count(file_buffer_t *fbuf, int varid, int count[]);
 void open_file(file_buffer_t *fbuf);
 MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coord);
