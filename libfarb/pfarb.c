@@ -21,6 +21,7 @@ int gl_verbose;
 int gl_my_rank;
 struct farb_config gl_conf;
 int frt_indexing = 0;
+int matching_flag = 0;
 
 /**
   @brief	Function to initialize the library. Should be called from inside
@@ -56,8 +57,9 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
         fflush(stderr);
         exit(1);
     }
+    gl_conf.malloc_size = 0;
 
-    gl_my_comp_name = (char*)malloc(MAX_COMP_NAME);
+    gl_my_comp_name = (char*)farb_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
     strcpy(gl_my_comp_name, module_name);
 
@@ -128,10 +130,11 @@ _EXTERN_C_ int farb_finalize()
     clean_config();
 
     FARB_DBG(VERBOSE_DBG_LEVEL,"FARB: finalize");
-    free(gl_my_comp_name);
+    farb_free(gl_my_comp_name, MAX_COMP_NAME);
     if(gl_conf.masters != NULL)
-        free(gl_conf.masters);
+        farb_free(gl_conf.masters, gl_conf.nmasters*sizeof(int));
 
+    FARB_DBG(VERBOSE_DBG_LEVEL, "FARB memory leak size: %lu", gl_conf.malloc_size);
     lib_initialized = 0;
     fflush(stdout);
     fflush(stderr);
@@ -269,6 +272,7 @@ _EXTERN_C_ void farb_close(const char* filename)
 /*called inside wait function in pnetcdf*/
 _EXTERN_C_ int farb_match_ioreqs(const char* filename)
 {
+    int ret;
     if(!lib_initialized) return 0;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
@@ -277,12 +281,24 @@ _EXTERN_C_ int farb_match_ioreqs(const char* filename)
 
     /*User will have to explicitly initiate matching*/
     if(fbuf->explicit_match) return 0;
-    //TODO continue from here
-    return match_ioreqs(fbuf);
+
+    if(matching_flag)
+        FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: farb_match_ioreqs is called for file %s, but a matching process has already started before.", fbuf->file_path);
+    matching_flag = 1;
+    ret = match_ioreqs(fbuf, 0);
+    matching_flag = 0;
+
+    return ret;
 }
 
 /*called by user to do explicit matching*/
-_EXTERN_C_ int farb_match_io(const char *filename, int ncid)//, int match_all)
+/*
+    User must specify either filename or ncid.
+    intracomp_io_flag - if set to 1, matching of intracomponent io requests will be
+    performed. This flag is intended for for situation when the writer component
+    tries to read something from the file it is writing.
+*/
+_EXTERN_C_ int farb_match_io(const char *filename, int ncid, int intracomp_io_flag )//, int match_all)
 {
     if(!lib_initialized) return 0;
     if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return 0;
@@ -298,18 +314,34 @@ _EXTERN_C_ int farb_match_io(const char *filename, int ncid)//, int match_all)
         file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
         if(fbuf == NULL){
 
-            if(strlen(filename) == 0)
+            if( (filename != NULL) && (strlen(filename) == 0) )
                 FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: file with ncid %d is not treated by FARB (not in configuration file). Explicit matching ignored.", ncid);
             else
                 FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: file %s (ncid %d) is not treated by FARB (not in configuration file). Explicit matching ignored.", filename, ncid);
             return 0;
+        } else {
+            FARB_DBG(VERBOSE_DBG_LEVEL, "file %s, ncid %d, io flag %d", fbuf->file_path, ncid, intracomp_io_flag);
         }
         if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
         if(!fbuf->explicit_match){
             FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: calling farb_match_io but explicit match for file %s not enabled. Ignored.", filename);
             return 0;
         }
-        match_ioreqs(fbuf);
+
+        if( intracomp_io_flag && (gl_my_comp_id != fbuf->writer_id) ){
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: farb_match_io: intracomp_io_flag(%d) can only be set for the writer component", intracomp_io_flag);
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        }
+        if(matching_flag){
+            FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: farb_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
+            if(intracomp_io_flag){
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: farb_match_io: intracomp_io_flag is set but the process is already matching io. This is not allowed.");
+                MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+            }
+        }
+        matching_flag = 1;
+        match_ioreqs(fbuf, intracomp_io_flag);
+        matching_flag = 0;
   // }
     return 0;
 }
@@ -324,9 +356,11 @@ _EXTERN_C_ void farb_match_io_all(int rw_flag)
         FARB_DBG(VERBOSE_WARNING_LEVEL, "farb_match_io_all() cannot be used in processes that read files. Ignoring.");
         return;
     }
-
+    if(matching_flag)
+        FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: farb_match_io_all is called, but a matching process has already started before.");
+    matching_flag = 1;
     match_ioreqs_all(rw_flag);
-
+    matching_flag = 0;
     return;
 }
 
@@ -379,6 +413,10 @@ _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename,
 
     if( rw_flag != FARB_READ && rw_flag != FARB_WRITE){
         FARB_DBG(VERBOSE_ERROR_LEVEL, "rw_flag value incorrect (%d)", rw_flag);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    if(rw_flag==FARB_WRITE && fbuf->reader_id == gl_my_comp_id){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: reader component cannot write to the file %s", fbuf->file_path);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     switch(gl_conf.distr_mode){
@@ -441,7 +479,7 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Data
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     if(frt_indexing && ndims > 0){
-        MPI_Offset *cshape = (MPI_Offset*)malloc(sizeof(MPI_Offset)*ndims);
+        MPI_Offset *cshape = (MPI_Offset*)farb_malloc(sizeof(MPI_Offset)*ndims);
         assert(cshape != NULL);
 
         for(i = 0; i < ndims; i++)
@@ -450,7 +488,7 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Data
             else
                 cshape[i] = 0;
         ret = def_var(fbuf, varid, ndims, dtype, cshape);
-        free(cshape);
+        farb_free(cshape, sizeof(MPI_Offset)*ndims);
     } else
       ret = def_var(fbuf, varid, ndims, dtype, shape);
 
@@ -480,12 +518,12 @@ void farb_finalize_(int* ierr)
     *ierr = farb_finalize();
 }
 
-void farb_match_io_(const char *filename, int ncid, int *ierr)
+void farb_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int *ierr)
 {
-    *ierr = farb_match_io(filename, ncid);
+    *ierr = farb_match_io(filename, *ncid, *intracomp_io_flag);
 }
 
-void farb_match_io_all_(int rw_flag)
+void farb_match_io_all_(int *rw_flag)
 {
-    farb_match_io_all(rw_flag);
+    farb_match_io_all(*rw_flag);
 }

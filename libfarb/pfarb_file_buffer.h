@@ -59,7 +59,9 @@ typedef struct file_buffer{
   struct io_req             *ioreqs;           /*Read or write I/O requests*/
   int                       explicit_match;   /*0 - request matching is initiated from inside of pnetcdf;
                                                 1 - request matching is initiated by the user*/
-  int                       ioreq_cnt;         /*Request counter, will be used to assign a unique id to io requests.*/
+  //int                       ioreq_cnt;         /*Request counter, will be used to assign a unique id to io requests.*/
+  unsigned int              rreq_cnt;
+  unsigned int              sreq_cnt;
   int                       done_matching_flag;     /*Flag used to complete matching requests*/
   int                       fclosed_flag;           /*Flag set to 1 when reader closes the file*/
   struct master_db          *iodb;             /*Relevant only for masters. They store requests from readers and info from writers*/

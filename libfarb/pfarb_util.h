@@ -4,6 +4,7 @@
 #include <mpi.h>
 #include "pfarb_file_buffer.h"
 
+#define MAX_WORKGROUP_SIZE     1024
 
 #define CONNECT_MODE_SERVER     1
 #define CONNECT_MODE_CLIENT     0
@@ -11,19 +12,16 @@
 #define MAX_COMP_NAME 32
 #define ASCIILINESZ   1024
 
-//TODO if we decide not to implement a mixed writer-side-buffering + reader-side-req-matching
-//then these tag definitions should be moved to corresponding .c files
 #define FILE_READY_TAG      0       /*writer rank -> reader rank*/
 #define RECV_READY_TAG      1       /*reader rank -> writer rank*/
-#define HEADER_TAG          3       /*writer -> reader*/
-#define VARS_TAG            4       /*writer -> reader*/
-#define IO_WRITE_REQ_TAG    5       /*writer rank -> master rank*/
-#define IO_READ_REQ_TAG     6       /*reader -> master*/
-#define IO_DATA_REQ_TAG     7       /*master -> writer*/
-#define IO_DATA_TAG         8       /*writer -> reader*/
-#define IO_DONE_TAG         9       /*reader->master, master->writers*/
-#define IO_CLOSE_FILE_TAG       10      /*reader->master, master->writers*/
-#define NODE_TAG            11      /*This tag should be always last!!*/
+#define HEADER_TAG          2       /*writer -> reader*/
+#define VARS_TAG            3       /*writer -> reader*/
+#define IO_REQ_TAG          4       /*writer rank / reader rank -> master rank*/
+#define IO_DATA_REQ_TAG     5       /*master -> writer*/
+#define IO_DATA_TAG         6       /*writer -> reader*/
+#define IO_DONE_TAG         7       /*reader->master, master->writers*/
+#define IO_CLOSE_FILE_TAG   8      /*reader->master, master->writers*/
+#define NODE_TAG            9      /*This tag should be always last!!*/
 
 /*
     DISTR_MODE_STATIC - configure data distribution through config file and
@@ -54,6 +52,7 @@ typedef struct farb_config{
     int *masters;   /*Ranks of master nodes on the writer's side*/
     unsigned int my_workgroup_sz;
     int buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
+    size_t malloc_size;
 }farb_config_t;
 
 
@@ -74,4 +73,6 @@ int set_distr_count(file_buffer_t *fbuf, int varid, int count[]);
 void open_file(file_buffer_t *fbuf);
 MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coord);
 MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape);
+void* farb_malloc(size_t size);
+void farb_free(void *ptr, size_t size);
 #endif

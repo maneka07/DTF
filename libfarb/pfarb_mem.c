@@ -11,7 +11,7 @@
 //    int i;
 //    MPI_Offset written = 0;
 //    if(dim == var->ndims - 1){
-//        MPI_Offset *dst_coord = (MPI_Offset*)malloc(var->ndims*sizeof(MPI_Offset));
+//        MPI_Offset *dst_coord = (MPI_Offset*)farb_malloc(var->ndims*sizeof(MPI_Offset));
 //        assert(dst_coord != NULL);
 //        MPI_Offset data_sz = count[var->ndims-1]*var->el_sz;
 //        //printf("%d %d %d\n", coord[0], coord[1], coord[2]);
@@ -21,7 +21,7 @@
 //          dst_coord[i] = coord[i] + start[i];
 //        FARB_DBG(VERBOSE_ALL_LEVEL, "will write %llu bytes from el %llu (%llu)", data_sz, src_start_idx, src_offt);
 //        written = mem_write(var, dst_coord, data_sz, data+src_offt);
-//        free(dst_coord);
+//        farb_free(dst_coord);
 //        return written;
 //    }
 //
@@ -50,11 +50,11 @@ MPI_Offset mem_noncontig_write(farb_var_t *var, const MPI_Offset start[], const 
         src_offset += chunks->data_sz;
         tmp = chunks;
         chunks = chunks->next;
-        free(tmp);
+        farb_free(tmp, sizeof(contig_mem_chunk_t));
     }
     if((var->ndims > 0) && (nelems > 0)){
         if(var->first_coord == NULL){
-            var->first_coord = (MPI_Offset*)malloc(var->ndims*sizeof(MPI_Offset));
+            var->first_coord = (MPI_Offset*)farb_malloc(var->ndims*sizeof(MPI_Offset));
             assert(var->first_coord != NULL);
             memcpy((void*)var->first_coord, (void*)start, var->ndims*sizeof(MPI_Offset));
         } else {
@@ -133,6 +133,7 @@ MPI_Offset mem_contiguous_write(farb_var_t *var, MPI_Offset offset, MPI_Offset d
             tmp = realloc(node->data, node->data_sz + ext_sz);
             assert(tmp != NULL);
             node->data = tmp;
+            gl_conf.malloc_size += ext_sz;
             to_cpy = ext_sz;
             FARB_DBG(VERBOSE_ALL_LEVEL, "Copy %d to node with offt %d (sz %d) at node offt %d",
                     (int)to_cpy, (int)node->offset, (int)node->data_sz+(int)ext_sz, (int)(offset - node->offset));
@@ -147,6 +148,7 @@ MPI_Offset mem_contiguous_write(farb_var_t *var, MPI_Offset offset, MPI_Offset d
                 if( (node->next != NULL) && (offset+left > node->next->offset))
                     ext_sz = node->next->offset - (node->offset + node->data_sz); //adjust
                 tmp = realloc(node->data, node->data_sz + ext_sz);
+                gl_conf.malloc_size += ext_sz;
                 assert(tmp != NULL);
                 node->data = tmp;
                 node->data_sz += ext_sz;
@@ -181,7 +183,7 @@ static void traverse_dims(farb_var_t *var,
     int i;
     if(dim == var->ndims - 1){
         int def_el_sz, usr_el_sz;
-        contig_mem_chunk_t *new_chunk = (contig_mem_chunk_t*)malloc(sizeof(contig_mem_chunk_t));
+        contig_mem_chunk_t *new_chunk = (contig_mem_chunk_t*)farb_malloc(sizeof(contig_mem_chunk_t));
         assert(new_chunk!=NULL);
 
         if(*list == NULL){
@@ -193,7 +195,7 @@ static void traverse_dims(farb_var_t *var,
                 tmp = tmp->next;
             tmp->next = new_chunk;
         }
-        MPI_Offset *tmp = (MPI_Offset*)malloc(var->ndims*sizeof(MPI_Offset));
+        MPI_Offset *tmp = (MPI_Offset*)farb_malloc(var->ndims*sizeof(MPI_Offset));
         assert(tmp != NULL);
         for(i = 0; i < var->ndims; i++){
             tmp[i] = coord[i] - start[i];
@@ -206,7 +208,7 @@ static void traverse_dims(farb_var_t *var,
         new_chunk->data_sz = count[var->ndims-1]*def_el_sz;    //data_sz
         new_chunk->next = NULL;
         (*nelems)++;
-        free(tmp);
+        farb_free(tmp, var->ndims*sizeof(MPI_Offset));
         FARB_DBG(VERBOSE_ALL_LEVEL,"Added a tuple (off %d, uoff %d, sz %d)", (int)new_chunk->offset, (int)new_chunk->usrbuf_offset, (int)new_chunk->data_sz);
         return;
     }
@@ -227,12 +229,12 @@ void get_contig_mem_list(farb_var_t *var,
                          int *nelems,
                          contig_mem_chunk_t **list)
 {
-    MPI_Offset *cur_coord = (MPI_Offset*)malloc(var->ndims*sizeof(MPI_Offset));
+    MPI_Offset *cur_coord = (MPI_Offset*)farb_malloc(var->ndims*sizeof(MPI_Offset));
     memcpy((void*)cur_coord, (void*)start, var->ndims*sizeof(MPI_Offset));
     *list = NULL;
     *nelems = 0;
     traverse_dims(var, dtype, count, start, 0, cur_coord, nelems, list);
-    free(cur_coord);
+    farb_free(cur_coord, var->ndims*sizeof(MPI_Offset));
 }
 
 MPI_Offset mem_noncontig_read(farb_var_t *var, const MPI_Offset start[], const MPI_Offset count[], void *data)
@@ -247,7 +249,7 @@ MPI_Offset mem_noncontig_read(farb_var_t *var, const MPI_Offset start[], const M
         dst_offset += chunks->data_sz;
         tmp = chunks;
         chunks = chunks->next;
-        free(tmp);
+        farb_free(tmp, sizeof(contig_mem_chunk_t));
     }
 
     return readsz;

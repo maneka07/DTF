@@ -297,7 +297,7 @@ void clean_config(){
     file_buffer_t *tmp;
 
     if(gl_comps != NULL)
-        free(gl_comps);
+        farb_free(gl_comps, gl_ncomp*sizeof(component_t));
 
     while(gl_filebuf_list != NULL){
         tmp = gl_filebuf_list;
@@ -407,7 +407,7 @@ int load_config(const char *ini_name, const char *comp_name){
                 FARB_DBG(VERBOSE_ERROR_LEVEL,   "FARB Error: invalid number of components.");
                 goto panic_exit;
             }
-            gl_comps = (struct component*)malloc(gl_ncomp*sizeof(struct component));
+            gl_comps = (struct component*)farb_malloc(gl_ncomp*sizeof(struct component));
             assert(gl_comps!=NULL);
             for(i = 0; i<gl_ncomp; i++){
                 gl_comps[i].id = i;
@@ -599,6 +599,8 @@ int init_comp_comm(){
 
     int i, err;
     char *s;
+    int var = -1;
+
     if(gl_comps == NULL || gl_ncomp == 1)
         return 0;
 
@@ -618,6 +620,16 @@ int init_comp_comm(){
             goto panic_exit;
     }
 
+    if(gl_my_comp_id == 0){
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Sending val to intercomm");
+        var = gl_my_rank;
+        err = MPI_Send(&var, 1, MPI_INT, gl_my_rank, 777, gl_comps[1].comm);
+        CHECK_MPI(err);
+    } else {
+        err = MPI_Recv(&var, 1, MPI_INT, gl_my_rank, 777, gl_comps[0].comm, MPI_STATUS_IGNORE);
+        CHECK_MPI(err);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Received val %d", var);
+    }
     return 0;
 
 panic_exit:
@@ -648,7 +660,7 @@ int init_data_distr()
         if(gl_conf.distr_mode == DISTR_MODE_STATIC){
             if(fbuf->distr_rule == DISTR_RULE_P2P){
                 fbuf->distr_nranks = 1;
-                fbuf->distr_ranks = malloc(sizeof(int));
+                fbuf->distr_ranks = farb_malloc(sizeof(int));
                 assert(fbuf->distr_ranks != NULL);
                 *(fbuf->distr_ranks) = gl_my_rank;
             } else if(fbuf->distr_rule == DISTR_RULE_RANGE){
@@ -659,7 +671,7 @@ int init_data_distr()
                 MPI_Comm_size(MPI_COMM_WORLD, &nranks);
                 fbuf->distr_nranks = (int)(nranks/fbuf->distr_range);
                 assert(fbuf->distr_nranks > 0);
-                fbuf->distr_ranks = (int*)malloc(fbuf->distr_nranks*sizeof(int));
+                fbuf->distr_ranks = (int*)farb_malloc(fbuf->distr_nranks*sizeof(int));
                 assert(fbuf->distr_ranks != NULL);
                 fbuf->distr_ranks[0] = gl_my_rank % fbuf->distr_range; //
                 int i = 1;
@@ -707,27 +719,33 @@ int init_req_match_masters()
             gl_conf.my_master = (int)(myrank/wg) * wg;
             gl_conf.my_workgroup_sz = wg;
             gl_conf.nmasters = (int)(nranks/wg);
-            if(gl_conf.nmasters == 0)
+            if(nranks % wg > 0){
                 gl_conf.nmasters++;
-            else if(nranks % wg > (int)(wg/2) ){
-                if(myrank >= gl_conf.nmasters * wg){
-                    gl_conf.my_master = gl_conf.nmasters * wg;
+                if(myrank >= (gl_conf.nmasters-1)*wg)
                     gl_conf.my_workgroup_sz = nranks % wg;
-                }
-                gl_conf.nmasters++;
-            } else if ( (nranks % wg > 0) && (myrank >= (gl_conf.nmasters-1)*wg)){
-                /*Merge last smaller group with the previous group*/
-                gl_conf.my_master = (gl_conf.nmasters-1) * wg;
-                gl_conf.my_workgroup_sz = wg + nranks % wg;
             }
+//            if(gl_conf.nmasters == 0)
+//                gl_conf.nmasters++;
+//            else if(nranks % wg > (int)(wg/2) ){
+//                if(myrank >= gl_conf.nmasters * wg){
+//                    gl_conf.my_master = gl_conf.nmasters * wg;
+//                    gl_conf.my_workgroup_sz = nranks % wg;
+//                }
+//                gl_conf.nmasters++;
+//            } else if ( (nranks % wg > 0) && (myrank >= (gl_conf.nmasters-1)*wg)){
+//                /*Merge last smaller group with the previous group*/
+//                gl_conf.my_master = (gl_conf.nmasters-1) * wg;
+//                gl_conf.my_workgroup_sz = wg + nranks % wg;
+//            }
         }
         FARB_DBG(VERBOSE_ALL_LEVEL, "My master %d, my wg size %d", gl_conf.my_master, gl_conf.my_workgroup_sz);
         if(gl_my_rank == 0)
             FARB_DBG(VERBOSE_ALL_LEVEL, "Nmasters %d", gl_conf.nmasters);
 
-        gl_conf.masters = (int*)malloc(gl_conf.nmasters * sizeof(int));
+        gl_conf.masters = (int*)farb_malloc(gl_conf.nmasters * sizeof(int));
         assert(gl_conf.masters != NULL);
         gl_conf.masters[0] = 0;
+        FARB_DBG(VERBOSE_ALL_LEVEL, "Rank %d is a master", gl_conf.masters[0]);
         for(i = 1; i < gl_conf.nmasters; i++){
             gl_conf.masters[i] = gl_conf.masters[i-1] + wg;
             FARB_DBG(VERBOSE_ALL_LEVEL, "Rank %d is a master", gl_conf.masters[i]);

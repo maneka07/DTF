@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <string.h>
+#include "pfarb_util.h"
 #include "pfarb_req_match.h"
 #include "pfarb_file_buffer.h"
 #include "pfarb.h"
@@ -14,8 +15,9 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
     {
        if((ncid != -1) && (ptr->ncid == ncid))
                 break;
-       if( (file_path != NULL && strlen(file_path)!=0 && strstr(file_path, ptr->file_path)!=NULL) ||
-                (strlen(ptr->alias_name)!=0 && strstr(file_path, ptr->alias_name)!=NULL) )
+       if( (file_path != NULL) &&
+           ( (strlen(file_path)!=0 && strstr(file_path, ptr->file_path)!=NULL) ||
+             (strlen(ptr->alias_name)!=0 && strstr(file_path, ptr->alias_name)!=NULL) ) )
                 break;
 
         ptr = ptr->next;
@@ -68,17 +70,17 @@ static void delete_var(farb_var_t *var)
    buffer_node_t *node = var->nodes;
 
     while(node != NULL){
-        free(node->data);
+        farb_free(node->data, node->data_sz);
         var->nodes = var->nodes->next;
-        free(node);
+        farb_free(node, sizeof(buffer_node_t));
         node = var->nodes;
     }
 
     if(var->distr_count != NULL)
-        free(var->distr_count);
+        farb_free(var->distr_count, var->ndims*sizeof(MPI_Offset));
     if(var->first_coord != NULL)
-        free(var->distr_count);
-    free(var);
+        farb_free(var->first_coord, var->ndims*sizeof(MPI_Offset));
+    farb_free(var, sizeof(farb_var_t));
 }
 
 void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
@@ -92,7 +94,7 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
     assert(buflist != NULL);
 
     if(fbuf->header != NULL)
-        free(fbuf->header);
+        farb_free(fbuf->header, fbuf->hdr_sz);
 
     var = fbuf->vars;
     while(var != NULL){
@@ -103,10 +105,10 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
 
     if(fbuf->iodb != NULL){
         clean_iodb(fbuf->iodb);
-        free(fbuf->iodb);
+        farb_free(fbuf->iodb, sizeof(master_db_t));
     }
 
-    free(fbuf->distr_ranks);
+    farb_free(fbuf->distr_ranks, fbuf->distr_nranks*sizeof(int));
 
     if(*buflist == fbuf)
         *buflist = fbuf->next;
@@ -117,14 +119,14 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
         prev->next = fbuf->next;
     }
 
-    free(fbuf);
+    farb_free(fbuf, sizeof(file_buffer_t));
 }
 
 file_buffer_t* new_file_buffer()
 {
     file_buffer_t *buf;
 
-    buf = (file_buffer_t*)malloc(sizeof(struct file_buffer));
+    buf = (file_buffer_t*)farb_malloc(sizeof(struct file_buffer));
     assert( buf != NULL );
     buf->file_path[0]='\0';
     buf->alias_name[0]='\0';
@@ -145,7 +147,9 @@ file_buffer_t* new_file_buffer()
     buf->distr_ranks = NULL;
     buf->distr_ndone = 0;
     buf->hdr_sent_flag = 0;
-    buf->ioreq_cnt = 0;
+    //buf->ioreq_cnt = 0;
+    buf->rreq_cnt = 0;
+    buf->sreq_cnt = 0;
     buf->ioreqs = NULL;
     buf->iodb = NULL;
     buf->ncid = -1;
@@ -169,7 +173,7 @@ int has_unlim_dim(farb_var_t *var)
 farb_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 {
     int i;
-    farb_var_t *var = malloc(sizeof(farb_var_t));
+    farb_var_t *var = (farb_var_t*)farb_malloc(sizeof(farb_var_t));
     assert(var!=NULL);
 
     /*Initialize whatever we can initialize at this stage*/
@@ -177,7 +181,7 @@ farb_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
     var->node_cnt=0;
     var->id = varid;
     if(ndims > 0){ //non scalar
-        var->shape = (MPI_Offset*)malloc(ndims*sizeof(MPI_Offset));
+        var->shape = (MPI_Offset*)farb_malloc(ndims*sizeof(MPI_Offset));
         for(i=0; i<ndims;i++)
             var->shape[i] = shape[i];
     }

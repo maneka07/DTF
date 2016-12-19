@@ -50,15 +50,15 @@ _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename,
                                           int rw_flag,
                                           int *request);
 _EXTERN_C_ int farb_match_ioreqs(const char* filename);
-_EXTERN_C_ int farb_match_io(const char *filename, int ncid);
+_EXTERN_C_ int farb_match_io(const char *filename, int ncid, int intracomp_io_flag);
 _EXTERN_C_ void farb_match_io_all(int rw_flag);
 _EXTERN_C_ void farb_enddef(const char *filename);
 
 /*     Fortran interfaces    */
 void farb_init_(const char *filename, char *module_name, int* ierr);
 void farb_finalize_(int* ierr);
-void farb_match_io_(const char *filename, int ncid, int *ierr);
-void farb_match_io_all_(int rw_flag);
+void farb_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int *ierr);
+void farb_match_io_all_(int *rw_flag);
 
 
 #endif // FARB_H_INCLUDED

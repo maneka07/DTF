@@ -12,9 +12,11 @@ typedef struct contig_mem_chunk{
 }contig_mem_chunk_t;
 
 typedef struct io_req{
-    int                     id;
+    unsigned int            id;
     int                     var_id;
     int                     completed;
+    int                     sent_flag;  /*set to 1 if this req has already been forwarded to the master*/
+    int                     rw_flag;
     void                    *user_buf;
     //MPI_Offset              user_buf_el_sz;     //In case this does
     MPI_Datatype            dtype;                /*need to save the type passed in the request
@@ -59,6 +61,7 @@ typedef struct read_chunk_rec{
 
 typedef struct read_db_item{
     int                     rank;
+    MPI_Comm                comm;   /*Both writer and reader may read the file, hence, need to distinguish.*/
     MPI_Offset              nchunks;
     struct read_chunk_rec   *chunks;
     struct read_db_item     *next;
@@ -87,9 +90,9 @@ io_req_t *new_ioreq(int id,
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
 void progress_io_matching();
 void send_file_info(file_buffer_t *fbuf);
-void send_ioreq(int ncid, io_req_t *ioreq, int rw_flag);
+void send_ioreq(int ncid, io_req_t *ioreq);
 void clean_iodb(master_db_t *iodb);
-int  match_ioreqs(file_buffer_t *fbuf);
+int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
 void match_ioreqs_all(int rw_flag);
 
 #endif // PFARB_REQ_MATCH_H_INCLUDED

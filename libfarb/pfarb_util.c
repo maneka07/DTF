@@ -93,7 +93,7 @@ void progress_io()
                     MPI_Get_count(&status, MPI_BYTE, &bufsz);
                     fbuf->hdr_sz = (MPI_Offset)bufsz;
                     FARB_DBG(VERBOSE_DBG_LEVEL, "Hdr size to receive %d", bufsz);
-                    fbuf->header = malloc((size_t)bufsz);
+                    fbuf->header = farb_malloc((size_t)bufsz);
                     assert(fbuf->header != NULL);
                     errno = MPI_Recv(fbuf->header, bufsz, MPI_BYTE, src, HEADER_TAG, gl_comps[i].comm, &status);
                     CHECK_MPI(errno);
@@ -135,12 +135,12 @@ MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape)
 
     if(ndims > 0){
         int i;
-        MPI_Offset *tmp = (MPI_Offset*)malloc(ndims*sizeof(MPI_Offset));
+        MPI_Offset *tmp = (MPI_Offset*)farb_malloc(ndims*sizeof(MPI_Offset));
         assert(tmp != NULL);
         for(i = 0; i < ndims; i++)
             tmp[i] = shape[i] - 1;
         ret = to_1d_index(ndims, shape, tmp);
-        free(tmp);
+        farb_free(tmp, ndims*sizeof(MPI_Offset));
     }
 
     return ret;
@@ -214,14 +214,16 @@ void close_file(file_buffer_t *fbuf)
         } else if((fbuf->iomode == FARB_IO_MODE_MEMORY) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH)){
             while( !fbuf->fclosed_flag)
                 progress_io_matching();
-            assert(fbuf->ioreq_cnt == 0);
+            assert(fbuf->rreq_cnt == 0);
+            assert(fbuf->sreq_cnt == 0);
         }
     } else if (fbuf->reader_id == gl_my_comp_id){
         if((fbuf->iomode == FARB_IO_MODE_MEMORY) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH)){
             /*Reader ranks synch to ensure that all read requests have been completed*/
 //            FARB_DBG(VERBOSE_DBG_LEVEL, "Synchronize before closing the file %s", fbuf->file_path);
 //            MPI_Barrier(gl_comps[gl_my_comp_id].comm);
-            assert(fbuf->ioreq_cnt == 0);
+            assert(fbuf->rreq_cnt == 0);
+            assert(fbuf->sreq_cnt == 0);
             /*Notify writers they can delete their write requests*/
             errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, gl_conf.my_master, IO_CLOSE_FILE_TAG, gl_comps[fbuf->writer_id].comm);
             CHECK_MPI(errno);
@@ -269,7 +271,7 @@ void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header)
 {
     FARB_DBG(VERBOSE_DBG_LEVEL, "Writing header (sz %d)", (int)hdr_sz);
     fbuf->hdr_sz = hdr_sz;
-    fbuf->header = malloc(hdr_sz);
+    fbuf->header = farb_malloc(hdr_sz);
     assert(fbuf->header != NULL);
     memcpy(fbuf->header, header, (size_t)hdr_sz);
     return;
@@ -327,4 +329,17 @@ MPI_Datatype int2mpitype(int num)
             MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     return MPI_DATATYPE_NULL;
+}
+
+void* farb_malloc(size_t size)
+{
+    gl_conf.malloc_size += size;
+    return malloc(size);
+}
+
+void farb_free(void *ptr, size_t size)
+{
+    gl_conf.malloc_size -= size;
+    free(ptr);
+    return;
 }

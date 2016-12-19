@@ -29,7 +29,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
             }
         } else{
             FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: writer process tries to read file %s (var %d)", fbuf->file_path, varid);
-            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+            //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
         }
     }
     if(imap != NULL){
@@ -67,16 +67,19 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         int el_sz1, el_sz2;
         MPI_Type_size(var->dtype, &el_sz1);
         MPI_Type_size(dtype, &el_sz2);
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Warning: el_sz mismatch (defined as %d-bit, accessed as %d-bit var). Using the original size.", el_sz1, el_sz2);
+        FARB_DBG(VERBOSE_ALL_LEVEL, "Warning: el_sz mismatch (defined as %d-bit, accessed as %d-bit var). Using the original size.", el_sz1, el_sz2);
     }
     //assert(var->dtype == dtype);
 
 
     /*Create an io request*/
-    req = new_ioreq(fbuf->ioreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
+    req = new_ioreq(fbuf->rreq_cnt+fbuf->sreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
     if(request != NULL)
         *request = req->id;
-    fbuf->ioreq_cnt++;
+    if(rw_flag == FARB_READ)
+        fbuf->rreq_cnt++;
+    else
+        fbuf->sreq_cnt++;
     get_contig_mem_list(var, dtype, start, count, &(req->nchunks), &(req->mem_chunks));
     assert(req->mem_chunks != NULL);
 

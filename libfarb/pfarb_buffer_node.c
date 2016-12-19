@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <string.h>
 #include "pfarb_common.h"
+#include "pfarb_util.h"
 
 void print_nodes(buffer_node_t* nodes){
     buffer_node_t *tmp = nodes;
@@ -12,12 +13,12 @@ void print_nodes(buffer_node_t* nodes){
     }
 }
 
-buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz, int malloc_flag)
+buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz, int farb_malloc_flag)
 {
-    buffer_node_t *node = malloc(sizeof(buffer_node_t));
+    buffer_node_t *node = farb_malloc(sizeof(buffer_node_t));
     assert(node != NULL);
-    if(malloc_flag){
-        node->data = malloc((size_t)data_sz);
+    if(farb_malloc_flag){
+        node->data = farb_malloc((size_t)data_sz);
         assert(node->data != NULL);
     } else
         node->data = NULL;

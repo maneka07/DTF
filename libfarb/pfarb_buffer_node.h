@@ -16,7 +16,7 @@ typedef struct buffer_node{
     struct buffer_node *prev;
 }buffer_node_t;
 
-buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz, int malloc_flag);
+buffer_node_t* new_buffer_node(MPI_Offset offset, MPI_Offset data_sz, int farb_malloc_flag);
 buffer_node_t* find_buffer_node(buffer_node_t* nodelist, MPI_Offset offset);
 void insert_buffer_node(buffer_node_t** list, buffer_node_t* node);
 int data_present_at_offt(buffer_node_t *list, MPI_Offset offset);

@@ -131,7 +131,7 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
             offt += sizeof(int);
 
             if(var->ndims > 0){
-                var->shape = malloc(var->ndims*sizeof(MPI_Offset));
+                var->shape = farb_malloc(var->ndims*sizeof(MPI_Offset));
                 assert(var->shape != NULL);
                 memcpy((void*)var->shape, chbuf+offt, sizeof(MPI_Offset)*var->ndims);
                 offt += sizeof(MPI_Offset)*var->ndims;
@@ -163,11 +163,13 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
             }
         } else { /*DIST_PATTERN_SCATTER*/
             if(ncnt != 0) {
+                MPI_Offset *tmp;
                 (*node_cnt)++;
                 /*Only unpack the info about distr_count[] and first_coord[]*/
-                MPI_Offset *tmp = (MPI_Offset*)realloc(var->distr_count, var->ndims*sizeof(MPI_Offset));
-                assert(tmp != NULL);
-                var->distr_count = tmp;
+                assert(var->distr_count == NULL);
+                var->distr_count = (MPI_Offset*)farb_malloc(var->ndims*sizeof(MPI_Offset));
+                assert(var->distr_count != NULL);
+
                 memcpy((void*)var->distr_count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
                 offt += var->ndims*sizeof(MPI_Offset);
 
@@ -175,6 +177,7 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
                 tmp = (MPI_Offset*)realloc(*first_el_coord, first_el_coord_sz*sizeof(MPI_Offset));
                 assert(tmp != NULL);
                 *first_el_coord = tmp;
+                gl_conf.malloc_size += var->ndims*sizeof(MPI_Offset);
 
                 // need to remember the coordinate of the first (corner) element to be able to unpack
                 // contiguous 1D buffer into multi-dimensional nodes
@@ -184,7 +187,7 @@ static void unpack_vars(file_buffer_t *fbuf, int buf_sz, void *buf, MPI_Offset *
                 }
             } else {
                 if(var->distr_count != NULL) //could be allocated during recv from another writer rank
-                    free(var->distr_count);
+                    farb_free(var->distr_count, var->ndims*sizeof(MPI_Offset));
                 var->distr_count = NULL;
             }
         }
@@ -210,20 +213,20 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
     /*Receive vars*/
     MPI_Probe(rank, VARS_TAG, intercomm, &status);
     MPI_Get_count(&status, MPI_UNSIGNED_CHAR, &buf_sz);
-    buf = malloc((size_t)buf_sz);
+    buf = farb_malloc((size_t)buf_sz);
     assert(buf != NULL);
     errno = MPI_Recv(buf, buf_sz, MPI_UNSIGNED_CHAR, rank, VARS_TAG, intercomm, &status);
     CHECK_MPI(errno);
 
     unpack_vars(fbuf, buf_sz, buf, &node_cnt, &first_el_coord);
-    free(buf);
+    farb_free(buf, buf_sz);
     /*Receive memory nodes*/
     var = fbuf->vars;
 
     if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
         FARB_DBG(VERBOSE_DBG_LEVEL, "Will recv %d nodes", (int)node_cnt);
         MPI_Request *reqs = NULL;
-        reqs = (MPI_Request*)malloc(sizeof(MPI_Request)*node_cnt);
+        reqs = (MPI_Request*)farb_malloc(sizeof(MPI_Request)*node_cnt);
         assert(reqs != NULL);
         ncnt = 0;
 
@@ -237,7 +240,7 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
                     continue;
                 }
                 FARB_DBG(VERBOSE_ALL_LEVEL, "Receive node sz %d offt %d", (int)node->data_sz, (int)node->offset);
-                node->data = malloc((size_t)node->data_sz);
+                node->data = farb_malloc((size_t)node->data_sz);
                 assert(node->data != NULL);
                 errno = MPI_Irecv(node->data, (int)node->data_sz, MPI_BYTE, rank, NODE_TAG+ncnt, intercomm, &reqs[ncnt]);
                 CHECK_MPI(errno);
@@ -252,10 +255,10 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
         }
         errno = MPI_Waitall(node_cnt, reqs, MPI_STATUSES_IGNORE);
         CHECK_MPI(errno);
-        free(reqs);
+        farb_free(reqs, sizeof(MPI_Request)*node_cnt);
     } else { /*DISTR_PATTERN_SCATTER*/
         void *rbuf = NULL, *tmp;
-        int bufsz;
+        int bufsz = 0;
         int first_el_coord_sz = 0;
         MPI_Offset written;
         int el_sz;
@@ -265,6 +268,7 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
                 var = var->next;
                 continue;
             }
+            gl_conf.malloc_size -= bufsz;
             bufsz = 1;
             for(i = 0; i < var->ndims; i++)
                 bufsz *= (int)var->distr_count[i];
@@ -272,6 +276,7 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
             bufsz *= el_sz;
             tmp = realloc(rbuf, bufsz);
             assert(tmp != NULL);
+            gl_conf.malloc_size += bufsz;
             rbuf = tmp;
             FARB_DBG(VERBOSE_ALL_LEVEL, "Try to recv node of sz %d", (int)bufsz);
             errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, rank, NODE_TAG+ncnt, intercomm, MPI_STATUS_IGNORE);
@@ -283,7 +288,7 @@ int receive_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
             ncnt++;
             var = var->next;
         }
-        free(rbuf);
+        farb_free(rbuf, bufsz);
     }
     assert(ncnt == (int)node_cnt);
     return 0;
@@ -309,7 +314,7 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
 
     FARB_DBG(VERBOSE_DBG_LEVEL, "Packing vars: sz %lu", sz);
 
-    *buf = malloc(sz);
+    *buf = farb_malloc(sz);
     assert(*buf != NULL);
     *node_cnt = 0;
     chbuf = (unsigned char*)(*buf);
@@ -380,6 +385,7 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
                 MPI_Offset *coord = (MPI_Offset*)realloc(*first_el_coord, first_el_coord_sz*sizeof(MPI_Offset));
                 assert(coord != NULL);
                 *first_el_coord = coord;
+                gl_conf.malloc_size += var->ndims*sizeof(MPI_Offset);
 
                 coord = &( (*first_el_coord)[first_el_coord_sz - var->ndims] );
                 /*First, find out the coordinate of the start element to send*/
@@ -448,7 +454,6 @@ static void pack_vars(file_buffer_t *fbuf, int dst_rank, int *buf_sz, void **buf
 int set_distr_count(file_buffer_t *fbuf, int varid, int count[])
 {
     int i;
-    MPI_Offset *cnt;
     if(fbuf->distr_pattern != DISTR_PATTERN_SCATTER){
         FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: cannot set distribute count. File's distribute pattern must be <scatter>.");
         return 0;
@@ -459,10 +464,9 @@ int set_distr_count(file_buffer_t *fbuf, int varid, int count[])
         FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: set_distr_count(): No variable with such id (%d). Ignored.", varid);
         return 1;
     }
-
-    cnt = (MPI_Offset*)realloc(var->distr_count, var->ndims*sizeof(MPI_Offset));
-    assert(cnt != NULL);
-    var->distr_count = cnt;
+    assert(var->distr_count == NULL);
+    var->distr_count = (MPI_Offset*)farb_malloc(var->ndims*sizeof(MPI_Offset));
+    assert(var->distr_count != NULL);
     for(i = 0; i < var->ndims; i++)
         var->distr_count[i] = (MPI_Offset)count[i];
 
@@ -492,9 +496,13 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
 
     if(fbuf->distr_pattern == DISTR_PATTERN_ALL) {
         MPI_Request *reqs = NULL, *tmp;
+        size_t sz = 0;
         while(var != NULL){
-            tmp = (MPI_Request*)realloc(reqs, sizeof(MPI_Request)*(int)var->node_cnt);
+            gl_conf.malloc_size -= sz;
+            sz = sizeof(MPI_Request)*(int)var->node_cnt;
+            tmp = (MPI_Request*)realloc(reqs, sz);
             assert(tmp != NULL);
+            gl_conf.malloc_size += sz;
             reqs = tmp;
 
             node = var->nodes;
@@ -510,10 +518,10 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
             CHECK_MPI(errno);
             var = var->next;
         }
-        free(reqs);
+        farb_free(reqs, sz);
     } else { /*SCATTER*/
         void *sbuf = NULL, *tmp;
-        int bufsz;
+        int bufsz = 0;
         MPI_Offset readsz;
         int el_sz;
 
@@ -523,6 +531,7 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
                 continue;
             }
             //pack multi-dim data into 1d contiguous buffer
+            gl_conf.malloc_size -= bufsz;
             MPI_Type_size(var->dtype, &el_sz);
             bufsz = 1;
             for(i = 0; i < var->ndims; i++)
@@ -532,6 +541,7 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
             tmp = realloc(sbuf, bufsz);
             assert(tmp != NULL);
             sbuf = tmp;
+            gl_conf.malloc_size += bufsz;
             for(i = 0; i < var->ndims; i++){
                 FARB_DBG(VERBOSE_ALL_LEVEL, "send data starts at %d", (int)first_el_coord[first_el_coord_sz+i]);
             }
@@ -550,7 +560,7 @@ int send_data(file_buffer_t *fbuf, int rank, MPI_Comm intercomm)
             var = var->next;
         }
 
-        free(sbuf);
+        farb_free(sbuf, bufsz);
     }
     FARB_DBG(VERBOSE_DBG_LEVEL, "Total sent mem nodes %d, should have sent %d", ncnt, (int)node_count);
     assert((int)node_count == ncnt);
