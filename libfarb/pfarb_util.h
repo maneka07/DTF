@@ -19,9 +19,14 @@
 #define IO_REQ_TAG          4       /*writer rank / reader rank -> master rank*/
 #define IO_DATA_REQ_TAG     5       /*master -> writer*/
 #define IO_DATA_TAG         6       /*writer -> reader*/
-#define IO_DONE_TAG         7       /*reader->master, master->writers*/
+#define READ_DONE_TAG        7       /*reader->master*/
 #define IO_CLOSE_FILE_TAG   8      /*reader->master, master->writers*/
-#define NODE_TAG            9      /*This tag should be always last!!*/
+#define OPEN_FILE_TAG       9
+#define FILE_INFO_TAG       10
+#define FILE_INFO_REQ_TAG   11
+#define ROOT_MST_TAG        12
+#define MATCH_DONE_TAG      13
+#define NODE_TAG            14      /*This tag should be always last!!*/
 
 /*
     DISTR_MODE_STATIC - configure data distribution through config file and
@@ -47,10 +52,7 @@ typedef struct component{
 
 typedef struct farb_config{
     int distr_mode;
-    int my_master;  /*is this rank a master rank*/
-    int nmasters;   /*Number of master nodes that hold data for request matching*/
-    int *masters;   /*Ranks of master nodes on the writer's side*/
-    unsigned int my_workgroup_sz;
+
     int buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
     size_t malloc_size;
 }farb_config_t;
@@ -70,9 +72,10 @@ void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header);
 MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
 int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 int set_distr_count(file_buffer_t *fbuf, int varid, int count[]);
-void open_file(file_buffer_t *fbuf);
+void open_file(file_buffer_t *fbuf, MPI_Comm comm);
 MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coord);
 MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape);
 void* farb_malloc(size_t size);
 void farb_free(void *ptr, size_t size);
+void process_file_info_req_queue();
 #endif

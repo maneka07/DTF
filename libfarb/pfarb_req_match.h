@@ -14,7 +14,6 @@ typedef struct contig_mem_chunk{
 typedef struct io_req{
     unsigned int            id;
     int                     var_id;
-    int                     completed;
     int                     sent_flag;  /*set to 1 if this req has already been forwarded to the master*/
     int                     rw_flag;
     void                    *user_buf;
@@ -68,13 +67,34 @@ typedef struct read_db_item{
     struct read_db_item     *prev;
 }read_db_item_t;
 
-typedef struct master_db{
-    unsigned int         nranks_completed;
-    unsigned int nmst_completed;
+typedef struct ioreq_db{
     MPI_Offset           nritems;
     struct write_db_item *witems;
     struct read_db_item  *ritems;
-}master_db_t;
+}ioreq_db_t;
+
+typedef struct master_info{
+    unsigned int         nrranks_completed;  /*Number of reader ranks that completed their read request. Counted only by master 0.*/
+    unsigned int         nwranks_completed;  /*Number of writer ranks that completed their read requests
+                                              (writer can also read the file). Counted only by master 0.*/
+    unsigned int         nrranks_opened;     /*Number of reader ranks that opened the file*/
+    unsigned int         nwranks_opened;     /*Number of writer ranks that opened the file*/
+    struct ioreq_db      *iodb;
+    int is_master_flag;  /*is this rank a master rank*/
+    int nmasters;   /*Number of master nodes that hold data for request matching*/
+    int *masters;   /*Ranks of master nodes on the writer's side*/
+    unsigned int my_workgroup_sz;
+} master_info_t;
+
+typedef struct file_info_req_q{
+    char filename[MAX_FILE_NAME];
+    void *buf;  /*consists of
+                  - filename [char[]]
+                  - root reader rank to whom file info should be sent [int]
+                  - number of readers that opened the file [int]*/
+    struct file_info_req_q *next;
+    struct file_info_req_q *prev;
+}file_info_req_q_t;
 
 io_req_t *new_ioreq(int id,
                     int var_id,
@@ -87,12 +107,17 @@ io_req_t *new_ioreq(int id,
                     int buffered);
 
 
+
+
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
+void delete_ioreqs(file_buffer_t *fbuf);
 void progress_io_matching();
-void send_file_info(file_buffer_t *fbuf);
-void send_ioreq(int ncid, io_req_t *ioreq);
-void clean_iodb(master_db_t *iodb);
+void send_ioreq(file_buffer_t *fbuf, io_req_t *ioreq);
+void clean_iodb(ioreq_db_t *iodb);
 int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
 void match_ioreqs_all(int rw_flag);
-
+int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);
+void init_iodb(file_buffer_t *fbuf);
+void unpack_file_info(MPI_Offset bufsz, void *buf);
+void send_file_info(file_buffer_t *fbuf, int reader_root);
 #endif // PFARB_REQ_MATCH_H_INCLUDED

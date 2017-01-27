@@ -6,5 +6,5 @@ void clean_config();
 int init_comp_comm();
 void finalize_comp_comm();
 int init_data_distr();
-int init_req_match_masters();
+void finalize_files();
 #endif // PFARB_INIT_FINALIZE_H_INCLUDED

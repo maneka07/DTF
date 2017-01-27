@@ -68,14 +68,13 @@ void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
 static void delete_var(farb_var_t *var)
 {
    buffer_node_t *node = var->nodes;
-
     while(node != NULL){
         farb_free(node->data, node->data_sz);
         var->nodes = var->nodes->next;
         farb_free(node, sizeof(buffer_node_t));
         node = var->nodes;
     }
-
+    farb_free(var->shape, var->ndims*sizeof(MPI_Offset));
     if(var->distr_count != NULL)
         farb_free(var->distr_count, var->ndims*sizeof(MPI_Offset));
     if(var->first_coord != NULL)
@@ -85,9 +84,7 @@ static void delete_var(farb_var_t *var)
 
 void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
 {
-
-    file_buffer_t *prev;
-    farb_var_t    *var, *tmp;
+    farb_var_t    *var;
     if(fbuf == NULL)
         return;
 
@@ -98,26 +95,31 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
 
     var = fbuf->vars;
     while(var != NULL){
-        tmp = var->next;
+        fbuf->vars = var->next;
         delete_var(var);
-        var = tmp;
+        var = fbuf->vars;
     }
 
-    if(fbuf->iodb != NULL){
-        clean_iodb(fbuf->iodb);
-        farb_free(fbuf->iodb, sizeof(master_db_t));
+    assert(fbuf->ioreqs == NULL);
+    assert(fbuf->rreq_cnt == 0);
+    assert(fbuf->wreq_cnt == 0);
+    if(fbuf->mst_info->iodb != NULL){
+        clean_iodb(fbuf->mst_info->iodb);
+        farb_free(fbuf->mst_info->iodb, sizeof(ioreq_db_t));
     }
 
+    farb_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
+    farb_free(fbuf->mst_info, sizeof(master_info_t));
     farb_free(fbuf->distr_ranks, fbuf->distr_nranks*sizeof(int));
 
-    if(*buflist == fbuf)
-        *buflist = fbuf->next;
-    else{
-        prev = *buflist;
-        while(prev->next != fbuf)
-            prev = prev->next;
-        prev->next = fbuf->next;
-    }
+//    if(*buflist == fbuf)
+//        *buflist = fbuf->next;
+//    else{
+//        prev = *buflist;
+//        while(prev->next != fbuf)
+//            prev = prev->next;
+//        prev->next = fbuf->next;
+//    }
 
     farb_free(fbuf, sizeof(file_buffer_t));
 }
@@ -146,16 +148,31 @@ file_buffer_t* new_file_buffer()
     buf->distr_nranks = 0;
     buf->distr_ranks = NULL;
     buf->distr_ndone = 0;
-    buf->hdr_sent_flag = 0;
     //buf->ioreq_cnt = 0;
     buf->rreq_cnt = 0;
-    buf->sreq_cnt = 0;
+    buf->wreq_cnt = 0;
     buf->ioreqs = NULL;
-    buf->iodb = NULL;
     buf->ncid = -1;
     buf->explicit_match = 0;
     buf->done_matching_flag = 0;
-    buf->fclosed_flag = 0;
+    buf->rdr_closed_flag = 0;
+    buf->fready_notify_flag = FARB_UNDEFINED;
+    buf->comm = MPI_COMM_NULL;
+    buf->root_writer = -1;
+    buf->root_reader = -1;
+    buf->nwriters = 0;
+    buf->mst_info = farb_malloc(sizeof(master_info_t));
+    assert(buf->mst_info != NULL);
+    buf->mst_info->masters = NULL;
+    buf->mst_info->is_master_flag = 0;
+    buf->mst_info->my_workgroup_sz = 0;
+    buf->mst_info->nmasters = 0;
+    buf->mst_info->iodb = NULL;
+    buf->mst_info->nrranks_completed = 0;
+    buf->mst_info->nwranks_completed = 0;
+    buf->mst_info->nrranks_opened = 0;
+    buf->mst_info->nwranks_opened = 0;
+    buf->is_matching_flag = 0;
     return buf;
 }
 

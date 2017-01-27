@@ -21,7 +21,8 @@ int gl_verbose;
 int gl_my_rank;
 struct farb_config gl_conf;
 int frt_indexing = 0;
-int matching_flag = 0;
+
+extern file_info_req_q_t *gl_finfo_req_q;
 
 /**
   @brief	Function to initialize the library. Should be called from inside
@@ -85,15 +86,13 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
 
     errno = init_data_distr();
     if(errno) goto panic_exit;
-
-    errno = init_req_match_masters();
-    if(errno) goto panic_exit;
-
     lib_initialized = 1;
 
     //enable print setting for other ranks again
     if(gl_my_rank != 0)
         gl_verbose = verbose;
+
+    FARB_DBG(VERBOSE_DBG_LEVEL, "FARB: Finished initializing");
 
     return 0;
 
@@ -125,16 +124,19 @@ _EXTERN_C_ int farb_finalize()
         exit(1);
     }
 
+    /*Send any unsent file notifications
+      and delete buf files*/
+    finalize_files();
+    assert(gl_finfo_req_q == NULL);
     finalize_comp_comm();
 
     clean_config();
 
     FARB_DBG(VERBOSE_DBG_LEVEL,"FARB: finalize");
-    farb_free(gl_my_comp_name, MAX_COMP_NAME);
-    if(gl_conf.masters != NULL)
-        farb_free(gl_conf.masters, gl_conf.nmasters*sizeof(int));
 
-    FARB_DBG(VERBOSE_DBG_LEVEL, "FARB memory leak size: %lu", gl_conf.malloc_size);
+
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB memory leak size: %lu", gl_conf.malloc_size - MAX_COMP_NAME);
+    farb_free(gl_my_comp_name, MAX_COMP_NAME);
     lib_initialized = 0;
     fflush(stdout);
     fflush(stderr);
@@ -182,18 +184,45 @@ _EXTERN_C_ MPI_Offset farb_read_hdr_chunk(const char *filename, MPI_Offset offse
 }
 
 
-_EXTERN_C_ void farb_create(const char *filename, int ncid)
+_EXTERN_C_ void farb_create(const char *filename, MPI_Comm comm, int ncid)
 {
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
-        FARB_DBG(VERBOSE_DBG_LEVEL, "File %s is not treated by FARB", filename);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Creating file %s. File is not treated by FARB", filename);
         return;
     } else {
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Created file %s", filename);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Created file %s (ncid %d)", filename, ncid);
     }
     fbuf->ncid = ncid;
+    fbuf->comm = comm;
+    int root_mst = gl_my_rank;
+    int errno = MPI_Bcast(&root_mst, 1, MPI_INT, 0, comm);
+    CHECK_MPI(errno);
+    fbuf->root_writer = root_mst;
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
+    if(gl_my_rank == fbuf->root_writer && gl_my_rank != 0){
+        /*Notify global rank 0 that I am the root master for this file*/
+        errno = MPI_Send(fbuf->file_path, (int)(MAX_FILE_NAME), MPI_CHAR, 0, ROOT_MST_TAG, gl_comps[gl_my_comp_id].comm);
+        CHECK_MPI(errno);
+    }
+
+   if( (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH) && (fbuf->iomode == FARB_IO_MODE_MEMORY)){
+        init_req_match_masters(comm, fbuf->mst_info);
+
+        if(fbuf->mst_info->is_master_flag){
+            int nranks;
+            MPI_Comm_size(comm, &nranks);
+
+            assert(fbuf->mst_info->iodb == NULL);
+            init_iodb(fbuf);
+            fbuf->mst_info->nwranks_opened = (unsigned int)nranks;
+        }
+    } else if(fbuf->iomode == FARB_IO_MODE_FILE){
+        fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+    }
 }
+
 /**
   @brief	Called when the corresponding file is opened.
 
@@ -203,10 +232,11 @@ _EXTERN_C_ void farb_create(const char *filename, int ncid)
  */
 _EXTERN_C_ void farb_open(const char *filename, MPI_Comm comm)
 {
+    int nranks;
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
-        FARB_DBG(VERBOSE_DBG_LEVEL, "File %s is not treated by FARB", filename);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Opening file %s. File is not treated by FARB", filename);
         return;
     }
     FARB_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
@@ -221,20 +251,30 @@ _EXTERN_C_ void farb_open(const char *filename, MPI_Comm comm)
         err = MPI_File_close(&fh);
         CHECK_MPI(err);
         FARB_DBG(VERBOSE_DBG_LEVEL, "Created a dummy alias file");
-
     }
-    open_file(fbuf);
+    assert(fbuf->comm == MPI_COMM_NULL);
+    fbuf->comm = comm;
+    MPI_Comm_size(comm, &nranks);
+    if(comm == gl_comps[gl_my_comp_id].comm)
+        FARB_DBG(VERBOSE_DBG_LEVEL, "File opened in component's communicator (%d nprocs)", nranks);
+    else
+        FARB_DBG(VERBOSE_DBG_LEVEL, "File opened in subcommunicator (%d nprocs)", nranks);
+
+    open_file(fbuf, comm);
 }
 
 _EXTERN_C_ void farb_enddef(const char *filename)
 {
-    if(!lib_initialized) return;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL) return;
-    if(fbuf->iomode != FARB_IO_MODE_MEMORY) return;
+//    if(!lib_initialized) return;
+//    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+//    if(fbuf == NULL) return;
+//    if(fbuf->iomode != FARB_IO_MODE_MEMORY) return;
+//
+//    if((fbuf->writer_id == gl_my_comp_id) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH))
+//        send_file_info(fbuf);
 
-    if((fbuf->writer_id == gl_my_comp_id) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH))
-        send_file_info(fbuf);
+    //We don't know which reader rank needs the info, so file info will be sent when
+    //corresponding reader requests it!!
 }
 ///**
 //  @brief	Called before the corresponding file is opened. In case if components do normal File I/O
@@ -264,8 +304,9 @@ _EXTERN_C_ void farb_close(const char* filename)
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
-    if(fbuf->reader_id == gl_my_comp_id)
-        MPI_Barrier(MPI_COMM_WORLD);
+//    if(fbuf->reader_id == gl_my_comp_id)
+    MPI_Barrier(fbuf->comm);
+
     close_file(fbuf);
 }
 
@@ -282,11 +323,13 @@ _EXTERN_C_ int farb_match_ioreqs(const char* filename)
     /*User will have to explicitly initiate matching*/
     if(fbuf->explicit_match) return 0;
 
-    if(matching_flag)
-        FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: farb_match_ioreqs is called for file %s, but a matching process has already started before.", fbuf->file_path);
-    matching_flag = 1;
+    if(fbuf->is_matching_flag){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: farb_match_ioreqs is called for file %s, but a matching process has already started before.", fbuf->file_path);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    fbuf->is_matching_flag = 1;
     ret = match_ioreqs(fbuf, 0);
-    matching_flag = 0;
+    fbuf->is_matching_flag = 0;
 
     return ret;
 }
@@ -332,16 +375,13 @@ _EXTERN_C_ int farb_match_io(const char *filename, int ncid, int intracomp_io_fl
             FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: farb_match_io: intracomp_io_flag(%d) can only be set for the writer component", intracomp_io_flag);
             MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
         }
-        if(matching_flag){
-            FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: farb_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
-            if(intracomp_io_flag){
-                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: farb_match_io: intracomp_io_flag is set but the process is already matching io. This is not allowed.");
-                MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-            }
+        if(fbuf->is_matching_flag){
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: farb_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
         }
-        matching_flag = 1;
+        fbuf->is_matching_flag = 1;
         match_ioreqs(fbuf, intracomp_io_flag);
-        matching_flag = 0;
+        fbuf->is_matching_flag = 0;
   // }
     return 0;
 }
@@ -349,18 +389,26 @@ _EXTERN_C_ int farb_match_io(const char *filename, int ncid, int intracomp_io_fl
    Because the process of matching for a reader and writer is not the same. */
 _EXTERN_C_ void farb_match_io_all(int rw_flag)
 {
+    file_buffer_t *fbuf = gl_filebuf_list;
+
     if(!lib_initialized) return;
     if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
 
     if(rw_flag == FARB_READ){
-        FARB_DBG(VERBOSE_WARNING_LEVEL, "farb_match_io_all() cannot be used in processes that read files. Ignoring.");
+        FARB_DBG(VERBOSE_WARNING_LEVEL, "farb_match_io_all() cannot be used in reader component. Ignoring.");
         return;
     }
-    if(matching_flag)
-        FARB_DBG(VERBOSE_WARNING_LEVEL, "FARB Warning: farb_match_io_all is called, but a matching process has already started before.");
-    matching_flag = 1;
+    /*First check that no matching is already happening*/
+    while(fbuf != NULL){
+        if(fbuf->is_matching_flag){
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Warning: farb_match_io_all is called, but a matching process has already started before.");
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        }
+        fbuf = fbuf->next;
+    }
+
     match_ioreqs_all(rw_flag);
-    matching_flag = 0;
+
     return;
 }
 

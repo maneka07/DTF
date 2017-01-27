@@ -5,6 +5,7 @@
 #include "pfarb_common.h"
 #include "pfarb_file_buffer.h"
 #include "pfarb_util.h"
+#include "pfarb_req_match.h"
 #include "pfarb.h"
 
 
@@ -239,7 +240,7 @@ static int create_intercomm(int comp_id, char* global_path){
         errno = MPI_Close_port(portname);
         CHECK_MPI(errno);
     }
-    MPI_Errhandler_set(gl_comps[comp_id].comm, MPI_ERRORS_RETURN);
+    MPI_Comm_set_errhandler(gl_comps[comp_id].comm, MPI_ERRORS_RETURN);
     /*Check that the number of ranks is the same in both communicators*/
     MPI_Comm_size(MPI_COMM_WORLD, &nranks1);
     MPI_Comm_remote_size(gl_comps[comp_id].comm, &nranks2);
@@ -294,15 +295,9 @@ static void destroy_intercomm(int comp_id){
 
 
 void clean_config(){
-    file_buffer_t *tmp;
 
     if(gl_comps != NULL)
         farb_free(gl_comps, gl_ncomp*sizeof(component_t));
-
-    while(gl_filebuf_list != NULL){
-        tmp = gl_filebuf_list;
-        delete_file_buffer(&gl_filebuf_list, tmp);
-    }
 }
 
 int load_config(const char *ini_name, const char *comp_name){
@@ -313,7 +308,6 @@ int load_config(const char *ini_name, const char *comp_name){
   //char       comp_name[MAX_COMP_NAME];
   int        i, len, lineno=0;
   struct file_buffer* cur_fb = NULL;
-  int master_flag;
  // ini = iniparser_load(ini_name);
 
   line[0] = 0;
@@ -380,8 +374,7 @@ int load_config(const char *ini_name, const char *comp_name){
                 }
             }
         }
-        master_flag = (gl_conf.my_master == gl_my_rank) ? 1 : 0;
-        cur_fb = new_file_buffer(master_flag);
+        cur_fb = new_file_buffer();
         assert(cur_fb != NULL);
 
         add_file_buffer(&gl_filebuf_list, cur_fb);
@@ -454,11 +447,11 @@ int load_config(const char *ini_name, const char *comp_name){
             cur_fb->explicit_match = atoi(value);
 
             if(cur_fb->explicit_match == 0)
-                FARB_DBG(VERBOSE_DBG_LEVEL, "FARB: explicit match disabled");
+                FARB_DBG(VERBOSE_ALL_LEVEL, "FARB: explicit match disabled for %s", cur_fb->file_path);
             else if(cur_fb->explicit_match == 1)
-                FARB_DBG(VERBOSE_DBG_LEVEL, "FARB: explicit match enabled");
+                FARB_DBG(VERBOSE_ALL_LEVEL, "FARB: explicit match enabled for %s", cur_fb->file_path);
             else {
-                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: Value for explicit match should be 0 or 1.");
+                FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: Value for explicit match should be 0 or 1 for %s.", cur_fb->file_path);
                 goto panic_exit;
             }
 
@@ -577,6 +570,7 @@ int load_config(const char *ini_name, const char *comp_name){
             if(cur_fb->reader_id == gl_my_comp_id )
                gl_comps[ cur_fb->writer_id ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
         }
+
         cur_fb = cur_fb->next;
     }
 
@@ -599,7 +593,6 @@ int init_comp_comm(){
 
     int i, err;
     char *s;
-    int var = -1;
 
     if(gl_comps == NULL || gl_ncomp == 1)
         return 0;
@@ -618,17 +611,6 @@ int init_comp_comm(){
         err = create_intercomm(gl_comps[i].id, s);
         if(err)
             goto panic_exit;
-    }
-
-    if(gl_my_comp_id == 0){
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Sending val to intercomm");
-        var = gl_my_rank;
-        err = MPI_Send(&var, 1, MPI_INT, gl_my_rank, 777, gl_comps[1].comm);
-        CHECK_MPI(err);
-    } else {
-        err = MPI_Recv(&var, 1, MPI_INT, gl_my_rank, 777, gl_comps[0].comm, MPI_STATUS_IGNORE);
-        CHECK_MPI(err);
-        FARB_DBG(VERBOSE_DBG_LEVEL, "Received val %d", var);
     }
     return 0;
 
@@ -688,85 +670,58 @@ int init_data_distr()
     return 0;
 }
 
-
-int init_req_match_masters()
+void finalize_files()
 {
-    if(gl_conf.distr_mode == FARB_UNDEFINED){
-        gl_conf.nmasters = 0;
-        gl_conf.masters = NULL;
-        gl_conf.my_workgroup_sz = 0;
-    } else {
+    int file_cnt = 0, compl_cnt = 0;
+    file_buffer_t *fbuf = gl_filebuf_list;
+    /*First, writers compute number of files
+      they wrote*/
+    while(fbuf != NULL){
 
-        int wg, nranks, myrank, i;
-        char* s = getenv("MAX_WORKGROUP_SIZE");
-
-        if(s == NULL)
-            wg = MAX_WORKGROUP_SIZE;
-        else
-            wg = atoi(s);
-        assert(wg > 0);
-
-        /* First, find out my master and, if I am a master, find out the size of my
-           workgroup. Create the list of masters. */
-        MPI_Comm_size(MPI_COMM_WORLD, &nranks);
-        MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-
-        if(nranks <= wg){
-            gl_conf.my_master = 0;
-            gl_conf.my_workgroup_sz = nranks;
-            gl_conf.nmasters = 1;
-        } else {
-            gl_conf.my_master = (int)(myrank/wg) * wg;
-            gl_conf.my_workgroup_sz = wg;
-            gl_conf.nmasters = (int)(nranks/wg);
-            if(nranks % wg > 0){
-                gl_conf.nmasters++;
-                if(myrank >= (gl_conf.nmasters-1)*wg)
-                    gl_conf.my_workgroup_sz = nranks % wg;
-            }
-//            if(gl_conf.nmasters == 0)
-//                gl_conf.nmasters++;
-//            else if(nranks % wg > (int)(wg/2) ){
-//                if(myrank >= gl_conf.nmasters * wg){
-//                    gl_conf.my_master = gl_conf.nmasters * wg;
-//                    gl_conf.my_workgroup_sz = nranks % wg;
-//                }
-//                gl_conf.nmasters++;
-//            } else if ( (nranks % wg > 0) && (myrank >= (gl_conf.nmasters-1)*wg)){
-//                /*Merge last smaller group with the previous group*/
-//                gl_conf.my_master = (gl_conf.nmasters-1) * wg;
-//                gl_conf.my_workgroup_sz = wg + nranks % wg;
-//            }
+        FARB_DBG(VERBOSE_DBG_LEVEL, "File %s, close_flag %d, notif_flag %d", fbuf->file_path, fbuf->rdr_closed_flag, fbuf->fready_notify_flag);
+        if(fbuf->fready_notify_flag != FARB_UNDEFINED){
+            assert(fbuf->writer_id == gl_my_comp_id);
+            file_cnt++;
         }
-        FARB_DBG(VERBOSE_ALL_LEVEL, "My master %d, my wg size %d", gl_conf.my_master, gl_conf.my_workgroup_sz);
-        if(gl_my_rank == 0)
-            FARB_DBG(VERBOSE_ALL_LEVEL, "Nmasters %d", gl_conf.nmasters);
-
-        gl_conf.masters = (int*)farb_malloc(gl_conf.nmasters * sizeof(int));
-        assert(gl_conf.masters != NULL);
-        gl_conf.masters[0] = 0;
-        FARB_DBG(VERBOSE_ALL_LEVEL, "Rank %d is a master", gl_conf.masters[0]);
-        for(i = 1; i < gl_conf.nmasters; i++){
-            gl_conf.masters[i] = gl_conf.masters[i-1] + wg;
-            FARB_DBG(VERBOSE_ALL_LEVEL, "Rank %d is a master", gl_conf.masters[i]);
-        }
-
-//        /*For each component, find out to which master I should send read requests*/
-//        for(i=0; i < gl_ncomp; i++){
-//            if(i == gl_my_comp_id)
-//                continue;
-//            MPI_Comm_remote_size(gl_comps[i].comm, &nrranks);
-//
-//            if(myrank < nrranks)
-//                gl_comps[i].master = gl_conf.my_master; //use same rank
-//            else {
-//                int nmasters = (int)(nrranks/wg);
-//                if( nrranks % wg > (int)(wg/2))
-//                   nmasters++;
-//                gl_comps[i].master = (nmasters-1)*wg;
-//            }
-//        }
+        fbuf = fbuf->next;
     }
-    return 0;
+
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Process has to finalize notifications for %d files", file_cnt);
+    while(file_cnt != compl_cnt){
+        compl_cnt = 0;
+        fbuf = gl_filebuf_list;
+        while(fbuf != NULL){
+            if(fbuf->fready_notify_flag != FARB_UNDEFINED){
+                assert(fbuf->writer_id == gl_my_comp_id);
+
+                if(fbuf->iomode == FARB_IO_MODE_FILE){
+                        if(fbuf->fready_notify_flag == RDR_NOTIFIED)
+                            compl_cnt++;
+                        else{
+                            assert(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED);
+                            while(fbuf->root_reader == -1)
+                                progress_io();
+                            notify_file_ready(fbuf);
+                        }
+                } else if(fbuf->iomode == FARB_IO_MODE_MEMORY && gl_conf.distr_mode == DISTR_MODE_REQ_MATCH){
+                        if(fbuf->rdr_closed_flag)
+                            compl_cnt++;
+                        else
+                            progress_io_matching();
+                }
+            }
+
+            fbuf = fbuf->next;
+        }
+    }
+
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Finished finalizing notifications. Will delete file bufs");
+    /*Now, delete all file buffers*/
+    fbuf = gl_filebuf_list;
+    while(fbuf != NULL){
+        gl_filebuf_list = fbuf->next;
+        delete_file_buffer(&gl_filebuf_list, fbuf);
+        fbuf = gl_filebuf_list;
+    }
 }
 

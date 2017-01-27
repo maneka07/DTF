@@ -47,7 +47,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB Error: could not find var with id %d", varid);
         return 0;
     }
-    FARB_DBG(VERBOSE_DBG_LEVEL, "rw %d call for %s (ncid %d) var %d", rw_flag,fbuf->file_path, fbuf->ncid, var->id);
+    FARB_DBG(VERBOSE_DBG_LEVEL, "rw call %d for %s (ncid %d) var %d", rw_flag,fbuf->file_path, fbuf->ncid, var->id);
     /*check number of elements to read*/
     if(count != NULL){
         MPI_Offset nelems;
@@ -63,6 +63,9 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 
     }
 
+    for(i = 0; i < var->ndims; i++)
+        FARB_DBG(VERBOSE_DBG_LEVEL, "-> start %d, count %d", (int)start[i], (int)count[i]);
+
     if(var->dtype != dtype){
         int el_sz1, el_sz2;
         MPI_Type_size(var->dtype, &el_sz1);
@@ -73,13 +76,13 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 
 
     /*Create an io request*/
-    req = new_ioreq(fbuf->rreq_cnt+fbuf->sreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
+    req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
     if(request != NULL)
         *request = req->id;
     if(rw_flag == FARB_READ)
         fbuf->rreq_cnt++;
     else
-        fbuf->sreq_cnt++;
+        fbuf->wreq_cnt++;
     get_contig_mem_list(var, dtype, start, count, &(req->nchunks), &(req->mem_chunks));
     assert(req->mem_chunks != NULL);
 

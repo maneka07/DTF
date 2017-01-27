@@ -12,6 +12,15 @@
 #define DISTR_PATTERN_SCATTER   0
 #define DISTR_PATTERN_ALL       1
 
+/*
+ 0 (FARB_UNDEFINED) - the ps does not write to this file
+ 1 - the ps writes to this file. The file is not ready yet.
+ 2 - The file is ready, reader has been notified
+ */
+ #define RDR_NOT_NOTIFIED   1
+ #define RDR_NOTIFIED       2
+
+
 typedef struct farb_var{
     int                     id;         /* varid assigned by pnetcdf*/
     //MPI_Offset              el_sz;      /* byte size of 1 array element */
@@ -29,11 +38,13 @@ typedef struct farb_var{
 
 struct master_db;
 struct io_req;
+struct master_struc;
 
 typedef struct file_buffer{
   char                      file_path[MAX_FILE_NAME];    /* path of the file */
   char                      alias_name[MAX_FILE_NAME];	/* alias name for the file */
   int                       ncid;                        /*handler that pnetcdf assigns to a file*/
+  MPI_Comm                  comm;               /*MPI_Communicator used to open the file*/
   void                      *header;            /*buffer to store netcdf header*/
   MPI_Offset                hdr_sz;             /*size of the netcdf header*/
   struct farb_var           *vars;              /*Variables in the file*/
@@ -55,16 +66,23 @@ typedef struct file_buffer{
   int                       *distr_ranks;                 /*writer: ranks I distribute to; reader: ranks I receive from*/
   int                       distr_ndone;                  /*number of completed distributions*/
   /*Data distribution through request matching*/
-  int                       hdr_sent_flag;
+  int                       root_writer;           /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
+  int                       root_reader;
+  struct master_info       *mst_info;
+  int                       nwriters;               /*Number of processes writing to the file*/
   struct io_req             *ioreqs;           /*Read or write I/O requests*/
   int                       explicit_match;   /*0 - request matching is initiated from inside of pnetcdf;
                                                 1 - request matching is initiated by the user*/
   //int                       ioreq_cnt;         /*Request counter, will be used to assign a unique id to io requests.*/
   unsigned int              rreq_cnt;
-  unsigned int              sreq_cnt;
+  unsigned int              wreq_cnt;
   int                       done_matching_flag;     /*Flag used to complete matching requests*/
-  int                       fclosed_flag;           /*Flag set to 1 when reader closes the file*/
-  struct master_db          *iodb;             /*Relevant only for masters. They store requests from readers and info from writers*/
+  int                       is_matching_flag;   /*Set to 1 when process starts matching. Reset to 0 when matching is done.*/
+  int                       rdr_closed_flag;           /*Flag set to 1 when reader closes the file*/
+  int                       fready_notify_flag;   /*flag used to notify the reader that the file is ready for reading.
+                                                    Possible values: 0 - the ps does not write to this file
+                                                                     1 - the ps writes to this file. The file is not ready yet.
+                                                                     2 - The file is ready, reader has been notified */
   struct file_buffer        *next;             /* pointer to the next record */
 
 }file_buffer_t;

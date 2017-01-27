@@ -34,7 +34,7 @@ _EXTERN_C_ int farb_write_flag(const char* filename);
 _EXTERN_C_ int farb_read_flag(const char* filename);
 _EXTERN_C_ void farb_open(const char* filename, MPI_Comm comm);
 _EXTERN_C_ void farb_close(const char* filename);
-_EXTERN_C_ void farb_create(const char *filename, int ncid);
+_EXTERN_C_ void farb_create(const char *filename, MPI_Comm comm, int ncid);
 _EXTERN_C_ int farb_io_mode(const char* filename);
 _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 _EXTERN_C_ void farb_write_hdr(const char *filename, MPI_Offset hdr_sz, void *header);
