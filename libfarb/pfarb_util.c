@@ -289,15 +289,15 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coo
 
 void notify_file_ready(file_buffer_t *fbuf)
 {
-    int comp_id, i, dest, errno, nranks;
-
+    int comp_id, i, dest, errno; //, nranks;
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Inside notify_file_ready");
     comp_id = fbuf->reader_id;
     if(fbuf->iomode == FARB_IO_MODE_FILE){
-        int rank;
-        MPI_Comm_rank(fbuf->comm, &rank);
+        //int rank;
+       // MPI_Comm_rank(fbuf->comm, &rank);
 
-        MPI_Comm_remote_size(gl_comps[comp_id].comm, &nranks);
-        if(rank == 0){
+       // MPI_Comm_remote_size(gl_comps[comp_id].comm, &nranks);
+        if(gl_my_rank == fbuf->root_writer){
 //            if(fbuf->root_reader == -1){
 //                FARB_DBG(VERBOSE_DBG_LEVEL, "Start waiting to know who is the root reader for file %s", fbuf->file_path);
 //                while(fbuf->root_reader == -1)
@@ -340,11 +340,16 @@ void close_file(file_buffer_t *fbuf)
     if(fbuf->writer_id == gl_my_comp_id){
 
         if((fbuf->iomode == FARB_IO_MODE_FILE) && (gl_conf.distr_mode == DISTR_MODE_STATIC)){
+            assert(fbuf->comm != MPI_COMM_NULL);
+            if(gl_my_rank == fbuf->root_writer)
+                notify_file_ready(fbuf);
             notify_file_ready(fbuf);
             while(fbuf->distr_ndone != fbuf->distr_nranks)
                 progress_io();
         } else if(fbuf->iomode == FARB_IO_MODE_FILE) {
-            notify_file_ready(fbuf);
+            assert(fbuf->comm != MPI_COMM_NULL);
+            if(gl_my_rank == fbuf->root_writer)
+                notify_file_ready(fbuf);
         } else if((fbuf->iomode == FARB_IO_MODE_MEMORY) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH)){
             /* cannot close file untill the reader closed it as well.
              then we can clean up all the requests etc. */

@@ -622,7 +622,7 @@ panic_exit:
 void finalize_comp_comm(){
 
     int i;
-
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Finalizing communicators");
     for(i = 0; i<gl_ncomp; i++){
        destroy_intercomm(gl_comps[i].id);
     }
@@ -714,7 +714,7 @@ void finalize_files()
             fbuf = fbuf->next;
         }
     }
-
+    MPI_Barrier(gl_comps[gl_my_comp_id].comm);
     FARB_DBG(VERBOSE_DBG_LEVEL, "Finished finalizing notifications. Will delete file bufs");
     /*Now, delete all file buffers*/
     fbuf = gl_filebuf_list;

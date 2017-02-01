@@ -1421,7 +1421,7 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                 }
             } else if (var->dtype == MPI_DOUBLE){
                 float *ubuf;
-                FARB_DBG(VERBOSE_DBG_LEVEL, "req_el_sz %d, def_el_sz %d, req dt %d, def dt %d", req_el_sz, def_el_sz, (int)ioreq->dtype, (int)var->dtype);
+              //  FARB_DBG(VERBOSE_DBG_LEVEL, "req_el_sz %d, def_el_sz %d, req dt %d, def dt %d", req_el_sz, def_el_sz, (int)ioreq->dtype, (int)var->dtype);
                 /*MPI_FLOAT->MPI_DOUBLE*/
                 assert(ioreq->dtype == MPI_FLOAT);
                 ubuf = (float*)((unsigned char*)ioreq->user_buf+dbuf_offt);
@@ -1801,8 +1801,32 @@ void progress_io_matching()
 
                             FARB_DBG(VERBOSE_DBG_LEVEL, "Notify masters that matching for %s is finished", fbuf->file_path);
                             for(i = 0; i < fbuf->mst_info->nmasters; i++){
+                                    if(fbuf->mst_info->masters[i] == gl_my_rank)
+                                        continue;
+                                    FARB_DBG(VERBOSE_DBG_LEVEL, "Notify mst %d", fbuf->mst_info->masters[i]);
                                     errno = MPI_Send(&ncid, 1, MPI_INT, fbuf->mst_info->masters[i], MATCH_DONE_TAG, gl_comps[gl_my_comp_id].comm);
                                     CHECK_MPI(errno);
+                            }
+
+                            if(fbuf->mst_info->is_master_flag){
+                                FARB_DBG(VERBOSE_DBG_LEVEL, "Notify writers that req matching for %s completed", fbuf->file_path);
+                                /*Tell other writer ranks that they can complete matching*/
+                                notify_workgroup(fbuf, MATCH_DONE_TAG);
+                                FARB_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
+                                fbuf->done_matching_flag = 1;
+                                if(fbuf->rdr_closed_flag){
+                                    FARB_DBG(VERBOSE_DBG_LEVEL, "Cleaning up all reqs and dbs");
+                                    assert(fbuf->rreq_cnt == 0);
+                                    /*Complete my own write requests*/
+                                    delete_ioreqs(fbuf);
+
+                                    if(fbuf->mst_info->is_master_flag){
+                                        /*Check that I don't have any read reqs incompleted*/
+                                        assert(fbuf->mst_info->iodb->nritems == 0);
+                                        /*Clean my iodb*/
+                                        clean_iodb(fbuf->mst_info->iodb);
+                                    }
+                                }
                             }
                     }
 

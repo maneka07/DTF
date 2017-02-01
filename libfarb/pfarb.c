@@ -218,6 +218,7 @@ _EXTERN_C_ void farb_create(const char *filename, MPI_Comm comm, int ncid)
             init_iodb(fbuf);
             fbuf->mst_info->nwranks_opened = (unsigned int)nranks;
         }
+
     } else if(fbuf->iomode == FARB_IO_MODE_FILE){
         fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
     }
