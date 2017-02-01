@@ -20,6 +20,7 @@ int lib_initialized=0;
 int gl_verbose;
 int gl_my_rank;
 struct farb_config gl_conf;
+struct stats gl_stats;
 int frt_indexing = 0;
 
 extern file_info_req_q_t *gl_finfo_req_q;
@@ -59,6 +60,10 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
         exit(1);
     }
     gl_conf.malloc_size = 0;
+
+    gl_stats.nmsg_sent = 0;
+    gl_stats.accum_msg_sz = 0;
+    gl_stats.nmatching_msg_sent = 0;
 
     gl_my_comp_name = (char*)farb_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -133,7 +138,8 @@ _EXTERN_C_ int farb_finalize()
     clean_config();
 
     FARB_DBG(VERBOSE_DBG_LEVEL,"FARB: finalize");
-
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB matching related messages sent %d, tot sz %lu, other msgs %d",
+             gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
 
     FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB memory leak size: %lu", gl_conf.malloc_size - MAX_COMP_NAME);
     farb_free(gl_my_comp_name, MAX_COMP_NAME);

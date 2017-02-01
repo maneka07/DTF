@@ -113,6 +113,7 @@ void add_ioreq(io_req_t **list, io_req_t *ioreq);
 void delete_ioreqs(file_buffer_t *fbuf);
 void progress_io_matching();
 void send_ioreq(file_buffer_t *fbuf, io_req_t *ioreq);
+void send_ioreqs(file_buffer_t *fbuf);
 void clean_iodb(ioreq_db_t *iodb);
 int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
 void match_ioreqs_all(int rw_flag);

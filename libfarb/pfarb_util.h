@@ -26,7 +26,8 @@
 #define FILE_INFO_REQ_TAG   11
 #define ROOT_MST_TAG        12
 #define MATCH_DONE_TAG      13
-#define NODE_TAG            14      /*This tag should be always last!!*/
+#define IO_REQS_TAG         14
+#define NODE_TAG            15      /*This tag should be always last!!*/
 
 /*
     DISTR_MODE_STATIC - configure data distribution through config file and
@@ -57,7 +58,11 @@ typedef struct farb_config{
     size_t malloc_size;
 }farb_config_t;
 
-
+typedef struct stats{
+    int nmsg_sent;
+    int nmatching_msg_sent;
+    size_t accum_msg_sz;
+} stats_t;
 
 
 struct file_buffer;

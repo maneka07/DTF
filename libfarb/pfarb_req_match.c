@@ -474,6 +474,8 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                 FARB_DBG(VERBOSE_DBG_LEVEL, "Send data req to wrt %d", writers[i]);
                 errno = MPI_Isend((void*)sbuf[i], offt[i], MPI_BYTE, writers[i], IO_DATA_REQ_TAG, gl_comps[gl_my_comp_id].comm, &sreqs[i]);
                 CHECK_MPI(errno);
+                gl_stats.nmatching_msg_sent++;
+                gl_stats.accum_msg_sz += offt[i];
             }
 
 //            errno = MPI_Waitall(nwriters, sreqs, MPI_STATUSES_IGNORE);
@@ -585,6 +587,56 @@ static write_chunk_rec_t *new_write_chunk_rec(int rank, MPI_Offset offset, MPI_O
 
 static void parse_write_ioreq(file_buffer_t *fbuf, farb_var_t *var, void *buf, int bufsz, int rank, MPI_Comm comm);
 static void parse_read_ioreq(file_buffer_t *fbuf, farb_var_t *var, void *buf, int bufsz, int rank, MPI_Comm comm);
+
+static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
+{
+    int ncid, var_id, rw_flag, nchunks;
+    file_buffer_t *fbuf;
+    farb_var_t *var;
+    size_t offt = 0;
+    unsigned char *chbuf = (unsigned char*)buf;
+    ncid = (int)(*((MPI_Offset*)chbuf));
+    offt += sizeof(MPI_Offset);
+    int chunks_sz;
+
+    fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
+    assert(fbuf != NULL);
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Start parsing reqs for file %s", fbuf->file_path);
+    if(comm == gl_comps[fbuf->reader_id].comm)
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Reqs are from reader");
+    else {
+        assert(comm == gl_comps[fbuf->writer_id].comm);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "Req are from writer");
+    }
+
+    while(offt != (size_t)bufsz){
+        rw_flag = (int)(*(MPI_Offset*)(chbuf+offt));
+        offt += sizeof(MPI_Offset);
+        var_id = (int)(*(MPI_Offset*)(chbuf+offt));
+        offt += sizeof(MPI_Offset);
+        nchunks = (int)(*(MPI_Offset*)(chbuf+offt));
+        offt += sizeof(MPI_Offset);
+
+//        if(rw_flag == FARB_READ)
+//            FARB_DBG(VERBOSE_DBG_LEVEL, "Master recv read req from %d for ncid %d, var %d", rank, ncid, var_id);
+//        else
+//            FARB_DBG(VERBOSE_DBG_LEVEL, "Master recv write req from %d for ncid %d, var %d", rank, ncid, var_id);
+
+        var = find_var(fbuf->vars, var_id);
+        assert(var != NULL);
+        chunks_sz = nchunks*sizeof(MPI_Offset)*2;
+        if(rw_flag == FARB_READ)
+            parse_read_ioreq(fbuf, var, chbuf+offt, chunks_sz, rank, comm);
+        else
+            parse_write_ioreq(fbuf, var, chbuf+offt, chunks_sz, rank, comm);
+
+        offt += (size_t)chunks_sz;
+    }
+
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_conf.malloc_size);
+
+}
+
 
 static void parse_ioreq(void *buf, int bufsz, int rank, MPI_Comm comm)
 {
@@ -998,6 +1050,112 @@ void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
     farb_free((*ioreq), sizeof(io_req_t));
 }
 
+void send_ioreqs(file_buffer_t *fbuf)
+{
+    io_req_t *ioreq;
+    contig_mem_chunk_t *chunk;
+    unsigned char *sbuf = NULL;
+    size_t sz = 0, offt = 0;
+    int *mst_flag, mst1, mst2, i, errno;
+    MPI_Request *sreqs;
+    MPI_Offset offt_range;
+    farb_var_t *var;
+
+//    mst_flag = (int*)farb_malloc(fbuf->mst_info->nmasters*sizeof(int));
+//    assert(mst_flag != NULL);
+    sreqs = (MPI_Request*)farb_malloc(fbuf->mst_info->nmasters*sizeof(MPI_Request));
+    assert(sreqs != NULL);
+    for(i = 0; i < fbuf->mst_info->nmasters; i++){
+ //       mst_flag[i] = 0;
+        sreqs[i] = MPI_REQUEST_NULL;
+    }
+
+    /*first find out the size of the buffer*/
+    sz = sizeof(MPI_Offset); //ncid
+    ioreq = fbuf->ioreqs;
+    while(ioreq != NULL){
+        if(ioreq->sent_flag){
+            ioreq = ioreq->next;
+            continue;
+        }
+        sz += sizeof(MPI_Offset)*3 + sizeof(MPI_Offset)*2*ioreq->nchunks; //var_id+rw_flag+nchunks+chunks
+        ioreq = ioreq->next;
+    }
+
+    sbuf = farb_malloc(sz);
+    assert(sbuf != NULL);
+
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Bufsz %d", (int)sz);
+
+    offt = 0;
+
+    *(MPI_Offset*)sbuf = (MPI_Offset)fbuf->ncid;
+    offt += sizeof(MPI_Offset);
+
+    /*Pack requests*/
+    ioreq = fbuf->ioreqs;
+    while(ioreq != NULL){
+        if(ioreq->sent_flag){
+            ioreq = ioreq->next;
+            continue;
+        }
+        if(ioreq->rw_flag == FARB_READ)
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Pack read request to master for var %d (%s)", ioreq->var_id, fbuf->file_path);
+        else
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Pack write request to master for var %d (%s)", ioreq->var_id, fbuf->file_path);
+
+        *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->rw_flag;
+        offt += sizeof(MPI_Offset);
+        *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->var_id;
+        offt += sizeof(MPI_Offset);
+        *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->nchunks;
+        offt += sizeof(MPI_Offset);
+
+        chunk = ioreq->mem_chunks;
+        while(chunk != NULL){
+            *(MPI_Offset*)(sbuf+offt) = chunk->offset;
+            offt += sizeof(MPI_Offset);
+            *(MPI_Offset*)(sbuf+offt) = chunk->data_sz;
+            offt += sizeof(MPI_Offset);
+            chunk = chunk->next;
+        }
+        ioreq->sent_flag = 1;
+        ioreq = ioreq->next;
+    }
+
+    assert(offt == sz);
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Before sending reqs");
+    /*Send the request to the master*/
+    for(i = 0; i < fbuf->mst_info->nmasters; i++){
+         errno = MPI_SUCCESS;
+
+        if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->masters[i] == gl_my_rank))
+            parse_ioreqs(sbuf, (int)sz, gl_my_rank, gl_comps[gl_my_comp_id].comm);
+        else{
+            assert(gl_comps[fbuf->writer_id].comm != MPI_COMM_NULL);
+            FARB_DBG(VERBOSE_DBG_LEVEL, "Send reqs to mst %d", fbuf->mst_info->masters[i]);
+            errno = MPI_Isend((void*)sbuf, (int)sz, MPI_BYTE, fbuf->mst_info->masters[i], IO_REQS_TAG, gl_comps[fbuf->writer_id].comm, &sreqs[i]);
+            CHECK_MPI(errno);
+            gl_stats.nmatching_msg_sent++;
+            gl_stats.accum_msg_sz += sz;
+        }
+    }
+    errno = MPI_Waitall(fbuf->mst_info->nmasters, sreqs, MPI_STATUSES_IGNORE);
+    CHECK_MPI(errno);
+
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Sent reqs");
+//    while(!completed){
+//        errno = MPI_Testall(fbuf->mst_info->nmasters, sreqs, &completed, MPI_STATUSES_IGNORE);
+//        CHECK_MPI(errno);
+//        progress_io_matching();
+//    }
+
+    farb_free(sbuf, sz);
+    //farb_free(mst_flag, fbuf->mst_info->nmasters*sizeof(int));
+    farb_free(sreqs, fbuf->mst_info->nmasters*sizeof(MPI_Request));
+}
+
+
 /* Reader ranks and writer ranks send their read/write
    io request to master(s)
 */
@@ -1099,6 +1257,8 @@ void send_ioreq(file_buffer_t *fbuf, io_req_t *ioreq)
             FARB_DBG(VERBOSE_DBG_LEVEL, "Send req %u to mst %d", ioreq->id, fbuf->mst_info->masters[i]);
             errno = MPI_Isend((void*)sbuf, (int)sz, MPI_BYTE, fbuf->mst_info->masters[i], IO_REQ_TAG, gl_comps[fbuf->writer_id].comm, &sreqs[i]);
             CHECK_MPI(errno);
+            gl_stats.nmatching_msg_sent++;
+            gl_stats.accum_msg_sz += sz;
         }
     }
     errno = MPI_Waitall(fbuf->mst_info->nmasters, sreqs, MPI_STATUSES_IGNORE);
@@ -1240,16 +1400,18 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
             requests for this file have been completed*/
             int errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm);
             CHECK_MPI(errno);
+            gl_stats.nmsg_sent++;
             return 0;
         }
     } else{
         FARB_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs to match", fbuf->rreq_cnt, fbuf->wreq_cnt);
-        ioreq = fbuf->ioreqs;
-        while(ioreq != NULL){
-            /*Forward the info about the request to writer's master rank(s)*/
-            send_ioreq(fbuf, ioreq);
-            ioreq = ioreq->next;
-        }
+        send_ioreqs(fbuf);
+//        ioreq = fbuf->ioreqs;
+//        while(ioreq != NULL){
+//            /*Forward the info about the request to writer's master rank(s)*/
+//            send_ioreq(fbuf, ioreq);
+//            ioreq = ioreq->next;
+//        }
     }
     //reset
     fbuf->done_matching_flag = 0;
@@ -1445,6 +1607,8 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
     else
         errno = MPI_Send((void*)sbuf, (int)sbufsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[fbuf->reader_id].comm);
     CHECK_MPI(errno);
+    gl_stats.nmatching_msg_sent++;
+    gl_stats.accum_msg_sz += sbufsz;
     farb_free(sbuf, sbufsz);
 }
 
@@ -1570,6 +1734,7 @@ static void recv_data_rdr(void* buf, int bufsz)
                 requests for this file have been completed*/
                 int errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm);
                 CHECK_MPI(errno);
+                gl_stats.nmsg_sent++;
 
                 /*Process of the reader component can set this flag now.
                   Writer component will set this flag only when the master
@@ -1592,6 +1757,7 @@ void send_file_info(file_buffer_t *fbuf, int reader_root)
     assert(sbuf_sz > 0);
     errno = MPI_Send(sbuf, (int)sbuf_sz, MPI_BYTE, reader_root, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm);
     CHECK_MPI(errno);
+    gl_stats.nmsg_sent++;
     farb_free(sbuf, sbuf_sz);
 }
 
@@ -1628,6 +1794,7 @@ static void notify_workgroup(file_buffer_t *fbuf, int msgtag)
     for(i = 0; i < nranks; i++){
         errno = MPI_Send(&fbuf->ncid, 1, MPI_INT, glob_ranks[i], msgtag, gl_comps[gl_my_comp_id].comm);
         CHECK_MPI(errno);
+        gl_stats.nmsg_sent++;
     }
 
     MPI_Group_free(&file_group);
@@ -1713,6 +1880,8 @@ void progress_io_matching()
                         /*Forward this request to the root master*/
                         errno = MPI_Send(rbuf,(int)(MAX_FILE_NAME+2*sizeof(int)), MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm);
                         CHECK_MPI(errno);
+                        gl_stats.nmatching_msg_sent++;
+                        gl_stats.accum_msg_sz += (size_t)(MAX_FILE_NAME+2*sizeof(int));
                     }
                     farb_free(rbuf, MAX_FILE_NAME+2*sizeof(int));
                     break;
@@ -1745,9 +1914,19 @@ void progress_io_matching()
 //                    farb_free(rbuf, bufsz);
 //                    fbuf->is_ready = 1;
 //                    break;
+                case IO_REQS_TAG:
+                    MPI_Get_count(&status, MPI_BYTE, &bufsz);
+                    FARB_DBG(VERBOSE_DBG_LEVEL, "Received reqs from %d, comp %d (my comp %d), bufsz %d", src, comp,gl_my_comp_id, (int)bufsz);
+                    rbuf = farb_malloc(bufsz);
+                    assert(rbuf != NULL);
+                    errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_REQS_TAG, gl_comps[comp].comm, &status);
+                    CHECK_MPI(errno);
+                    parse_ioreqs(rbuf, bufsz, src, gl_comps[comp].comm);
+                    farb_free(rbuf, bufsz);
+                    break;
                 case IO_REQ_TAG:
                     MPI_Get_count(&status, MPI_BYTE, &bufsz);
-                    FARB_DBG(VERBOSE_DBG_LEVEL, "1 src %d, comp %d (my comp %d), bufsz %d", status.MPI_SOURCE, comp,gl_my_comp_id, (int)bufsz);
+                    FARB_DBG(VERBOSE_DBG_LEVEL, "Recved req src %d, comp %d (my comp %d), bufsz %d", status.MPI_SOURCE, comp,gl_my_comp_id, (int)bufsz);
                     rbuf = farb_malloc(bufsz);
                     assert(rbuf != NULL);
                     errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_REQ_TAG, gl_comps[comp].comm, &status);
@@ -1806,6 +1985,7 @@ void progress_io_matching()
                                     FARB_DBG(VERBOSE_DBG_LEVEL, "Notify mst %d", fbuf->mst_info->masters[i]);
                                     errno = MPI_Send(&ncid, 1, MPI_INT, fbuf->mst_info->masters[i], MATCH_DONE_TAG, gl_comps[gl_my_comp_id].comm);
                                     CHECK_MPI(errno);
+                                    gl_stats.nmsg_sent++;
                             }
 
                             if(fbuf->mst_info->is_master_flag){
@@ -1945,6 +2125,7 @@ void progress_io_matching()
                                 continue;
                             errno = MPI_Send(&ncid, 1, MPI_INT, fbuf->mst_info->masters[i], IO_CLOSE_FILE_TAG, gl_comps[gl_my_comp_id].comm);
                             CHECK_MPI(errno);
+                            gl_stats.nmsg_sent++;
                         }
                     }
                     if(fbuf->mst_info->is_master_flag){
