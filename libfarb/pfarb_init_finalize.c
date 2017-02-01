@@ -679,7 +679,7 @@ void finalize_files()
     while(fbuf != NULL){
 
         FARB_DBG(VERBOSE_DBG_LEVEL, "File %s, close_flag %d, notif_flag %d", fbuf->file_path, fbuf->rdr_closed_flag, fbuf->fready_notify_flag);
-        if(fbuf->fready_notify_flag != FARB_UNDEFINED){
+        if(fbuf->fready_notify_flag != FARB_UNDEFINED && fbuf->root_writer == gl_my_rank){
             assert(fbuf->writer_id == gl_my_comp_id);
             file_cnt++;
         }
@@ -691,7 +691,7 @@ void finalize_files()
         compl_cnt = 0;
         fbuf = gl_filebuf_list;
         while(fbuf != NULL){
-            if(fbuf->fready_notify_flag != FARB_UNDEFINED){
+            if(fbuf->fready_notify_flag != FARB_UNDEFINED && fbuf->root_writer == gl_my_rank){
                 assert(fbuf->writer_id == gl_my_comp_id);
 
                 if(fbuf->iomode == FARB_IO_MODE_FILE){
