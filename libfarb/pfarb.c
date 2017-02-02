@@ -64,6 +64,9 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
     gl_stats.nmsg_sent = 0;
     gl_stats.accum_msg_sz = 0;
     gl_stats.nmatching_msg_sent = 0;
+    gl_stats.accum_match_time = 0;
+    gl_stats.accum_db_match_time = 0;
+    gl_stats.ndb_match = 0;
 
     gl_my_comp_name = (char*)farb_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -138,10 +141,12 @@ _EXTERN_C_ int farb_finalize()
     clean_config();
 
     FARB_DBG(VERBOSE_DBG_LEVEL,"FARB: finalize");
-    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB matching related messages sent %d, tot sz %lu, other msgs %d",
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
              gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: Times db was matched %d", gl_stats.ndb_match);
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: Time for matching %.4f, do matching %.4f", gl_stats.accum_match_time, gl_stats.accum_db_match_time);
 
-    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB memory leak size: %lu", gl_conf.malloc_size - MAX_COMP_NAME);
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: FARB memory leak size: %lu", gl_conf.malloc_size - MAX_COMP_NAME);
     farb_free(gl_my_comp_name, MAX_COMP_NAME);
     lib_initialized = 0;
     fflush(stdout);

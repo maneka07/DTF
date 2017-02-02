@@ -68,6 +68,7 @@ typedef struct read_db_item{
 }read_db_item_t;
 
 typedef struct ioreq_db{
+    int                  updated_flag;
     MPI_Offset           nritems;
     struct write_db_item *witems;
     struct read_db_item  *ritems;

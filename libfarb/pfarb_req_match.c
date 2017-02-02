@@ -23,6 +23,7 @@ void init_iodb(file_buffer_t *fbuf)
     fbuf->mst_info->iodb->ritems = NULL;
     fbuf->mst_info->iodb->witems = NULL;
     fbuf->mst_info->iodb->nritems = 0;
+    fbuf->mst_info->iodb->updated_flag = 0;
 }
 
 static void print_read_dbitem(read_db_item_t *dbitem)
@@ -42,7 +43,7 @@ static void print_write_dbitem(write_db_item_t *dbitem)
     FARB_DBG(VERBOSE_ALL_LEVEL, "Write dbitem for var %d.", dbitem->var_id);
     tmp = dbitem->chunks;
     while(tmp != NULL){
-        FARB_DBG(VERBOSE_ALL_LEVEL, "       (r %d, off %llu, sz %llu)", tmp->rank, tmp->offset, tmp->data_sz);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "       (ps %d, off %llu, sz %llu)", tmp->rank, tmp->offset, tmp->data_sz);
         tmp = tmp->next;
     }
 }
@@ -250,6 +251,13 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
     int *bufsz;
     size_t *offt;
 
+    double t_start, t_start_send, t_send = 0;
+
+    if(!fbuf->mst_info->iodb->updated_flag) //no new info since last time matching was done, ignore
+        return;
+    fbuf->mst_info->iodb->updated_flag = 0; //reset
+
+    t_start = MPI_Wtime();
     /*Try to match as many read and write
     requests as we can*/
     ritem = fbuf->mst_info->iodb->ritems;
@@ -307,7 +315,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                     continue;
             }
             FARB_DBG(VERBOSE_ALL_LEVEL, "write record for this var:");
-            print_write_dbitem(witem);
+//            print_write_dbitem(witem);
 
             //TODO any better way than comparing each rchunk with each wchunk every time?
             wchunk = witem->chunks;
@@ -470,6 +478,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
             MPI_Request *sreqs = (MPI_Request*)farb_malloc(nwriters*sizeof(MPI_Request));
             assert(sreqs != NULL);
 
+            t_start_send = MPI_Wtime();
             for(i = 0; i < nwriters; i++){
                 FARB_DBG(VERBOSE_DBG_LEVEL, "Send data req to wrt %d", writers[i]);
                 errno = MPI_Isend((void*)sbuf[i], offt[i], MPI_BYTE, writers[i], IO_DATA_REQ_TAG, gl_comps[gl_my_comp_id].comm, &sreqs[i]);
@@ -487,6 +496,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                 errno = MPI_Testall(nwriters, sreqs, &completed, MPI_STATUSES_IGNORE);
                 CHECK_MPI(errno);
             }
+            t_send += MPI_Wtime() - t_start_send;
             //FARB_DBG(VERBOSE_ALL_LEVEL, "Finish waiting (rreq from rank %d)", ritem->rank);
             farb_free(sreqs, nwriters*sizeof(MPI_Request));
             for(i = 0; i < nwriters; i++)
@@ -528,6 +538,10 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
         farb_free(bufsz, mlc_ranks*nreallocs*sizeof(int));
         farb_free(sbuf, mlc_ranks*nreallocs*sizeof(unsigned char*));
     }
+    gl_stats.ndb_match++;
+    gl_stats.accum_db_match_time += MPI_Wtime() - t_start;
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "Time to match db reqs %.4f, time to send %.4f", MPI_Wtime() - t_start, t_send);
+
 }
 
 void clean_iodb(ioreq_db_t *iodb)
@@ -738,7 +752,7 @@ static void parse_write_ioreq(file_buffer_t *fbuf, farb_var_t *var, void *buf, i
 
     FARB_DBG(VERBOSE_ALL_LEVEL, "offt_range %d", (int)offt_range);
 
-    FARB_DBG(VERBOSE_ALL_LEVEL, "List before update");
+    FARB_DBG(VERBOSE_DBG_LEVEL, "List before update (var %d)", var->id);
     print_write_dbitem(dbitem);
     while(offt != (size_t)bufsz){
 
@@ -839,11 +853,11 @@ static void parse_write_ioreq(file_buffer_t *fbuf, farb_var_t *var, void *buf, i
                    }
             }
         }
-
+        fbuf->mst_info->iodb->updated_flag = 1;
 
         }
 
-    FARB_DBG(VERBOSE_ALL_LEVEL, "List after update");
+    FARB_DBG(VERBOSE_DBG_LEVEL, "List after update");
     print_write_dbitem(dbitem);
 }
 /*
@@ -960,6 +974,7 @@ static void parse_read_ioreq(file_buffer_t *fbuf, farb_var_t *var, void *buf, in
             chunk->prev = tmp;
         }
         dbitem->nchunks++;
+        fbuf->mst_info->iodb->updated_flag = 1;
     }
 
     assert(dbitem->nchunks > 0);
@@ -1056,10 +1071,11 @@ void send_ioreqs(file_buffer_t *fbuf)
     contig_mem_chunk_t *chunk;
     unsigned char *sbuf = NULL;
     size_t sz = 0, offt = 0;
-    int *mst_flag, mst1, mst2, i, errno;
+    int errno, i;
+   // int *mst_flag, mst1, mst2, i, errno;
     MPI_Request *sreqs;
-    MPI_Offset offt_range;
-    farb_var_t *var;
+ //   MPI_Offset offt_range;
+//    farb_var_t *var;
 
 //    mst_flag = (int*)farb_malloc(fbuf->mst_info->nmasters*sizeof(int));
 //    assert(mst_flag != NULL);
@@ -1378,7 +1394,7 @@ void match_ioreqs_all(int rw_flag)
 
 int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 {
-    io_req_t *ioreq;
+    double t_start;
 
     FARB_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %d", fbuf->ncid);
 
@@ -1387,7 +1403,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
         assert(fbuf->mst_info->nrranks_completed == 0);
         assert(fbuf->mst_info->nwranks_completed == 0);
     }
-
+    t_start = MPI_Wtime();
     /*If a writer process doesn't have any io requests, it still has to
       wait for the master process to let it complete.
       If a reader process does not have any read requests,
@@ -1417,11 +1433,18 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     fbuf->done_matching_flag = 0;
     /*Have to check for both things otherwise writers sometime hang
     (maybe they receive IO_CLOSE_FILE_TAG before READ_DONE_TAG by mistake?)*/
+    int counter = 0;
     while(!fbuf->done_matching_flag){
         progress_io_matching();
 
-        if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag  )
-            do_matching(fbuf, intracomp_io_flag);
+
+        if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag  ){
+            counter++;
+            if(counter % 300 == 0){
+                do_matching(fbuf, intracomp_io_flag);
+                counter = 0;
+            }
+        }
     }
 
     FARB_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
@@ -1443,14 +1466,13 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
       that if readers call match_ioreqs multiple times, the ioreqs
       from two different match processes may mix up on the writer's side.
       It may lead to a dead lock situation.*/
-//TODO (#1#) this means that writers don't need to count number of DONE messages from the
-//readers. Need to move sending DONE from recv_data to here and make only root reader
-//send the DONE message to root writer
+
       //if(fbuf->reader_id == gl_my_comp_id){
       FARB_DBG(VERBOSE_DBG_LEVEL, "Barrier before completing matching for %s", fbuf->file_path);
       MPI_Barrier(fbuf->comm);
       //}
-
+    gl_stats.accum_match_time += MPI_Wtime() - t_start;
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Time for matching %.4f", MPI_Wtime() - t_start);
     return 0;
 }
 
