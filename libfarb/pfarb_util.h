@@ -16,7 +16,7 @@
 #define RECV_READY_TAG      1       /*reader rank -> writer rank*/
 #define HEADER_TAG          2       /*writer -> reader*/
 #define VARS_TAG            3       /*writer -> reader*/
-#define IO_REQ_TAG          4       /*writer rank / reader rank -> master rank*/
+//#define IO_REQ_TAG          4       /*writer rank / reader rank -> master rank*/
 #define IO_DATA_REQ_TAG     5       /*master -> writer*/
 #define IO_DATA_TAG         6       /*writer -> reader*/
 #define READ_DONE_TAG        7       /*reader->master*/

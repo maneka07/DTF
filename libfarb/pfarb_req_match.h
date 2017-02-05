@@ -3,6 +3,9 @@
 
 #include <mpi.h>
 #include "pfarb_file_buffer.h"
+#include "rb_red_black_tree.h"
+
+#define UNLIM_NELEMS_RANGE 256
 
 typedef struct contig_mem_chunk{
     MPI_Offset              offset;
@@ -35,25 +38,31 @@ typedef struct io_req{
   All read record will be grouped by reader's rank.
   This is done for simplicity of matching and sending
   data requests to writer ranks*/
+
+//typedef struct chunk_tuple{
+//    MPI_Offset             offset;
+//    MPI_Offset             data_sz;
+//}chunk_tuple_t;
+
 typedef struct write_chunk_rec{
     int                    rank;
     MPI_Offset             offset;
     MPI_Offset             data_sz;
-    struct write_chunk_rec *next;
-    struct write_chunk_rec *prev;
 }write_chunk_rec_t;
 
 typedef struct write_db_item{
     int                    var_id;
-    struct write_chunk_rec *chunks;
-    struct write_chunk_rec *last;
+    rb_red_blk_tree        *chunks;
+    MPI_Offset             nchunks;
+    //struct write_chunk_rec *chunks;
+    //struct write_chunk_rec *last;
     struct write_db_item   *next;
 }write_db_item_t;
 
 typedef struct read_chunk_rec{
     int                     var_id;
-    MPI_Offset              offset;
-    MPI_Offset              data_sz;
+    MPI_Offset             offset;
+    MPI_Offset             data_sz;
     struct read_chunk_rec   *next;
     struct read_chunk_rec   *prev;
 }read_chunk_rec_t;
@@ -63,6 +72,7 @@ typedef struct read_db_item{
     MPI_Comm                comm;   /*Both writer and reader may read the file, hence, need to distinguish.*/
     MPI_Offset              nchunks;
     struct read_chunk_rec   *chunks;
+    struct read_chunk_rec   *last;
     struct read_db_item     *next;
     struct read_db_item     *prev;
 }read_db_item_t;
@@ -113,7 +123,7 @@ io_req_t *new_ioreq(int id,
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
 void delete_ioreqs(file_buffer_t *fbuf);
 void progress_io_matching();
-void send_ioreq(file_buffer_t *fbuf, io_req_t *ioreq);
+//void send_ioreq(file_buffer_t *fbuf, io_req_t *ioreq);
 void send_ioreqs(file_buffer_t *fbuf);
 void clean_iodb(ioreq_db_t *iodb);
 int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
