@@ -67,6 +67,11 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
     gl_stats.accum_match_time = 0;
     gl_stats.accum_db_match_time = 0;
     gl_stats.ndb_match = 0;
+    gl_stats.num_tsrch = 0;
+    gl_stats.t_treesrch = 0;
+    gl_stats.walltime = MPI_Wtime();
+    gl_stats.accum_comm_time = 0;
+    gl_stats.t_progress = 0;
 
     gl_my_comp_name = (char*)farb_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -141,19 +146,37 @@ _EXTERN_C_ int farb_finalize()
     clean_config();
 
     FARB_DBG(VERBOSE_DBG_LEVEL,"FARB: finalize");
-    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
+    gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
+    FARB_DBG(VERBOSE_DBG_LEVEL, "FARB STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
              gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
-    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: Times db was matched %d", gl_stats.ndb_match);
-    FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: Time for matching %.4f, do matching %.4f", gl_stats.accum_match_time, gl_stats.accum_db_match_time);
+
+    if(gl_stats.accum_db_match_time > 0)
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: match_ioreqs %.4f (%.4f%%), do_matching %.4f(%.4f%%), times do_matching %u",
+                 gl_stats.accum_match_time, (gl_stats.accum_match_time/gl_stats.walltime)*100,
+                 gl_stats.accum_db_match_time, (gl_stats.accum_db_match_time/gl_stats.walltime)*100,
+                 gl_stats.ndb_match );
+    if(gl_stats.accum_comm_time > 0)
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: time spent in comm %.4f(%.4f%%)",
+                gl_stats.accum_comm_time, (gl_stats.accum_comm_time/gl_stats.walltime)*100);
+    if(gl_stats.t_progress > 0){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: time spent in progress %.4f(%.4f%%)",
+                gl_stats.t_progress, (gl_stats.t_progress/gl_stats.walltime)*100);
+    }
 
     FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: FARB memory leak size: %lu", gl_conf.malloc_size - MAX_COMP_NAME);
+
+
+    if(gl_stats.num_tsrch > 0){
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: searched tree %u times ( %.4f%% of runtime)", gl_stats.num_tsrch, (gl_stats.t_treesrch/gl_stats.walltime)*100);
+    }
+
+
+
     farb_free(gl_my_comp_name, MAX_COMP_NAME);
     lib_initialized = 0;
     fflush(stdout);
     fflush(stderr);
     return 0;
-
-
 }
 
 
@@ -519,14 +542,21 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Data
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
-//TODO make this work for fixed distr matching as well
-    /*Check if there is an UNLIMITED dimension: currently it's not supported*/
+
+    //TODO DIRTY HACKING STARTS HERE
+//    /*Check if there is an UNLIMITED dimension: currently it's not supported*/
+//    MPI_Offset *reverse_chape = farb_malloc(ndims*sizeof(MPI_Offset));
+//    assert(reverse_chape != NULL);
+
     for(i = 0; i < ndims; i++)
         FARB_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d size %llu", varid, i, shape[i]);
-    /*For now, can only support unlimited dimension if it's the first dimension array*/
+//NOTE: c and fortran have different memory layour for arrays, reverse the indexing
+    /*For now, can only support unlimited dimension if it's the fasted changing dimension array*/
     if( (ndims > 0) && (shape[0] == FARB_UNLIMITED))
         FARB_DBG(VERBOSE_DBG_LEVEL, "var has unlimited dimension");
+
     for(i = 1; i < ndims; i++){
+      //  reverse_chape[ndims - i - 1] = shape[i];
         //we can support unlimited dimension if it's the first dimension
         //else abort
         if(shape[i] == FARB_UNLIMITED){

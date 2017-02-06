@@ -42,6 +42,8 @@ void info_destroy(void *chunk)
 
 //====================================================
 
+static void send_data_wrt2rdr(void* buf, int bufsz);
+
 void init_iodb(file_buffer_t *fbuf)
 {
     fbuf->mst_info->iodb = farb_malloc(sizeof(struct ioreq_db));
@@ -327,7 +329,6 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
             continue;
         }
 
-
         nwriters = 0;
 
         for(i = 0; i < allocd_nwriters; i++){
@@ -368,7 +369,11 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
             while(rchunk->data_sz){
                 match_chunk.offset = rchunk->offset;
                 match_chunk.data_sz = rchunk->data_sz;
+                double t_st_srch = MPI_Wtime();
                 wchunk = RBExactQuery(witem->chunks, &match_chunk);
+                gl_stats.t_treesrch += MPI_Wtime() - t_st_srch;
+                gl_stats.num_tsrch++;
+
                 if(wchunk == NULL){
                     //couldn't match
                     //rchunk = rchunk->next;
@@ -504,189 +509,52 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
 
             rchunk = rchunk->next;
         }
-            {
-            //TODO any better way than comparing each rchunk with each wchunk every time?
-//            wchunk = witem->chunks;
-//            while(wchunk != NULL){
-//                matchsz = 0;
-//                if( (rchunk->offset >= wchunk->offset) && (rchunk->offset < wchunk->offset + wchunk->data_sz)){
-//                    start_offt = rchunk->offset;
-//                    if( start_offt + rchunk->data_sz <= wchunk->offset + wchunk->data_sz)
-//                        matchsz = rchunk->data_sz;
-//                    else
-//                        matchsz = wchunk->offset + wchunk->data_sz - start_offt;
-//                } else if( (wchunk->offset > rchunk->offset) && (wchunk->offset < rchunk->offset + rchunk->data_sz)){
-//                    start_offt = wchunk->offset;
-//
-//                    if(wchunk->offset + wchunk->data_sz >= rchunk->offset + rchunk->data_sz)
-//                        matchsz = rchunk->offset + rchunk->data_sz - start_offt;
-//                    else
-//                        matchsz = wchunk->data_sz;
-//                } else {
-//                    wchunk = wchunk->next;
-//                    continue;
-//                }
-//
-//                /*Find send buffer for this rank*/
-//                if(nwriters == 0){
-//                    writers[nwriters] = wchunk->rank;
-//                    rank_idx = 0;
-//                    nwriters++;
-//                } else {
-//                    for(i = 0; i < nwriters; i++)
-//                        if(writers[i] == wchunk->rank)
-//                            break;
-//                    if(i == nwriters){
-//                        /*add new send buffer*/
-//                        if(nwriters % mlc_ranks == 0 ){
-//                            void *tmp;
-//                            unsigned char **tmp1;
-//                            tmp = realloc((void*)writers, (nwriters+mlc_ranks)*sizeof(int));
-//                            gl_conf.malloc_size += mlc_ranks*sizeof(int);
-//                            assert(tmp != NULL);
-//                            writers = (int*)tmp;
-//
-//                            tmp = realloc((void*)offt, (nwriters+mlc_ranks)*sizeof(size_t));
-//                            gl_conf.malloc_size += mlc_ranks*sizeof(int);
-//                            assert(tmp != NULL);
-//                            offt = (size_t*)tmp;
-//
-//                            tmp = realloc((void*)bufsz, (nwriters+mlc_ranks)*sizeof(int));
-//                            gl_conf.malloc_size += mlc_ranks*sizeof(int);
-//                            assert(tmp != NULL);
-//                            bufsz = (int*)tmp;
-//
-//                            tmp1 = realloc(sbuf, (nwriters+mlc_ranks)*sizeof(unsigned char*));
-//                            gl_conf.malloc_size += mlc_ranks*sizeof(int);
-//                            assert(tmp1 != NULL);
-//                            sbuf = tmp1;
-//                        }
-//                        writers[nwriters] = wchunk->rank;
-//                        offt[nwriters] = 0;
-//                        bufsz[nwriters] = 0;
-//                        sbuf[nwriters] = NULL;
-//                        rank_idx = nwriters;
-//                        nwriters++;
-//                    } else
-//                        rank_idx = i;
-//                }
-//                if(offt[rank_idx] == 0) {
-//                    unsigned char *tmp;
-//                    tmp = realloc(sbuf[rank_idx], bufsz[rank_idx] + mlc_buf);
-//                    gl_conf.malloc_size += mlc_buf;
-//                    assert(tmp != NULL);
-//                    sbuf[rank_idx] = tmp;
-//                    bufsz[rank_idx] += mlc_buf;
-//                    *(MPI_Offset*)(sbuf[rank_idx]) = (MPI_Offset)ritem->rank; //to whom writer should send the data
-//                    offt[rank_idx] += sizeof(MPI_Offset);
-//                    if(intracomp_io_flag)
-//                        FARB_DBG(VERBOSE_DBG_LEVEL, "Tell w to send the data to another w");
-//                    else
-//                       FARB_DBG(VERBOSE_DBG_LEVEL, "Tell w to send the data to reader");
-//                    *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)intracomp_io_flag; //intra- or inter- component?
-//                    offt[rank_idx] += sizeof(MPI_Offset);
-//                    *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)fbuf->ncid;  //data from what file
-//                    offt[rank_idx] += sizeof(MPI_Offset);
-//                }
-//                //FARB_DBG(VERBOSE_ALL_LEVEL, "rank idx %d, nranks %d", rank_idx, nwriters);
-//                if(offt[rank_idx] + sizeof(MPI_Offset)*3 > bufsz[rank_idx]){
-//                    unsigned char *tmp;
-//                    tmp = realloc(sbuf[rank_idx], bufsz[rank_idx] + mlc_buf);
-//                    gl_conf.malloc_size += mlc_buf;
-//                    assert(tmp != NULL);
-//                    sbuf[rank_idx] = tmp;
-//                    bufsz[rank_idx] += mlc_buf;
-//                }
-//
-//                *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)rchunk->var_id;
-//                offt[rank_idx] += sizeof(MPI_Offset);
-//                *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = start_offt;
-//                offt[rank_idx] += sizeof(MPI_Offset);
-//                *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = matchsz;
-//                offt[rank_idx] += sizeof(MPI_Offset);
-//
-//                FARB_DBG(VERBOSE_ALL_LEVEL, "Will ask %d for data (%d, %d)", wchunk->rank, (int)start_offt, (int)matchsz);
-//                /*Check if all the data of this chunk has been matched*/
-//                if(matchsz == rchunk->data_sz){
-//                    break;
-//                } else if(matchsz > 0){
-//                    /* For now, we managed to match only a part of memory chunk*/
-//                    FARB_DBG(VERBOSE_DBG_LEVEL, "Matched part of req: (%d, %d) of (%d, %d)", (int)start_offt, (int)matchsz, (int)rchunk->offset, (int)rchunk->data_sz);
-//                    if(start_offt == rchunk->offset){
-//                        rchunk->offset = start_offt + matchsz;
-//                        rchunk->data_sz -= matchsz;
-//                    } else if(start_offt + matchsz == rchunk->offset + rchunk->data_sz){
-//                        rchunk->data_sz -= matchsz;
-//                    } else {
-//                        FARB_DBG(VERBOSE_DBG_LEVEL, "Matched in the middle of a chunk");
-//                        /*We matched data in the middle of the chunk,
-//                        hence, we have to split it into 2 chunks now*/
-//                        read_chunk_rec_t *chunk = farb_malloc(sizeof(read_chunk_rec_t));
-//                        assert(chunk != NULL);
-//                        chunk->var_id = rchunk->var_id;
-//                        chunk->offset = start_offt + matchsz;
-//                        chunk->data_sz = rchunk->offset + rchunk->data_sz - chunk->offset;
-//                        rchunk->data_sz -= matchsz + chunk->data_sz;
-//                        /*Instert the new chunk and skip it*/
-//                        chunk->next = rchunk->next;
-//                        if(chunk->next != NULL)
-//                            chunk->next->prev = chunk;
-//                        rchunk->next = chunk;
-//                        chunk->prev = rchunk;
-//                        ritem->nchunks++;
-//                    }
-//
-//                    print_read_dbitem(ritem);
-//                }
-//                wchunk = wchunk->next;
-//            }
-//
-//            if(matchsz == rchunk->data_sz){
-//                FARB_DBG(VERBOSE_ALL_LEVEL, "Matched all chunk (%d, %d). Will delete (nchunk %d)", (int)rchunk->offset, (int)rchunk->data_sz, (int)ritem->nchunks);
-//                /*delete this chunk*/
-//                read_chunk_rec_t *tmp = rchunk;
-//                if(rchunk == ritem->chunks)
-//                    ritem->chunks = ritem->chunks->next;
-//                if(rchunk->next != NULL)
-//                    rchunk->next->prev = NULL;
-//                if(rchunk->prev != NULL)
-//                    rchunk->prev->next = rchunk->next;
-//
-//                rchunk = rchunk->next;
-//                farb_free(tmp, sizeof(read_chunk_rec_t));
-//                ritem->nchunks--;
-//                continue;
-//            }
-//            rchunk = rchunk->next;
-//        }
-            }
 
         if(nwriters > 0){
             int errno;
             int completed;
             MPI_Request *sreqs = (MPI_Request*)farb_malloc(nwriters*sizeof(MPI_Request));
             assert(sreqs != NULL);
+           // int my_idx = -1;
 
             double t_start_send = MPI_Wtime();
             for(i = 0; i < nwriters; i++){
                 assert(offt[i] > 0);
+
+//                if(writers[i] == gl_my_rank){
+//                    my_idx = i;
+//                    sreqs[i] = MPI_REQUEST_NULL;
+//                    continue;
+//                } else {
                 FARB_DBG(VERBOSE_DBG_LEVEL, "Send data req to wrt %d", writers[i]);
                 errno = MPI_Isend((void*)sbuf[i], offt[i], MPI_BYTE, writers[i], IO_DATA_REQ_TAG, gl_comps[gl_my_comp_id].comm, &sreqs[i]);
                 CHECK_MPI(errno);
+                //}
                 gl_stats.nmatching_msg_sent++;
                 gl_stats.accum_msg_sz += offt[i];
             }
 
 //            errno = MPI_Waitall(nwriters, sreqs, MPI_STATUSES_IGNORE);
 //            CHECK_MPI(errno);
+//            if(my_idx != -1){
+//                FARB_DBG(VERBOSE_DBG_LEVEL, "Parse data req to myself");
+//                send_data_wrt2rdr(sbuf[my_idx], offt[my_idx]);
+//            }
             completed = 0;
             //FARB_DBG(VERBOSE_ALL_LEVEL, "Start waiting (rreq from rank %d)", ritem->rank);
+            double t_progress = 0;
             while(!completed){
-                progress_io_matching();
                 errno = MPI_Testall(nwriters, sreqs, &completed, MPI_STATUSES_IGNORE);
                 CHECK_MPI(errno);
+                double tmp = MPI_Wtime();
+                progress_io_matching();
+                t_progress += MPI_Wtime() - tmp;
             }
+
+            gl_stats.accum_comm_time += MPI_Wtime() - t_start_send - t_progress;
             t_send += MPI_Wtime() - t_start_send;
+
+
             //FARB_DBG(VERBOSE_ALL_LEVEL, "Finish waiting (rreq from rank %d)", ritem->rank);
             farb_free(sreqs, nwriters*sizeof(MPI_Request));
 //            for(i = 0; i < nwriters; i++)
@@ -733,7 +601,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
 
     gl_stats.ndb_match++;
     gl_stats.accum_db_match_time += MPI_Wtime() - t_start;
-    FARB_DBG(VERBOSE_ERROR_LEVEL, "Stat: Time to match db reqs %.4f, time to send %.4f", MPI_Wtime() - t_start, t_send);
+    //FARB_DBG(VERBOSE_DBG_LEVEL, "Stat: Time to match db reqs %.4f, time to send %.4f", MPI_Wtime() - t_start, t_send);
 
 }
 
@@ -772,8 +640,9 @@ void clean_iodb(ioreq_db_t *iodb)
             ritem->chunks = ritem->chunks->next;
             farb_free(rrec, sizeof(read_chunk_rec_t));
             rrec = ritem->chunks;
+            ritem->nchunks--;
         }
-
+        assert(ritem->nchunks == 0);
         iodb->ritems = iodb->ritems->next;
         farb_free(ritem, sizeof(read_db_item_t));
         ritem = iodb->ritems;
@@ -948,337 +817,6 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
 
 }
 
-
-//static void parse_ioreq(void *buf, int bufsz, int rank, MPI_Comm comm)
-//{
-//    int ncid, var_id, rw_flag;
-//    file_buffer_t *fbuf;
-//    farb_var_t *var;
-//    size_t offt = 0;
-//    unsigned char *chbuf = (unsigned char*)buf;
-//    ncid = (int)(*((MPI_Offset*)chbuf));
-//    offt += sizeof(MPI_Offset);
-//    rw_flag = (int)(*(MPI_Offset*)(chbuf+offt));
-//    offt += sizeof(MPI_Offset);
-//    var_id = (int)(*(MPI_Offset*)(chbuf+offt));
-//    offt += sizeof(MPI_Offset);
-//
-//    if(rw_flag == FARB_READ)
-//        FARB_DBG(VERBOSE_DBG_LEVEL, "Master recv read req from %d for ncid %d, var %d", rank, ncid, var_id);
-//    else
-//        FARB_DBG(VERBOSE_DBG_LEVEL, "Master recv write req from %d for ncid %d, var %d", rank, ncid, var_id);
-//
-//    fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
-//    assert(fbuf != NULL);
-//
-//    if(comm == gl_comps[fbuf->reader_id].comm)
-//        FARB_DBG(VERBOSE_DBG_LEVEL, "Req is from reader");
-//    else {
-//        assert(comm == gl_comps[fbuf->writer_id].comm);
-//        FARB_DBG(VERBOSE_DBG_LEVEL, "Req is from writer");
-//    }
-//
-//    var = find_var(fbuf->vars, var_id);
-//    assert(var != NULL);
-//
-//    bufsz -= (int)offt;
-//
-//    if(rw_flag == FARB_READ)
-//        parse_read_ioreq(fbuf, var, chbuf+offt, bufsz, rank, comm);
-//    else
-//        parse_write_ioreq(fbuf, var, chbuf+offt, bufsz, rank, comm);
-//    FARB_DBG(VERBOSE_DBG_LEVEL, "Finished parsing. (mem %lu)", gl_conf.malloc_size);
-//
-//}
-
-/*
-    update the database with write io request
-*/
-//static void parse_write_ioreq(file_buffer_t *fbuf, farb_var_t *var, void *buf, int bufsz, int rank, MPI_Comm comm)
-//{
-//    write_db_item_t *dbitem;
-//    write_chunk_rec_t *new_chunk;
-//
-//    int mst1, mst2, mst;
-//    MPI_Offset offset, data_sz, offt_range;
-//    unsigned char *chbuf = (unsigned char*)buf;
-//    size_t offt = 0;
-//
-//    /*Allow write requests only from the writer*/
-//    assert(comm == gl_comps[fbuf->writer_id].comm);
-//
-//    /*Find corresponding record in the database*/
-//    assert(fbuf->mst_info->iodb!=NULL);
-//    dbitem = fbuf->mst_info->iodb->witems;
-//    while(dbitem != NULL){
-//        if(dbitem->var_id == var->id)
-//            break;
-//        dbitem = dbitem->next;
-//    }
-//
-//    if(dbitem == NULL){
-//        dbitem = (write_db_item_t*)farb_malloc(sizeof(write_db_item_t));
-//        assert(dbitem != NULL);
-//        dbitem->var_id = var->id;
-//        dbitem->next = NULL;
-//        dbitem->chunks = NULL;
-//        dbitem->last = NULL;
-//        dbitem->memchunks = NULL;
-//
-//        //enqueue
-//        if(fbuf->mst_info->iodb->witems == NULL)
-//            fbuf->mst_info->iodb->witems = dbitem;
-//        else{
-//            dbitem->next = fbuf->mst_info->iodb->witems;
-//            fbuf->mst_info->iodb->witems = dbitem;
-//        }
-//    }
-//
-//    /*add mem chunks to the list for future matching.
-//      Pick only those mem chunks whose offsets are within
-//      the range I'm responsible for*/
-//
-//    if(has_unlim_dim(var))
-//        offt_range = 0;
-//    else {
-//        int el_sz;
-//        MPI_Type_size(var->dtype, &el_sz);
-//        FARB_DBG(VERBOSE_ALL_LEVEL, "last idx %d, offt %d", (int)last_1d_index(var->ndims, var->shape), (int)(last_1d_index(var->ndims, var->shape)*el_sz));
-//        offt_range = (MPI_Offset)((last_1d_index(var->ndims, var->shape) + 1)/fbuf->mst_info->nmasters);
-//        offt_range *= el_sz;
-//    }
-//
-//    FARB_DBG(VERBOSE_ALL_LEVEL, "offt_range %d", (int)offt_range);
-//
-//    FARB_DBG(VERBOSE_DBG_LEVEL, "List before update (var %d)", var->id);
-//    print_write_dbitem(dbitem);
-//    while(offt != (size_t)bufsz){
-//
-//        offset = *(MPI_Offset*)(chbuf+offt);
-//        offt+=sizeof(MPI_Offset);
-//        data_sz = *(MPI_Offset*)(chbuf+offt);
-//        offt+=sizeof(MPI_Offset);
-//
-//        if(offt_range == 0){//Number of elements in the variable is less than then number of masters
-//            mst1 = mst2 = 0;
-//        } else {
-//            mst1 = (int)(offset/offt_range);
-//            if(mst1 >= fbuf->mst_info->nmasters)
-//                mst1 = fbuf->mst_info->nmasters - 1;
-//            mst2 = (int)( (offset+data_sz-1)/offt_range);
-//            if(mst2 >= fbuf->mst_info->nmasters)
-//                mst2 = fbuf->mst_info->nmasters - 1;
-//        }
-//
-//        FARB_DBG(VERBOSE_ALL_LEVEL, "--> (%d, %d): mst1 %d mst2 %d", (int)offset, (int)data_sz, mst1, mst2);
-//        if( (fbuf->mst_info->masters[mst1] != gl_my_rank) && (fbuf->mst_info->masters[mst2] != gl_my_rank))
-//            /*This master is not responsible for this data*/
-//            continue;
-//        else if(fbuf->mst_info->masters[mst1] != gl_my_rank){
-//            for(mst = 0; mst < fbuf->mst_info->nmasters; mst++)
-//                if(fbuf->mst_info->masters[mst] == gl_my_rank)
-//                    break;
-//            FARB_DBG(VERBOSE_DBG_LEVEL, "Changing offset from %llu to %llu, datasz from %llu to %llu",
-//                     offset, offt_range*mst, data_sz, data_sz - (offt_range*mst - offset));
-//            data_sz -= offt_range*mst - offset;
-//            offset = offt_range*mst;
-//
-//        } else if (fbuf->mst_info->masters[mst2] != gl_my_rank){
-//            for(mst = 0; mst < fbuf->mst_info->nmasters; mst++)
-//                if(fbuf->mst_info->masters[mst] == gl_my_rank)
-//                    break;
-//            FARB_DBG(VERBOSE_DBG_LEVEL, "Changing data_sz from %d to %d", (int)data_sz, (int)(offt_range*(mst+1) - offset));
-//            data_sz = offt_range*(mst+1) - offset;
-//        }
-//
-//        new_chunk = new_write_chunk_rec(rank, offset, data_sz);
-//
-//        FARB_DBG(VERBOSE_ALL_LEVEL, "new chunk (r %d, off %llu, sz %llu)", new_chunk->rank, new_chunk->offset, new_chunk->data_sz);
-//
-//        if(dbitem->chunks == NULL){
-//            dbitem->chunks = new_chunk;
-//            dbitem->last = new_chunk;
-//        } else {
-//            write_chunk_rec_t *chunk;
-//
-//            chunk = dbitem->chunks;
-//            while( (chunk != NULL) && (chunk->offset < new_chunk->offset))
-//                chunk = chunk->next;
-//
-//            if(chunk == NULL){ //insert to the end
-//                /*check for overlapping*/
-//                if( (new_chunk->offset >= dbitem->last->offset) &&
-//                    (new_chunk->offset < dbitem->last->offset + dbitem->last->data_sz)){
-//
-////                    FARB_DBG(VERBOSE_ALL_LEVEL, "FARB Warning: multiple writes of the same area (by processes %d and %d). \
-////                            Overwrite order is not defined. ", dbitem->last->rank, new_chunk->rank);
-//                    FARB_DBG(VERBOSE_ALL_LEVEL, "FARB Warning: write overlap (r%d, r%d): dbitem (%llu, %llu), new (%llu, %llu)",
-//                             dbitem->last->rank, new_chunk->rank, dbitem->last->offset, dbitem->last->data_sz, new_chunk->offset, new_chunk->data_sz);
-//                }
-//                dbitem->last->next = new_chunk;
-//                new_chunk->prev = dbitem->last;
-//                dbitem->last = new_chunk;
-//            } else {
-//                    /*check for overlapping*/
-//                    if(chunk->prev != NULL){
-//                        if((new_chunk->offset >= chunk->prev->offset) &&
-//                           (new_chunk->offset < chunk->prev->offset+chunk->prev->data_sz)){
-////                            FARB_DBG(VERBOSE_ALL_LEVEL, "FARB Warning: multiple writes of the same area (by processes %d and %d). \
-////                                    Overwrite order is not defined. ", chunk->prev->rank, new_chunk->rank);
-//                            FARB_DBG(VERBOSE_ALL_LEVEL, "FARB Warning: write overlap (ranks %d,%d): dbitem (%llu, %llu), new (%llu, %llu)",
-//                             chunk->prev->rank, new_chunk->rank, chunk->prev->offset, chunk->prev->data_sz, new_chunk->offset, new_chunk->data_sz);
-//                        }
-//                    }
-//
-//                   if( (new_chunk->offset + new_chunk->data_sz > chunk->offset) &&
-//                       (new_chunk->offset + new_chunk->data_sz <= chunk->offset+chunk->data_sz)){
-////                        FARB_DBG(VERBOSE_ALL_LEVEL, "FARB Warning: multiple writes of the same area (by processes %d and %d). \
-////                                    Overwrite order is not defined. ", chunk->rank, new_chunk->rank);
-//                        FARB_DBG(VERBOSE_ALL_LEVEL, "FARB Warning: write overlap (ranks %d, r%d): dbitem (%llu, %llu), new (%llu, %llu)",
-//                             chunk->rank, new_chunk->rank, chunk->offset, chunk->data_sz, new_chunk->offset, new_chunk->data_sz);
-//                    }
-//
-//                   //insert before this chunk
-//                   if(chunk == dbitem->chunks){
-//                        new_chunk->next = chunk;
-//                        chunk->prev = new_chunk;
-//                        dbitem->chunks = new_chunk;
-//                   } else {
-//                        chunk->prev->next = new_chunk;
-//                        new_chunk->prev = chunk->prev;
-//                        new_chunk->next = chunk;
-//                        chunk->prev = new_chunk;
-//                   }
-//            }
-//        }
-//        fbuf->mst_info->iodb->updated_flag = 1;
-//
-//        }
-//
-//    FARB_DBG(VERBOSE_DBG_LEVEL, "List after update");
-//    print_write_dbitem(dbitem);
-//}
-/*
-    update the database with io request from reader
-*/
-//static void parse_read_ioreq(file_buffer_t *fbuf, farb_var_t *var, void *buf, int bufsz, int rank, MPI_Comm comm)
-//{
-//    read_db_item_t *dbitem;
-//    read_chunk_rec_t *chunk, *tmp;
-//
-//    int mst1, mst2, mst;
-//    MPI_Offset offset, data_sz, offt_range;
-//    unsigned char *chbuf = (unsigned char*)buf;
-//    size_t offt = 0;
-//
-//    /*Find corresponding record in the database*/
-//    dbitem = fbuf->mst_info->iodb->ritems;
-//    while(dbitem != NULL){
-//        if( (dbitem->rank == rank) && (dbitem->comm == comm) )
-//            break;
-//        dbitem = dbitem->next;
-//    }
-//
-//    if(dbitem == NULL){
-//        dbitem = (read_db_item_t*)farb_malloc(sizeof(read_db_item_t));
-//        assert(dbitem != NULL);
-//        dbitem->rank = rank;
-//        dbitem->comm = comm;
-//        dbitem->next = NULL;
-//        dbitem->prev = NULL;
-//        dbitem->chunks = NULL;
-//        dbitem->nchunks = 0;
-//
-//        //enqueue
-//        if(fbuf->mst_info->iodb->ritems == NULL)
-//            fbuf->mst_info->iodb->ritems = dbitem;
-//        else{
-//            dbitem->next = fbuf->mst_info->iodb->ritems;
-//            fbuf->mst_info->iodb->ritems->prev = dbitem;
-//            fbuf->mst_info->iodb->ritems = dbitem;
-//        }
-//        fbuf->mst_info->iodb->nritems++;
-//    }
-//    FARB_DBG(VERBOSE_DBG_LEVEL, "ritems %d",(int)fbuf->mst_info->iodb->nritems);
-//
-//    /*add mem chunks to the list for future matching.
-//      Pick only those mem chunks whose offsets are within
-//      the range I'm responsible for*/
-//
-//    if(has_unlim_dim(var)){
-//        offt_range = 0;
-//    } else {
-//        int el_sz;
-//        MPI_Type_size(var->dtype, &el_sz);
-//        offt_range = (MPI_Offset)((last_1d_index(var->ndims, var->shape)+1)/fbuf->mst_info->nmasters);
-//        offt_range *= el_sz;
-//    }
-//
-//    FARB_DBG(VERBOSE_ALL_LEVEL, "offt_range %d", (int)offt_range);
-//
-//    while(offt != (size_t)bufsz){
-//
-//        offset = *(MPI_Offset*)(chbuf+offt);
-//        offt+=sizeof(MPI_Offset);
-//        data_sz = *(MPI_Offset*)(chbuf+offt);
-//        offt+=sizeof(MPI_Offset);
-//        if(offt_range == 0){
-//            mst1 = mst2 = 0;
-//        } else {
-//            mst1 = (int)(offset/offt_range);
-//            if(mst1 >= fbuf->mst_info->nmasters)
-//                mst1 = fbuf->mst_info->nmasters - 1;
-//            mst2 = (int)( (offset+data_sz-1)/offt_range);
-//            if(mst2 >= fbuf->mst_info->nmasters)
-//                mst2 = fbuf->mst_info->nmasters - 1;
-//        }
-//        FARB_DBG(VERBOSE_ALL_LEVEL, "--> (%d, %d): mst1 %d mst2 %d", (int)offset, (int)data_sz, mst1, mst2);
-//        if( (fbuf->mst_info->masters[mst1] != gl_my_rank) && (fbuf->mst_info->masters[mst2] != gl_my_rank))
-//            /*This master is not responsible for this data*/
-//            continue;
-//        else if(fbuf->mst_info->masters[mst1] != gl_my_rank){
-//            for(mst = 0; mst < fbuf->mst_info->nmasters; mst++)
-//                if(fbuf->mst_info->masters[mst] == gl_my_rank)
-//                    break;
-//            assert(mst != fbuf->mst_info->nmasters);
-//            FARB_DBG(VERBOSE_DBG_LEVEL, "Changing offset from %llu to %llu, datasz from %llu to %llu",
-//                     offset, offt_range*mst, data_sz, data_sz - (offt_range*mst - offset));
-//            data_sz -= offt_range*mst - offset;
-//            offset = offt_range*mst;
-//        } else if(fbuf->mst_info->masters[mst2] != gl_my_rank){
-//            for(mst = 0; mst < fbuf->mst_info->nmasters; mst++)
-//                if(fbuf->mst_info->masters[mst] == gl_my_rank)
-//                    break;
-//            assert(mst != fbuf->mst_info->nmasters);
-//            FARB_DBG(VERBOSE_DBG_LEVEL, "Changing data_sz from %d to %d", (int)data_sz, (int)(offt_range*(mst+1) - offset));
-//            data_sz = offt_range*(mst+1) - offset;
-//        }
-//
-//        chunk = (read_chunk_rec_t*)farb_malloc(sizeof(read_chunk_rec_t));
-//        assert(chunk != NULL);
-//        chunk->var_id = var->id;
-//        chunk->offset = offset;
-//        chunk->data_sz = data_sz;
-//        chunk->next = NULL;
-//        chunk->prev = NULL;
-//
-//        if(dbitem->chunks == NULL)
-//            dbitem->chunks = chunk;
-//        else{
-//            tmp = dbitem->chunks;
-//            while(tmp->next != NULL)
-//                tmp = tmp->next;
-//            tmp->next = chunk;
-//            chunk->prev = tmp;
-//        }
-//        dbitem->nchunks++;
-//        fbuf->mst_info->iodb->updated_flag = 1;
-//    }
-//
-//    assert(dbitem->nchunks > 0);
-//    FARB_DBG(VERBOSE_DBG_LEVEL, "rreq added");
-//    print_read_dbitem(dbitem);
-//}
 
 io_req_t *new_ioreq(int id,
                     int var_id,
@@ -1458,13 +996,17 @@ void send_ioreqs(file_buffer_t *fbuf)
             assert(var->shape[0] == FARB_UNLIMITED);
             for(i = 1; i < var->ndims; i++)
                 nelems *= var->shape[i];
-            offt_range = nelems * el_sz * UNLIM_NELEMS_RANGE;
+            offt_range = (size_t)(nelems / fbuf->mst_info->nmasters);
+            if(offt_range < UNLIM_NELEMS_RANGE)
+                offt_range = UNLIM_NELEMS_RANGE;
+            offt_range *= el_sz;
+
         } else {
             //FARB_DBG(VERBOSE_ALL_LEVEL, "last idx %d, offt %d", (int)last_1d_index(var->ndims, var->shape), (int)(last_1d_index(var->ndims, var->shape)*el_sz));
-            offt_range = (MPI_Offset)((last_1d_index(var->ndims, var->shape) + 1)/fbuf->mst_info->nmasters);
+            offt_range = (size_t)((last_1d_index(var->ndims, var->shape) + 1)/fbuf->mst_info->nmasters);
             offt_range *= el_sz;
         }
-        FARB_DBG(VERBOSE_DBG_LEVEL, "offt_range %d", (int)offt_range);
+        FARB_DBG(VERBOSE_DBG_LEVEL, "offt_range %lu", offt_range);
         assert(offt_range > 0);
 
         chunk = ioreq->mem_chunks;
@@ -1479,6 +1021,8 @@ void send_ioreqs(file_buffer_t *fbuf)
                  this data.*/
                 tmp = (int)(cur_offt/offt_range);
                 mst = tmp%nmasters;
+                FARB_DBG(VERBOSE_DBG_LEVEL, "mst %d, cur_offt %lu", mst, cur_offt);
+                assert(mst < nmasters);
                 /*if the last written bit for this chunk
                   falls inside the range of the next master
                   we have to split the current chunk*/
@@ -1487,12 +1031,14 @@ void send_ioreqs(file_buffer_t *fbuf)
                 } else
                     tmp_dsz = cur_dsz;
 
+                assert(tmp_dsz > 0);
+
                 /*extend the buf if needed*/
                 if(offt[mst]+sizeof(MPI_Offset)*2 > bufsz[mst]){
                     unsigned char* tmp = realloc(sbuf[mst], bufsz[mst]+dflt_sz);
                     assert(tmp != NULL);
                     sbuf[mst] = tmp;
-                    FARB_DBG(VERBOSE_DBG_LEVEL, "buf reallocd fr %lu to %lu", bufsz[mst], bufsz[mst]+dflt_sz);
+                   // FARB_DBG(VERBOSE_DBG_LEVEL, "buf reallocd fr %lu to %lu", bufsz[mst], bufsz[mst]+dflt_sz);
                     bufsz[mst] += dflt_sz;
                     gl_conf.malloc_size += dflt_sz;
                 }
@@ -1520,12 +1066,17 @@ void send_ioreqs(file_buffer_t *fbuf)
     }
 
     FARB_DBG(VERBOSE_DBG_LEVEL, "Before sending reqs");
+    double t_start_sendreq = MPI_Wtime();
+    double t_parse = 0;
     /*Send the request to the master*/
     for(i = 0; i < nmasters; i++){
          if(!mst_flag[i])
             continue;   //nothing to send
-        if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->masters[i] == gl_my_rank))
+        if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->masters[i] == gl_my_rank)){
+            double tmp = MPI_Wtime();
             parse_ioreqs(sbuf[i], (int)offt[i], gl_my_rank, gl_comps[gl_my_comp_id].comm);
+            t_parse += MPI_Wtime() - tmp;
+        }
         else{
             assert(gl_comps[fbuf->writer_id].comm != MPI_COMM_NULL);
             FARB_DBG(VERBOSE_DBG_LEVEL, "Send reqs to mst %d (bufsz %lu)", fbuf->mst_info->masters[i], offt[i]);
@@ -1537,7 +1088,7 @@ void send_ioreqs(file_buffer_t *fbuf)
     }
     errno = MPI_Waitall(nmasters, sreqs, MPI_STATUSES_IGNORE);
     CHECK_MPI(errno);
-
+    gl_stats.accum_comm_time += MPI_Wtime() - t_start_sendreq - t_parse;
     FARB_DBG(VERBOSE_DBG_LEVEL, "Sent reqs");
 
 
@@ -1899,7 +1450,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
         assert(fbuf->mst_info->nrranks_completed == 0);
         assert(fbuf->mst_info->nwranks_completed == 0);
     }
-    t_start = MPI_Wtime();
+
     /*If a writer process doesn't have any io requests, it still has to
       wait for the master process to let it complete.
       If a reader process does not have any read requests,
@@ -1930,18 +1481,19 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     /*Have to check for both things otherwise writers sometime hang
     (maybe they receive IO_CLOSE_FILE_TAG before READ_DONE_TAG by mistake?)*/
     int counter = 0;
+    t_start = MPI_Wtime();
     while(!fbuf->done_matching_flag){
-        progress_io_matching();
-
-
-        if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag  ){
-            counter++;
-            if(counter % 300 == 0){
+        counter++;
+        if(counter % 300 == 0){
+            progress_io_matching();
+            if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag  ){
                 do_matching(fbuf, intracomp_io_flag);
-                counter = 0;
             }
+            counter = 0;
         }
     }
+    gl_stats.accum_match_time += MPI_Wtime() - t_start;
+    FARB_DBG(VERBOSE_DBG_LEVEL, "Stat: Time for matching %.4f", MPI_Wtime() - t_start);
 
     FARB_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
     //reset
@@ -1967,8 +1519,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
       FARB_DBG(VERBOSE_DBG_LEVEL, "Barrier before completing matching for %s", fbuf->file_path);
       MPI_Barrier(fbuf->comm);
       //}
-    gl_stats.accum_match_time += MPI_Wtime() - t_start;
-    FARB_DBG(VERBOSE_DBG_LEVEL, "Stat: Time for matching %.4f", MPI_Wtime() - t_start);
+
     return 0;
 }
 
@@ -2120,11 +1671,13 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
     }
     FARB_DBG(VERBOSE_ALL_LEVEL, "Sofft %d, sbufsz %d", (int)sofft, (int)sbufsz);
     assert(sofft == sbufsz);
+    double t_start_send = MPI_Wtime();
     if(intracomp_flag)
         errno = MPI_Send((void*)sbuf, (int)sbufsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[gl_my_comp_id].comm);
     else
         errno = MPI_Send((void*)sbuf, (int)sbufsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[fbuf->reader_id].comm);
     CHECK_MPI(errno);
+    gl_stats.accum_comm_time += MPI_Wtime() - t_start_send;
     gl_stats.nmatching_msg_sent++;
     gl_stats.accum_msg_sz += sbufsz;
     farb_free(sbuf, sbufsz);
@@ -2273,8 +1826,10 @@ void send_file_info(file_buffer_t *fbuf, int reader_root)
     FARB_DBG(VERBOSE_DBG_LEVEL, "Will send file info to reader %d", reader_root);
     pack_file_info(fbuf, &sbuf_sz, &sbuf);
     assert(sbuf_sz > 0);
+    double t_start = MPI_Wtime();
     errno = MPI_Send(sbuf, (int)sbuf_sz, MPI_BYTE, reader_root, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm);
     CHECK_MPI(errno);
+    gl_stats.accum_comm_time += MPI_Wtime() - t_start;
     gl_stats.nmsg_sent++;
     farb_free(sbuf, sbuf_sz);
 }
@@ -2332,7 +1887,7 @@ void progress_io_matching()
     void *rbuf;
     char filename[MAX_FILE_NAME];
     int i, ncid;
-
+    double t_start = MPI_Wtime();
     /*first check if there are any requests for file info
       that we can process. */
     process_file_info_req_queue();
@@ -2396,42 +1951,15 @@ void progress_io_matching()
                     } else {
                         FARB_DBG(VERBOSE_DBG_LEVEL, "Forward the request to rank %d", fbuf->root_writer);
                         /*Forward this request to the root master*/
+                        double t_start = MPI_Wtime();
                         errno = MPI_Send(rbuf,(int)(MAX_FILE_NAME+2*sizeof(int)), MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm);
                         CHECK_MPI(errno);
+                        gl_stats.accum_comm_time += MPI_Wtime() - t_start;
                         gl_stats.nmatching_msg_sent++;
                         gl_stats.accum_msg_sz += (size_t)(MAX_FILE_NAME+2*sizeof(int));
                     }
                     farb_free(rbuf, MAX_FILE_NAME+2*sizeof(int));
                     break;
-//                case FILE_READY_TAG:
-//                    errno = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, FILE_READY_TAG, gl_comps[comp].comm, &status);
-//                    CHECK_MPI(errno);
-//                    FARB_DBG(VERBOSE_DBG_LEVEL,   "Receive FILE_READY notif for %s", filename);
-//
-//                    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//                    assert(fbuf != NULL);
-//
-//                    /*Receive the header*/
-//                    MPI_Probe(src, HEADER_TAG, gl_comps[comp].comm, &status);
-//                    MPI_Get_count(&status, MPI_BYTE, &bufsz);
-//                    fbuf->hdr_sz = (MPI_Offset)bufsz;
-//                    FARB_DBG(VERBOSE_DBG_LEVEL, "Hdr size to receive %d", bufsz);
-//                    fbuf->header = farb_malloc((size_t)bufsz);
-//                    assert(fbuf->header != NULL);
-//                    errno = MPI_Recv(fbuf->header, bufsz, MPI_BYTE, src, HEADER_TAG, gl_comps[comp].comm, &status);
-//                    CHECK_MPI(errno);
-//
-//                    /*Receive info about vars*/
-//                    MPI_Probe(src, VARS_TAG, gl_comps[comp].comm, &status);
-//                    MPI_Get_count(&status, MPI_BYTE, &bufsz);
-//                    rbuf = farb_malloc(bufsz);
-//                    assert(rbuf != NULL);
-//                    errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, VARS_TAG, gl_comps[comp].comm, &status);
-//                    CHECK_MPI(errno);
-//                    unpack_vars(fbuf, bufsz, rbuf);
-//                    farb_free(rbuf, bufsz);
-//                    fbuf->is_ready = 1;
-//                    break;
                 case IO_REQS_TAG:
                     MPI_Get_count(&status, MPI_BYTE, &bufsz);
                     FARB_DBG(VERBOSE_DBG_LEVEL, "Received reqs from %d, comp %d (my comp %d), bufsz %d", src, comp,gl_my_comp_id, (int)bufsz);
@@ -2442,16 +1970,6 @@ void progress_io_matching()
                     parse_ioreqs(rbuf, bufsz, src, gl_comps[comp].comm);
                     farb_free(rbuf, bufsz);
                     break;
-//                case IO_REQ_TAG:
-//                    MPI_Get_count(&status, MPI_BYTE, &bufsz);
-//                    FARB_DBG(VERBOSE_DBG_LEVEL, "Recved req src %d, comp %d (my comp %d), bufsz %d", status.MPI_SOURCE, comp,gl_my_comp_id, (int)bufsz);
-//                    rbuf = farb_malloc(bufsz);
-//                    assert(rbuf != NULL);
-//                    errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_REQ_TAG, gl_comps[comp].comm, &status);
-//                    CHECK_MPI(errno);
-//                    parse_ioreq(rbuf, bufsz, src, gl_comps[comp].comm);
-//                    farb_free(rbuf, bufsz);
-//                    break;
                 case IO_DATA_REQ_TAG:
                     MPI_Get_count(&status, MPI_BYTE, &bufsz);
                     rbuf = farb_malloc(bufsz);
@@ -2527,79 +2045,6 @@ void progress_io_matching()
                                 }
                             }
                     }
-
-//
-//                    if(fbuf->mst_info->is_master_flag){ //I am master
-//
-//                        if(comp == gl_my_comp_id){
-//                            if(src == fbuf->root_writer){
-//                                FARB_DBG(VERBOSE_DBG_LEVEL, "Recevied DONE from mst 0");
-//                                //set value to notify all writers
-//                                fbuf->mst_info->nwranks_completed = fbuf->mst_info->nwranks_opened;
-//                            } else {
-//                                assert(gl_my_rank == fbuf->root_writer);
-//                                fbuf->mst_info->nwranks_completed++;
-//                                FARB_DBG(VERBOSE_DBG_LEVEL, "Recevied DONE from writer %d (tot done %u)", status.MPI_SOURCE, fbuf->mst_info->nwranks_completed);
-//
-//                                if(fbuf->mst_info->nwranks_completed == fbuf->mst_info->nwranks_opened){
-//                                /*Notify other masters that all writers finished reading the file*/
-//                                  FARB_DBG(VERBOSE_DBG_LEVEL, "Notify masters that writers finished reading");
-//                                  for(i = 0; i < fbuf->mst_info->nmasters; i++){
-//                                    if(fbuf->mst_info->masters[i] == gl_my_rank)
-//                                        continue;
-//                                    errno = MPI_Send(&ncid, 1, MPI_INT, fbuf->mst_info->masters[i], MATCH_DONE_TAG, gl_comps[gl_my_comp_id].comm);
-//                                    CHECK_MPI(errno);
-//                                  }
-//                                }
-//                            }
-//                         }else{
-//                            //Only master 0 is supposed to receive this message from a reader rank
-//                            assert(gl_my_rank == fbuf->root_writer);
-//                            fbuf->mst_info->nrranks_completed++; //this message was from a reader
-//                            FARB_DBG(VERBOSE_DBG_LEVEL, "Recevied DONE from reader %d (tot done %u)", status.MPI_SOURCE, fbuf->mst_info->nrranks_completed);
-//
-//                            if(fbuf->mst_info->nrranks_completed == fbuf->mst_info->nrranks_opened){
-//                                /*Notify other masters that readers have finished */
-//                                  FARB_DBG(VERBOSE_DBG_LEVEL, "Notify masters readers completed");
-//                                  for(i = 0; i < fbuf->mst_info->nmasters; i++){
-//                                    if(fbuf->mst_info->masters[i] == gl_my_rank)
-//                                        continue;
-//                                    errno = MPI_Send(&ncid, 1, MPI_INT, fbuf->mst_info->masters[i], MATCH_DONE_TAG, gl_comps[gl_my_comp_id].comm);
-//                                    CHECK_MPI(errno);
-//                                  }
-//                            }
-//                         }
-
-
-//                        if( ((fbuf->mst_info->nrranks_opened > 0) && (fbuf->mst_info->nrranks_completed == fbuf->mst_info->nrranks_opened)) ||
-//                            ((fbuf->mst_info->nwranks_opened > 0) && (fbuf->mst_info->nwranks_completed == fbuf->mst_info->nwranks_opened)) ){
-//
-//                            FARB_DBG(VERBOSE_DBG_LEVEL, "Notify writers that req matching for %s completed", fbuf->file_path);
-//                            /*Tell other writer ranks that they can complete matching*/
-//                            notify_workgroup(fbuf, MATCH_DONE_TAG);
-//                            FARB_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
-//                            fbuf->done_matching_flag = 1;
-//                            if(fbuf->fclosed_flag){
-//                                /*Check that I don't have any read reqs incompleted*/
-//                                assert(fbuf->mst_info->iodb->nritems == 0);
-//                                assert(fbuf->rreq_cnt == 0);
-//                                /*Complete my own write requests*/
-//                                delete_ioreqs(fbuf);
-//                                /*Clean my iodb*/
-//                                clean_iodb(fbuf->mst_info->iodb);
-//                            }
-//                        }
-//
-//                    } else { /*I am writer*/
-//                        FARB_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
-//                        fbuf->done_matching_flag = 1;
-//                        if(fbuf->fclosed_flag){
-//                            assert(fbuf->rreq_cnt == 0);
-//                            /*It's safe to delete all wreqs now.*/
-//                            delete_ioreqs(fbuf);
-//                        }
-//                    }
-
                     break;
                 case MATCH_DONE_TAG:
                     errno = MPI_Recv(&ncid, 1, MPI_INT, src, MATCH_DONE_TAG, gl_comps[comp].comm, &status);
@@ -2682,6 +2127,8 @@ void progress_io_matching()
             }
         }
     }
+
+    gl_stats.t_progress += MPI_Wtime() - t_start;
 }
 
 

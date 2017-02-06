@@ -64,7 +64,8 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     }
 
     for(i = 0; i < var->ndims; i++)
-        FARB_DBG(VERBOSE_DBG_LEVEL, "-> start %d, count %d", (int)start[i], (int)count[i]);
+        FARB_DBG(VERBOSE_ERROR_LEVEL, "RW REQ: -> start %d, count %d", (int)start[i], (int)count[i]);
+
 
     if(var->dtype != dtype){
         int el_sz1, el_sz2;
@@ -73,6 +74,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         FARB_DBG(VERBOSE_ALL_LEVEL, "Warning: el_sz mismatch (defined as %d-bit, accessed as %d-bit var). Using the original size.", el_sz1, el_sz2);
     }
     //assert(var->dtype == dtype);
+
 
 
     /*Create an io request*/
@@ -84,6 +86,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     else
         fbuf->wreq_cnt++;
     get_contig_mem_list(var, dtype, start, count, &(req->nchunks), &(req->mem_chunks));
+    FARB_DBG(VERBOSE_ERROR_LEVEL, "RW_REQ: nchunks %d ------------------", req->nchunks);
     assert(req->mem_chunks != NULL);
 
     /*Enqueue the request*/

@@ -61,10 +61,15 @@ typedef struct farb_config{
 typedef struct stats{
     int nmsg_sent;
     int nmatching_msg_sent;
+    double accum_comm_time;
     size_t accum_msg_sz;      /*Accumulated size of messages */
     double accum_match_time;  /*Total time spent in match_ioreqs*/
     double accum_db_match_time; /*Time that master processes spend matching reqs from iodb*/
     int ndb_match;       /*How many times I/O req matching was performed*/
+    unsigned int num_tsrch;
+    double t_treesrch;
+    double t_progress;
+    double walltime;
 } stats_t;
 
 
