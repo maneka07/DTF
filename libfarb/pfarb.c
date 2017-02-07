@@ -83,7 +83,13 @@ _EXTERN_C_ int farb_init(const char *filename, char *module_name)
     else
         gl_verbose = atoi(s);
 
+    s = getenv("FARB_IODB_TYPE");
+    if(s == NULL)
+        gl_conf.io_db_type = FARB_DB_BLOCKS;
+    else
+        gl_conf.io_db_type = atoi(s);
 
+    assert( (gl_conf.io_db_type==FARB_DB_BLOCKS) || (gl_conf.io_db_type==FARB_DB_CHUNKS));
     //during init only root will print out stuff
     if(gl_my_rank != 0){
         verbose = gl_verbose;
@@ -146,22 +152,27 @@ _EXTERN_C_ int farb_finalize()
     clean_config();
 
     FARB_DBG(VERBOSE_DBG_LEVEL,"FARB: finalize");
-    gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
-    FARB_DBG(VERBOSE_DBG_LEVEL, "FARB STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
-             gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
 
-    if(gl_stats.accum_db_match_time > 0)
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: match_ioreqs %.4f (%.4f%%), do_matching %.4f(%.4f%%), times do_matching %u",
-                 gl_stats.accum_match_time, (gl_stats.accum_match_time/gl_stats.walltime)*100,
-                 gl_stats.accum_db_match_time, (gl_stats.accum_db_match_time/gl_stats.walltime)*100,
-                 gl_stats.ndb_match );
-    if(gl_stats.accum_comm_time > 0)
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: time spent in comm %.4f(%.4f%%)",
-                gl_stats.accum_comm_time, (gl_stats.accum_comm_time/gl_stats.walltime)*100);
-    if(gl_stats.t_progress > 0){
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: time spent in progress %.4f(%.4f%%)",
-                gl_stats.t_progress, (gl_stats.t_progress/gl_stats.walltime)*100);
+    if(gl_my_rank == 0){
+        gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
+        FARB_DBG(VERBOSE_DBG_LEVEL, "FARB STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
+                 gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
+
+        if(gl_stats.accum_db_match_time > 0)
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: match_ioreqs %.4f (%.4f%%), do_matching %.4f(%.4f%%), times do_matching %u",
+                     gl_stats.accum_match_time, (gl_stats.accum_match_time/gl_stats.walltime)*100,
+                     gl_stats.accum_db_match_time, (gl_stats.accum_db_match_time/gl_stats.walltime)*100,
+                     gl_stats.ndb_match );
+        if(gl_stats.accum_comm_time > 0)
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: time spent in comm %.4f(%.4f%%)",
+                    gl_stats.accum_comm_time, (gl_stats.accum_comm_time/gl_stats.walltime)*100);
+        if(gl_stats.t_progress > 0){
+            FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: time spent in progress %.4f(%.4f%%)",
+                    gl_stats.t_progress, (gl_stats.t_progress/gl_stats.walltime)*100);
+        }
+
     }
+
 
     FARB_DBG(VERBOSE_ERROR_LEVEL, "FARB STAT: FARB memory leak size: %lu", gl_conf.malloc_size - MAX_COMP_NAME);
 
@@ -491,8 +502,8 @@ _EXTERN_C_ MPI_Offset farb_read_write_var(const char *filename,
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
 
-    if(boundary_check(fbuf, varid, start, count ))
-        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+//    if(boundary_check(fbuf, varid, start, count ))
+//        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 
     if( rw_flag != FARB_READ && rw_flag != FARB_WRITE){
         FARB_DBG(VERBOSE_ERROR_LEVEL, "rw_flag value incorrect (%d)", rw_flag);
@@ -543,10 +554,8 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Data
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != FARB_IO_MODE_MEMORY) return 0;
 
-    //TODO DIRTY HACKING STARTS HERE
+
 //    /*Check if there is an UNLIMITED dimension: currently it's not supported*/
-//    MPI_Offset *reverse_chape = farb_malloc(ndims*sizeof(MPI_Offset));
-//    assert(reverse_chape != NULL);
 
     for(i = 0; i < ndims; i++)
         FARB_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d size %llu", varid, i, shape[i]);
@@ -556,7 +565,6 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Data
         FARB_DBG(VERBOSE_DBG_LEVEL, "var has unlimited dimension");
 
     for(i = 1; i < ndims; i++){
-      //  reverse_chape[ndims - i - 1] = shape[i];
         //we can support unlimited dimension if it's the first dimension
         //else abort
         if(shape[i] == FARB_UNLIMITED){
@@ -572,11 +580,19 @@ _EXTERN_C_ int farb_def_var(const char* filename, int varid, int ndims, MPI_Data
         MPI_Offset *cshape = (MPI_Offset*)farb_malloc(sizeof(MPI_Offset)*ndims);
         assert(cshape != NULL);
 
+//        for(i = 0; i < ndims; i++)
+//            if(shape[i] != FARB_UNLIMITED)
+//                cshape[i] = shape[i] + 1;
+//            else
+//                cshape[i] = 0;
+        //TODO DIRTY HACKING STARTS HERE
+        //increment shape by 1 because fortran
+        //reverse indeces because fortran
         for(i = 0; i < ndims; i++)
-            if(shape[i] != FARB_UNLIMITED)
-                cshape[i] = shape[i] + 1;
+            if(shape[i] == FARB_UNLIMITED)
+                cshape[ndims - i - 1] = 0;
             else
-                cshape[i] = 0;
+                cshape[ndims - i - 1] = shape[i] + 1;
         ret = def_var(fbuf, varid, ndims, dtype, cshape);
         farb_free(cshape, sizeof(MPI_Offset)*ndims);
     } else

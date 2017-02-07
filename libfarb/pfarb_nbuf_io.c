@@ -63,8 +63,8 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 
     }
 
-    for(i = 0; i < var->ndims; i++)
-        FARB_DBG(VERBOSE_ERROR_LEVEL, "RW REQ: -> start %d, count %d", (int)start[i], (int)count[i]);
+
+
 
 
     if(var->dtype != dtype){
@@ -76,18 +76,46 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     //assert(var->dtype == dtype);
 
 
+    for(i = 0; i < var->ndims; i++)
+        FARB_DBG(VERBOSE_DBG_LEVEL, "RW REQ: -> start %d, count %d", (int)start[i], (int)count[i]);
 
     /*Create an io request*/
-    req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
+
+    if(frt_indexing){
+        FARB_DBG(VERBOSE_DBG_LEVEL, "FARB Warning: reversing indeces because fortran!");
+        MPI_Offset *new_start = farb_malloc(var->ndims*sizeof(MPI_Offset));
+        assert(new_start != NULL);
+        MPI_Offset *new_count = farb_malloc(var->ndims*sizeof(MPI_Offset));
+        assert(new_count != NULL);
+
+        for(i = 0; i < var->ndims; i++){
+            new_count[var->ndims-1-i] = count[i];
+            new_start[var->ndims-1-i] = start[i];
+        }
+        for(i = 0; i < var->ndims; i++)
+            FARB_DBG(VERBOSE_DBG_LEVEL, "RW REQ REVERSE: -> start %d, count %d", (int)new_start[i], (int)new_count[i]);
+        req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, new_start, new_count, buf, rw_flag, gl_conf.buffered_req_match);
+        farb_free(new_start, var->ndims*sizeof(MPI_Offset));
+        farb_free(new_count, var->ndims*sizeof(MPI_Offset));
+    } else
+        req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
+
     if(request != NULL)
         *request = req->id;
     if(rw_flag == FARB_READ)
         fbuf->rreq_cnt++;
     else
         fbuf->wreq_cnt++;
-    get_contig_mem_list(var, dtype, start, count, &(req->nchunks), &(req->mem_chunks));
-    FARB_DBG(VERBOSE_ERROR_LEVEL, "RW_REQ: nchunks %d ------------------", req->nchunks);
-    assert(req->mem_chunks != NULL);
+
+    if(gl_conf.io_db_type == FARB_DB_CHUNKS){
+        get_contig_mem_list(var, dtype, start, count, &(req->nchunks), &(req->mem_chunks));
+        FARB_DBG(VERBOSE_DBG_LEVEL, "RW_REQ: nchunks %d ------------------", req->nchunks);
+        assert(req->mem_chunks != NULL);
+    } else {
+        req->nchunks = 0;
+        req->mem_chunks = NULL;
+    }
+
 
     /*Enqueue the request*/
     if(fbuf->ioreqs == NULL)

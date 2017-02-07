@@ -7,6 +7,9 @@
 
 #define UNLIM_NELEMS_RANGE 256
 
+#define FARB_DB_BLOCKS  0  /*Match based on multidimensional data blocks*/
+#define FARB_DB_CHUNKS  1  /*Match based on contigious memory chunks*/
+
 typedef struct contig_mem_chunk{
     MPI_Offset              offset;
     MPI_Offset              usrbuf_offset;
@@ -50,10 +53,21 @@ typedef struct write_chunk_rec{
     MPI_Offset             data_sz;
 }write_chunk_rec_t;
 
+typedef struct write_dblock{
+    int rank;
+    MPI_Offset *start;
+    MPI_Offset *count;
+    struct write_dblock *next;
+}write_dblock_t;
+
 typedef struct write_db_item{
     int                    var_id;
+    int                    ndims;
     rb_red_blk_tree        *chunks;
     MPI_Offset             nchunks;
+    write_dblock_t         *dblocks;
+    write_dblock_t         *last_block;
+    MPI_Offset             nblocks;
     //struct write_chunk_rec *chunks;
     //struct write_chunk_rec *last;
     struct write_db_item   *next;
@@ -67,12 +81,25 @@ typedef struct read_chunk_rec{
     struct read_chunk_rec   *prev;
 }read_chunk_rec_t;
 
+typedef struct read_dblock{
+    int                     var_id;
+    int                     ndims;
+    MPI_Offset              *start;
+    MPI_Offset              *count;
+    struct read_dblock   *next;
+    struct read_dblock   *prev;
+}read_dblock_t;
+
 typedef struct read_db_item{
     int                     rank;
     MPI_Comm                comm;   /*Both writer and reader may read the file, hence, need to distinguish.*/
     MPI_Offset              nchunks;
     struct read_chunk_rec   *chunks;
     struct read_chunk_rec   *last;
+
+    read_dblock_t           *dblocks;
+    read_dblock_t           *last_block;
+    MPI_Offset              nblocks;
     struct read_db_item     *next;
     struct read_db_item     *prev;
 }read_db_item_t;

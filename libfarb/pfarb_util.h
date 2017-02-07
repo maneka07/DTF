@@ -56,6 +56,7 @@ typedef struct farb_config{
 
     int buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
     size_t malloc_size;
+    int    io_db_type;  /*either mem chunks(1) or data blocks(0)*/
 }farb_config_t;
 
 typedef struct stats{
