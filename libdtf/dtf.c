@@ -12,7 +12,6 @@
 #include "dtf_nbuf_io.h"
 #include "dtf_req_match.h"
 //TODO check for dimension size and not tresspasing when writing
-//TODO rename all to dtf
 
 int lib_initialized=0;
 int gl_verbose;
@@ -42,7 +41,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     if(lib_initialized)
         return 0;
 
-    DTF_DBG(VERBOSE_DBG_LEVEL, "FUCK YOU");
+
     MPI_Initialized(&mpi_initialized);
 
     if(!mpi_initialized){
@@ -500,10 +499,8 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-
-//    if(boundary_check(fbuf, varid, start, count ))
-//        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-
+    if(boundary_check(fbuf, varid, start, count ))
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     if( rw_flag != DTF_READ && rw_flag != DTF_WRITE){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "rw_flag value incorrect (%d)", rw_flag);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
@@ -535,7 +532,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     @param  filename    name of the file
     @return the io mode
 */
-//TODO do we really need it?
+
 _EXTERN_C_ int dtf_io_mode(const char* filename)
 {
     DTF_DBG(VERBOSE_DBG_LEVEL, "oops");
@@ -559,7 +556,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
 
     for(i = 0; i < ndims; i++)
         DTF_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d size %llu", varid, i, shape[i]);
-//NOTE: c and fortran have different memory layour for arrays, reverse the indexing
+//NOTE: c and fortran have different memory layout for arrays, reverse the indexing
     /*For now, can only support unlimited dimension if it's the fasted changing dimension array*/
     if( (ndims > 0) && (shape[0] == DTF_UNLIMITED))
         DTF_DBG(VERBOSE_DBG_LEVEL, "var has unlimited dimension");
@@ -585,14 +582,15 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
 //                cshape[i] = shape[i] + 1;
 //            else
 //                cshape[i] = 0;
+//TODO (#9#) check fortran indexing for coordinates that are passed to the lib from fortran
         //TODO DIRTY HACKING STARTS HERE
-        //increment shape by 1 because fortran
-        //reverse indeces because fortran
+        //1)increment shape by 1 because fortran
+        //2)reverse indeces because fortran
         for(i = 0; i < ndims; i++)
             if(shape[i] == DTF_UNLIMITED)
                 cshape[ndims - i - 1] = 0;
             else
-                cshape[ndims - i - 1] = shape[i] + 1;
+                cshape[ndims - i - 1] = shape[i];// + 1;
         ret = def_var(fbuf, varid, ndims, dtype, cshape);
         dtf_free(cshape, sizeof(MPI_Offset)*ndims);
     } else

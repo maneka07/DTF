@@ -223,18 +223,30 @@ int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start, cons
 
     if(var->ndims > 0){
         int i;
-        for(i = 0; i < var->ndims; i++)
-            if(var->shape[i] == DTF_UNLIMITED) //no boundaries for unlimited dimension
-                continue;
-            else if(start[i] + count[i] > var->shape[i]){
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: var %d, index %llu is out of bounds (shape is %llu)", varid, start[i]+count[i], var->shape[i]);
-                return 1;
-            }
-    } else {
-        if( (start != NULL) || (count != NULL)){
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: var %d is a scalar variable but trying to read an array", varid);
-            return 1;
+
+        if(frt_indexing){
+            for(i = 0; i < var->ndims; i++)
+                if(var->shape[i] == DTF_UNLIMITED) //no boundaries for unlimited dimension
+                    continue;
+                else if(start[i] + count[i] > var->shape[var->ndims-i-1]){
+                    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: var %d, index %llu is out of bounds (shape is %llu)", varid, start[i]+count[i], var->shape[var->ndims-i-1]);
+                    return 1;
+                }
+        } else {
+            for(i = 0; i < var->ndims; i++)
+                if(var->shape[i] == DTF_UNLIMITED) //no boundaries for unlimited dimension
+                    continue;
+                else if(start[i] + count[i] > var->shape[i]){
+                            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: var %d, index %llu is out of bounds (shape is %llu)", varid, start[i]+count[i], var->shape[i]);
+                            return 1;
+                }
         }
     }
+//    else {
+//        if( (start != NULL) || (count != NULL)){
+//            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: var %d is a scalar variable but trying to read an array", varid);
+//            return 1;
+//        }
+//    }
     return 0;
 }
