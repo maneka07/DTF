@@ -11,7 +11,7 @@
 #include <assert.h>
 #include <mpi.h>
 #include <pnetcdf.h>
-#include "pfarb.h"
+#include "dtf.h"
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  * This program writes a series of 2D variables with data partitioning patterns
@@ -274,7 +274,7 @@ int benchmark_read(char       *filename,
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts); ERR(err)
 #endif
 	printf("r%d: after wait\n", rank);
-    farb_match_io(filename, -1);
+    dtf_match_io(filename, -1);
     /* check status of all requests */
     for (i=0; i<num_reqs; i++) ERR(sts[i])
 
@@ -348,7 +348,7 @@ int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &nprocs);
-    farb_init("farb.ini", "ireader");
+    dtf_init("dtf.ini", "ireader");
 
     len = 4;
 
@@ -390,7 +390,7 @@ int main(int argc, char** argv) {
             printf("heap memory allocated by PnetCDF internally has %lld bytes yet to be freed\n",
                    sum_size);
     }
-	farb_finalize();
+	dtf_finalize();
     MPI_Finalize();
     return 0;
 }

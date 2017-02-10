@@ -97,7 +97,9 @@ int main(int argc, char** argv) {
     extern int optind;
     char *filename="restart.nc";
     int i, j, verbose=1, rank, nprocs, err, num_reqs;
-    int ncid, cmode, varid, dimid[2], *reqs, *sts, **buf;
+    int ncid, cmode, varid, dimid[2], *reqs, *sts;
+    double **buf;
+    double val = -1;
     MPI_Offset myNX, G_NX, myOff, block_start, block_len;
     MPI_Offset start[2], count[2];
     MPI_Info info;
@@ -144,18 +146,18 @@ int main(int argc, char** argv) {
     ERR
     err = ncmpi_def_dim(ncid, "X", G_NX, &dimid[1]);
     ERR
-    err = ncmpi_def_var(ncid, "var", NC_INT, 2, dimid, &varid);
+    err = ncmpi_def_var(ncid, "var", NC_FLOAT, 2, dimid, &varid);
     ERR
     err = ncmpi_enddef(ncid);
     ERR
     
     int dtf_count[] = {NY, myNX};
-   // err = dtf_set_distr_count(filename, varid, dtf_count);
+    err = dtf_set_distr_count(filename, varid, dtf_count);
       //    printf("app %d: finished def\n", rank); 
     /* First, fill the entire array with zeros, using a blocking I/O.
        Every process writes a subarray of size NY * myNX */
-    buf    = (int**) malloc(myNX * sizeof(int*));
-    buf[0] = (int*)  calloc(NY * myNX, sizeof(int));
+    buf    = (double**) malloc(myNX * sizeof(double*));
+    buf[0] = (double*)  calloc(NY * myNX, sizeof(double));
     start[0] = 0;   start[1] = myOff;
     count[0] = NY;  count[1] = myNX;
     //err = ncmpi_put_vara_int_all(ncid, varid, start, count, buf[0]);
@@ -164,8 +166,11 @@ int main(int argc, char** argv) {
     /* initialize the buffer with rank ID. Also make the case interesting,
        by allocating buffers separately */
     for (i=0; i<myNX; i++) {
-        buf[i] = (int*) malloc(NY * sizeof(int));
-        for (j=0; j<NY; j++) buf[i][j] = rank+10;
+        buf[i] = (double*) malloc(NY * sizeof(double));
+        for (j=0; j<NY; j++){
+			buf[i][j] = (double)rank+10;
+			printf("%d: write val %.10f\n", rank, buf[i][j]);
+		}
     }
 
     reqs = (int*) malloc(myNX * sizeof(int));
@@ -181,7 +186,7 @@ int main(int argc, char** argv) {
     count[0] = NY;  count[1] = 1;
     num_reqs = 0;
     for (i=0; i<myNX; i++) {
-        err = ncmpi_iput_vara_int(ncid, varid, start, count, buf[i],
+        err = ncmpi_iput_vara_double(ncid, varid, start, count, buf[i],
                                   &reqs[num_reqs++]);
         ERR
 
@@ -200,9 +205,14 @@ int main(int argc, char** argv) {
     //printf("writer %d before wait all\n", rank);
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts);
     ERR
-    //printf("writer %d finished wait all\n", rank);
-      dtf_match_io(filename, -1, 0);
-      //dtf_match_io_all(FARB_WRITE);
+    start[0] = 0;          start[1] = 0;
+    count[0] = 1;  		   count[1] = 1;
+    err = ncmpi_get_vara_double_all(ncid, varid, start, count, &val);
+    ERR
+    dtf_match_io("", ncid, 1);
+    printf("%d: val %.10f\n", rank, val);
+    dtf_match_io("",ncid, 0);
+    //      dtf_match_io_all(FARB_WRITE);
      //printf("writer %d closes file\n", rank);
       //      printf("app %d: finished write\n", rank);
     /* check status of all requests */

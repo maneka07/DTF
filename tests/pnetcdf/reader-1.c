@@ -71,7 +71,7 @@
 #include <mpi.h>
 #include <pnetcdf.h>
 
-#include "pfarb.h"
+#include "dtf.h"
 
 #define NY 10
 #define NX 2
@@ -106,7 +106,7 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
     
-    farb_init("farb.ini", "ireader");
+    dtf_init("dtf.ini", "ireader");
     
     G_NX  = NX * nprocs;
   /* open an existing file created earlier for read -----------------------*/
@@ -170,7 +170,7 @@ int main(int argc, char** argv) {
     }
     err = ncmpi_wait_all(ncid, num_reqs, reqs, sts);
     ERR
-    farb_match_io(filename, 0);
+    dtf_match_io(filename, -1, 0);
     /* check status of all requests */
     for (i=0; i<num_reqs; i++)
         if (sts[i] != NC_NOERR)
@@ -207,7 +207,7 @@ int main(int argc, char** argv) {
             printf("heap memory allocated by PnetCDF internally has %lld bytes yet to be freed\n",
                    sum_size);
     }
-    farb_finalize();
+    dtf_finalize();
     MPI_Finalize();
     return 0;
 }

@@ -1,7 +1,7 @@
-PFARB_DIR=../../libfarb
+DTF_DIR=../../libdtf
 PNETCDF_DIR=$(HOME)/apps/pnetcdf
-CFLAGS=-I$(PFARB_DIR) -I$(PNETCDF_DIR)/include
-LDFLAGS=-L$(PNETCDF_DIR)/lib -lpnetcdf -L$(PFARB_DIR) -lpfarb
+CFLAGS=-I$(DTF_DIR) -I$(PNETCDF_DIR)/include
+LDFLAGS=-L$(PNETCDF_DIR)/lib -lpnetcdf -L$(DTF_DIR) -ldtf
 CC=mpicc
 
 all: reader writer
