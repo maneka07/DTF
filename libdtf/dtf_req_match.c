@@ -3079,6 +3079,8 @@ void progress_io_matching()
                     assert(fbuf->root_writer == -1);
                     fbuf->root_writer = src;
                     break;
+                case SYNCH_TAG:
+                    break;
                 default:
                     DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown tag %d", status.MPI_TAG);
                     assert(0);

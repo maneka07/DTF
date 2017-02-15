@@ -171,13 +171,14 @@ static int create_intercomm(int comp_id, char* global_path){
 
 
     if(mode == CONNECT_MODE_CLIENT){
-        DTF_DBG(VERBOSE_DBG_LEVEL,   "Trying to connect to comp %s.", gl_comps[comp_id].name);
+        DTF_DBG(VERBOSE_DBG_LEVEL,   "Trying to connect to comp %s. Open portfile %s", gl_comps[comp_id].name, portfile_name);
 
         /*To avoid contention on the PFS only rank 0 will try to get the port to connect to.*/
         if(myrank == 0){
             wait_timeout = 0;
 
             //try to open the file
+            sleep(1);
             while((portfile = fopen(portfile_name, "rt")) == NULL){
                 sleep(1);
                 wait_timeout++;
@@ -190,6 +191,7 @@ static int create_intercomm(int comp_id, char* global_path){
 
             //try to read the file
             wait_timeout = 0;
+
             while(1){
                 fgets(portname, MPI_MAX_PORT_NAME, portfile);
                 l1 = strlen(portname);
@@ -225,7 +227,7 @@ static int create_intercomm(int comp_id, char* global_path){
         CHECK_MPI(errno);
 
         if(myrank == 0){
-
+           DTF_DBG(VERBOSE_DBG_LEVEL, "Write port to file %s", portfile_name);
            portfile = fopen(portfile_name, "wt");
            fprintf(portfile, "%s\n", portname);
            fclose(portfile);
@@ -262,6 +264,28 @@ static void destroy_intercomm(int comp_id){
 
     if(mode == DTF_UNDEFINED) return;
     if(gl_comps[comp_id].comm == MPI_COMM_NULL) return;
+
+    if(gl_conf.synch_walltime_flag){
+        int boo = 0;
+        int errno;
+        if(gl_my_rank == 0 && mode == CONNECT_MODE_SERVER){
+            MPI_Status stat;
+            errno = MPI_Recv(&boo, 1, MPI_INT, MPI_ANY_SOURCE, SYNCH_TAG, gl_comps[comp_id].comm, &stat);
+            CHECK_MPI(errno);
+            //errno = MPI_Send(&boo, 1, MPI_INT, stat.MPI_SOURCE, SYNCH_TAG, gl_comps[comp_id].comm);
+            //CHECK_MPI(errno);
+
+        } else if(gl_my_rank == 0 && mode == CONNECT_MODE_CLIENT){
+            errno = MPI_Send(&boo, 1, MPI_INT, 0, SYNCH_TAG, gl_comps[comp_id].comm);
+            CHECK_MPI(errno);
+            //errno = MPI_Recv(&boo, 1, MPI_INT, 0, SYNCH_TAG, gl_comps[comp_id].comm, MPI_STATUS_IGNORE);
+            //CHECK_MPI(errno);
+        }
+        gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
+        if(gl_my_rank == 0 && mode == CONNECT_MODE_SERVER)
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: Synched walltime %.3f", gl_stats.walltime);
+
+    }
 
     MPI_Comm_disconnect(&(gl_comps[comp_id].comm));
 

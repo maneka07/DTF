@@ -64,7 +64,10 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     }
 
 
-
+//    for(i = 0; i < var->ndims; i++){
+//        if(start[i] == 0)
+//            DTF_DBG(VERBOSE_ERROR_LEVEL, "WE HAVE A ZERO");
+//    }
 
 
     if(var->dtype != dtype){

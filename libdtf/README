@@ -23,9 +23,7 @@ TODO: general description of what the middleware does
 	2 - debug information
 	3 - everything
 
-*** FARB_NODE_SZ: size of memory blocks in KB (default: 1024 KB)
-
-*** FARB_MESSAGE_SZ: message size used to send the data in KB. Cannot be larger than FARB_NODE_SZ. (default: same as FARB_NODE_SZ)
+*** 
 
 
 ******************** C API *****************************

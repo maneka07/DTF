@@ -2,7 +2,7 @@
 
 export DTF_GLOBAL_PATH=.
 export LD_LIBRARY_PATH=../../libdtf:$HOME/apps/pnetcdf/lib:$LD_LIBRARY_PATH
-export DTF_VERBOSE_LEVEL=3
+export DTF_VERBOSE_LEVEL=2
 export MAX_WORKGROUP_SIZE=4
 rm $DTF_GLOBAL_PATH/port_*
 

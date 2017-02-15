@@ -16,7 +16,7 @@
 #define RECV_READY_TAG      1       /*reader rank -> writer rank*/
 #define HEADER_TAG          2       /*writer -> reader*/
 #define VARS_TAG            3       /*writer -> reader*/
-//#define IO_REQ_TAG          4       /*writer rank / reader rank -> master rank*/
+#define SYNCH_TAG           4       /*to synch between processes in different comps*/
 #define IO_DATA_REQ_TAG     5       /*master -> writer*/
 #define IO_DATA_TAG         6       /*writer -> reader*/
 #define READ_DONE_TAG        7       /*reader->master*/
@@ -52,25 +52,25 @@ typedef struct component{
 }component_t;
 
 typedef struct dtf_config{
-    int distr_mode;
-
-    int buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
-    size_t malloc_size;
-    int    io_db_type;  /*either mem chunks(1) or data blocks(0)*/
+    int         distr_mode;
+    int         buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
+    size_t      malloc_size;
+    int         io_db_type;  /*either mem chunks(1) or data blocks(0)*/
+    int         synch_walltime_flag;    /*1 - synch two components in finalization and print the walltime*/
 }dtf_config_t;
 
 typedef struct stats{
-    int nmsg_sent;
-    int nmatching_msg_sent;
-    double accum_comm_time;
-    size_t accum_msg_sz;      /*Accumulated size of messages */
-    double accum_match_time;  /*Total time spent in match_ioreqs*/
-    double accum_db_match_time; /*Time that master processes spend matching reqs from iodb*/
-    int ndb_match;       /*How many times I/O req matching was performed*/
-    unsigned int num_tsrch;
-    double t_treesrch;
-    double t_progress;
-    double walltime;
+    int             nmsg_sent;
+    int             nmatching_msg_sent;
+    double          accum_comm_time;
+    size_t          accum_msg_sz;      /*Accumulated size of messages */
+    double          accum_match_time;  /*Total time spent in match_ioreqs*/
+    double          accum_db_match_time; /*Time that master processes spend matching reqs from iodb*/
+    int             ndb_match;       /*How many times I/O req matching was performed*/
+    unsigned int    num_tsrch;
+    double          t_treesrch;
+    double          t_progress;
+    double          walltime;
 } stats_t;
 
 

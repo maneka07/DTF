@@ -87,6 +87,12 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     else
         gl_conf.io_db_type = atoi(s);
 
+    s = getenv("DTF_SYNCH_WALLTIME");
+    if(s == NULL)
+        gl_conf.synch_walltime_flag = 0; //default no
+    else
+        gl_conf.synch_walltime_flag = atoi(s);
+
     assert( (gl_conf.io_db_type==DTF_DB_BLOCKS) || (gl_conf.io_db_type==DTF_DB_CHUNKS));
     //during init only root will print out stuff
     if(gl_my_rank != 0){
@@ -145,6 +151,7 @@ _EXTERN_C_ int dtf_finalize()
       and delete buf files*/
     finalize_files();
     assert(gl_finfo_req_q == NULL);
+
     finalize_comp_comm();
 
     clean_config();
@@ -152,7 +159,9 @@ _EXTERN_C_ int dtf_finalize()
     DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalize");
 
     if(gl_my_rank == 0){
-        gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
+        if(!gl_conf.synch_walltime_flag)
+            gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
+        assert(gl_stats.walltime>0);
         DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
                  gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
 
@@ -171,8 +180,8 @@ _EXTERN_C_ int dtf_finalize()
 
     }
 
-
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_conf.malloc_size - MAX_COMP_NAME);
+    if(gl_conf.malloc_size - MAX_COMP_NAME > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_conf.malloc_size - MAX_COMP_NAME);
 
 
     if(gl_stats.num_tsrch > 0){
@@ -535,7 +544,6 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
 
 _EXTERN_C_ int dtf_io_mode(const char* filename)
 {
-    DTF_DBG(VERBOSE_DBG_LEVEL, "oops");
     if(!lib_initialized) return 0;
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL)
