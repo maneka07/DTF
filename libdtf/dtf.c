@@ -10,7 +10,6 @@
 #include "dtf_util.h"
 #include "dtf_nbuf_io.h"
 #include "dtf_req_match.h"
-//TODO check for dimension size and not tresspasing when writing
 
 int lib_initialized=0;
 int gl_verbose;
@@ -547,9 +546,6 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 
-
-//    /*Check if there is an UNLIMITED dimension: currently it's not supported*/
-
     for(i = 0; i < ndims; i++)
         DTF_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d size %llu", varid, i, shape[i]);
 //NOTE: c and fortran have different memory layout for arrays, reverse the indexing
@@ -579,7 +575,6 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
 //            else
 //                cshape[i] = 0;
 //TODO (#9#) check fortran indexing for coordinates that are passed to the lib from fortran
-        //TODO DIRTY HACKING STARTS HERE
         //1)increment shape by 1 because fortran
         //2)reverse indeces because fortran
         for(i = 0; i < ndims; i++)

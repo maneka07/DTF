@@ -21,8 +21,6 @@
 
 #define DTF_UNLIMITED  0L  /*Unlimited dimension*/
 
-/*TODO: implement hierarchical cleaning in case error occurs*/
-
 /*Interfaces used by an application*/
 _EXTERN_C_ int dtf_init(const char *filename, char *module_name);
 _EXTERN_C_ int dtf_finalize();

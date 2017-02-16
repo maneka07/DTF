@@ -4,16 +4,6 @@
 #include "dtf_mem.h"
 #include "dtf.h"
 
-
-//static void print_ritems(read_db_item_t *items)
-//{
-//    read_db_item_t *ritem = items;
-//    while(ritem != NULL){
-//        DTF_DBG(VERBOSE_ALL_LEVEL, "Ritem for rank %d", ritem->rank);
-//        ritem = ritem->next;
-//    }
-//}
-
 file_info_req_q_t *gl_finfo_req_q = NULL;
 
 /*API for handling rb_tree in write_db_item*/
@@ -65,17 +55,6 @@ static void print_read_dbitem(read_db_item_t *dbitem)
     }
 }
 
-//static void print_write_dbitem(write_db_item_t *dbitem)
-//{
-//    write_chunk_rec_t *tmp;
-//    DTF_DBG(VERBOSE_ALL_LEVEL, "Write dbitem for var %d.", dbitem->var_id);
-//    tmp = dbitem->chunks;
-//    while(tmp != NULL){
-//        DTF_DBG(VERBOSE_DBG_LEVEL, "       (ps %d, off %llu, sz %llu)", tmp->rank, tmp->offset, tmp->data_sz);
-//        tmp = tmp->next;
-//    }
-//}
-
 io_req_t *find_io_req(io_req_t *list, int var_id)
 {
     io_req_t *ioreq = list;
@@ -102,7 +81,6 @@ void delete_ioreqs(file_buffer_t *fbuf)
     assert(fbuf->wreq_cnt == 0);
 }
 
-/*TODO (#9#) if file transfer type is FILE need just to send a msg FILE-READY!!!*/
 static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
 {
     dtf_var_t *var;
@@ -273,7 +251,8 @@ void unpack_file_info(MPI_Offset bufsz, void *buf)
 static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
 {
     int mlc_ranks = 4;
-    //TODO: hidden bug: if ndims*sizeof(MPI_Offset) > 512 there will be segmenation fault
+    //NOTE: hidden bug: if ndims*sizeof(MPI_Offset) > 512 there will be segmenation fault
+    //very unlikely to happen in real life though
     int mlc_buf   = 512;
     int i;
     write_db_item_t *witem = NULL;
@@ -1070,21 +1049,6 @@ void clean_iodb(ioreq_db_t *iodb)
     assert(iodb->nritems == 0);
 }
 
-//static write_chunk_rec_t *new_write_chunk_rec(int rank, MPI_Offset offset, MPI_Offset data_sz)
-//{
-//    write_chunk_rec_t *chunk = dtf_malloc(sizeof(write_chunk_rec_t));
-//    assert(chunk != NULL);
-//    chunk->rank = rank;
-//    chunk->offset = offset;
-//    chunk->data_sz = data_sz;
-//    chunk->next = NULL;
-//    chunk->prev = NULL;
-//    return chunk;
-//}
-
-
-//static void parse_write_ioreq(file_buffer_t *fbuf, dtf_var_t *var, void *buf, int bufsz, int rank, MPI_Comm comm);
-//static void parse_read_ioreq(file_buffer_t *fbuf, dtf_var_t *var, void *buf, int bufsz, int rank, MPI_Comm comm);
 static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
 {
     int ncid, var_id, rw_flag;
@@ -1419,14 +1383,7 @@ io_req_t *new_ioreq(int id,
         ioreq->user_buf_sz = el_sz;
     }
     DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, user bufsz %d", id, var_id, (int)ioreq->user_buf_sz);
-//    if( (rw_flag == DTF_WRITE) && (buffered)){
-    //TODO buffered ioreq
-//        DTF_DBG(VERBOSE_DBG_LEVEL, "Dup user buffer");
-////        ioreq->user_buf = dtf_malloc((size_t)ioreq->user_buf_sz);
-////        assert(ioreq->user_buf != NULL);
-////        memcpy(ioreq->user_buf, buf, (size_t)ioreq->user_buf_sz);
-//    } else
-        ioreq->user_buf = buf;
+    ioreq->user_buf = buf;
     ioreq->next = NULL;
     ioreq->sent_flag = 0;
     ioreq->mem_chunks = NULL; //will init later
@@ -1759,232 +1716,6 @@ void send_ioreqs(file_buffer_t *fbuf)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time to pack and send reqs %.4f", MPI_Wtime() - t_start);
 }
 
-//void send_ioreqs(file_buffer_t *fbuf)
-//{
-//    io_req_t *ioreq;
-//    contig_mem_chunk_t *chunk;
-//    unsigned char *sbuf = NULL;
-//    size_t sz = 0, offt = 0;
-//    int errno, i;
-//   // int *mst_flag, mst1, mst2, i, errno;
-//    MPI_Request *sreqs;
-// //   MPI_Offset offt_range;
-////    dtf_var_t *var;
-//
-////    mst_flag = (int*)dtf_malloc(fbuf->mst_info->nmasters*sizeof(int));
-////    assert(mst_flag != NULL);
-//    sreqs = (MPI_Request*)dtf_malloc(fbuf->mst_info->nmasters*sizeof(MPI_Request));
-//    assert(sreqs != NULL);
-//    for(i = 0; i < fbuf->mst_info->nmasters; i++){
-// //       mst_flag[i] = 0;
-//        sreqs[i] = MPI_REQUEST_NULL;
-//    }
-//
-//    /*first find out the size of the buffer*/
-//    sz = sizeof(MPI_Offset); //ncid
-//    ioreq = fbuf->ioreqs;
-//    while(ioreq != NULL){
-//        if(ioreq->sent_flag){
-//            ioreq = ioreq->next;
-//            continue;
-//        }
-//        sz += sizeof(MPI_Offset)*3 + sizeof(MPI_Offset)*2*ioreq->nchunks; //var_id+rw_flag+nchunks+chunks
-//        ioreq = ioreq->next;
-//    }
-//
-//    sbuf = dtf_malloc(sz);
-//    assert(sbuf != NULL);
-//
-//    DTF_DBG(VERBOSE_DBG_LEVEL, "Bufsz %d", (int)sz);
-//
-//    offt = 0;
-//
-//    *(MPI_Offset*)sbuf = (MPI_Offset)fbuf->ncid;
-//    offt += sizeof(MPI_Offset);
-//
-//    /*Pack requests*/
-//    ioreq = fbuf->ioreqs;
-//    while(ioreq != NULL){
-//        if(ioreq->sent_flag){
-//            ioreq = ioreq->next;
-//            continue;
-//        }
-//        if(ioreq->rw_flag == DTF_READ)
-//            DTF_DBG(VERBOSE_DBG_LEVEL, "Pack read request to master for var %d (%s)", ioreq->var_id, fbuf->file_path);
-//        else
-//            DTF_DBG(VERBOSE_DBG_LEVEL, "Pack write request to master for var %d (%s)", ioreq->var_id, fbuf->file_path);
-//
-//        *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->rw_flag;
-//        offt += sizeof(MPI_Offset);
-//        *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->var_id;
-//        offt += sizeof(MPI_Offset);
-//        *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->nchunks;
-//        offt += sizeof(MPI_Offset);
-//
-//        chunk = ioreq->mem_chunks;
-//        while(chunk != NULL){
-//            *(MPI_Offset*)(sbuf+offt) = chunk->offset;
-//            offt += sizeof(MPI_Offset);
-//            *(MPI_Offset*)(sbuf+offt) = chunk->data_sz;
-//            offt += sizeof(MPI_Offset);
-//            chunk = chunk->next;
-//        }
-//        ioreq->sent_flag = 1;
-//        ioreq = ioreq->next;
-//    }
-//
-//    assert(offt == sz);
-//    DTF_DBG(VERBOSE_DBG_LEVEL, "Before sending reqs");
-//    /*Send the request to the master*/
-//    for(i = 0; i < fbuf->mst_info->nmasters; i++){
-//         errno = MPI_SUCCESS;
-//
-//        if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->masters[i] == gl_my_rank))
-//            parse_ioreqs(sbuf, (int)sz, gl_my_rank, gl_comps[gl_my_comp_id].comm);
-//        else{
-//            assert(gl_comps[fbuf->writer_id].comm != MPI_COMM_NULL);
-//            DTF_DBG(VERBOSE_DBG_LEVEL, "Send reqs to mst %d", fbuf->mst_info->masters[i]);
-//            errno = MPI_Isend((void*)sbuf, (int)sz, MPI_BYTE, fbuf->mst_info->masters[i], IO_REQS_TAG, gl_comps[fbuf->writer_id].comm, &sreqs[i]);
-//            CHECK_MPI(errno);
-//            gl_stats.nmatching_msg_sent++;
-//            gl_stats.accum_msg_sz += sz;
-//        }
-//    }
-//    errno = MPI_Waitall(fbuf->mst_info->nmasters, sreqs, MPI_STATUSES_IGNORE);
-//    CHECK_MPI(errno);
-//
-//    DTF_DBG(VERBOSE_DBG_LEVEL, "Sent reqs");
-////    while(!completed){
-////        errno = MPI_Testall(fbuf->mst_info->nmasters, sreqs, &completed, MPI_STATUSES_IGNORE);
-////        CHECK_MPI(errno);
-////        progress_io_matching();
-////    }
-//
-//    dtf_free(sbuf, sz);
-//    //dtf_free(mst_flag, fbuf->mst_info->nmasters*sizeof(int));
-//    dtf_free(sreqs, fbuf->mst_info->nmasters*sizeof(MPI_Request));
-//}
-
-
-/* Reader ranks and writer ranks send their read/write
-   io request to master(s)
-*/
-//void send_ioreq(file_buffer_t *fbuf, io_req_t *ioreq)
-//{
-//    contig_mem_chunk_t *chunk;
-//    unsigned char *sbuf = NULL;
-//    size_t sz = 0, offt = 0;
-//    int *mst_flag, mst1, mst2, i, errno;
-//    MPI_Request *sreqs;
-//    MPI_Offset offt_range;
-//    dtf_var_t *var;
-//    if(ioreq->sent_flag)
-//        return;
-//    if(ioreq->rw_flag == DTF_READ)
-//        DTF_DBG(VERBOSE_DBG_LEVEL, "Send read request to master for var %d (%s)", ioreq->var_id, fbuf->file_path);
-//    else
-//        DTF_DBG(VERBOSE_DBG_LEVEL, "Send write request to master for var %d (%s)", ioreq->var_id, fbuf->file_path);
-//
-//    mst_flag = (int*)dtf_malloc(fbuf->mst_info->nmasters*sizeof(int));
-//    assert(mst_flag != NULL);
-//    sreqs = (MPI_Request*)dtf_malloc(fbuf->mst_info->nmasters*sizeof(MPI_Request));
-//    assert(sreqs != NULL);
-//    for(i = 0; i < fbuf->mst_info->nmasters; i++){
-//        mst_flag[i] = 0;
-//        sreqs[i] = MPI_REQUEST_NULL;
-//    }
-//
-//    /*Pack the read request.*/
-//    offt = 0;
-//    //sz = sizeof(ncid)+sizeof(ioreq->var_id)+sizeof(MPI_Offset)*2*ioreq->nchunks;
-//    sz = sizeof(MPI_Offset)*3+sizeof(MPI_Offset)*2*ioreq->nchunks;
-//    sbuf = dtf_malloc(sz);
-//    assert(sbuf != NULL);
-//
-//    DTF_DBG(VERBOSE_ALL_LEVEL, "Bufsz %d", (int)sz);
-//
-//    *(MPI_Offset*)sbuf = (MPI_Offset)fbuf->ncid;
-//    offt += sizeof(MPI_Offset);
-//    *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->rw_flag;
-//    offt += sizeof(MPI_Offset);
-//    *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->var_id;
-//    offt += sizeof(MPI_Offset);
-//
-//    var = find_var(fbuf->vars, ioreq->var_id);
-//    assert(var != NULL);
-//
-//    for(i = 0; i < var->ndims; i++)
-//        DTF_DBG(VERBOSE_DBG_LEVEL, "---> start %d, count %d", (int)ioreq->start[i], (int)ioreq->count[i]);
-//
-//    if(has_unlim_dim(var)){
-//        /*For vars with unlimited dimension all the reqs
-//          will be sent to master 0*/
-//        offt_range = 0;
-//        DTF_DBG(VERBOSE_DBG_LEVEL, "Req for a var with unlim dim");
-//    } else {
-//        int el_sz;
-//        MPI_Type_size(var->dtype, &el_sz);
-//        offt_range = (MPI_Offset)(( last_1d_index(var->ndims, var->shape) + 1 )/fbuf->mst_info->nmasters);
-//        offt_range *= el_sz;
-//    }
-//    DTF_DBG(VERBOSE_ALL_LEVEL, "Offset range is %d", (int)offt_range);
-//
-//    chunk = ioreq->mem_chunks;
-//    while(chunk != NULL){
-//        *(MPI_Offset*)(sbuf+offt) = chunk->offset;
-//        offt += sizeof(MPI_Offset);
-//        *(MPI_Offset*)(sbuf+offt) = chunk->data_sz;
-//        offt += sizeof(MPI_Offset);
-//
-//        /*Set flag for each master to whom will need to send this request*/
-//        if(offt_range == 0)
-//            mst1 = mst2 = 0;
-//        else {
-//            mst1 = (int)(chunk->offset/offt_range);
-//            if(mst1 >= fbuf->mst_info->nmasters)
-//                mst1 = fbuf->mst_info->nmasters - 1;
-//            mst2 = (int)((chunk->offset + chunk->data_sz - 1)/offt_range);
-//            if(mst2 >= fbuf->mst_info->nmasters)
-//                mst2 = fbuf->mst_info->nmasters - 1;
-//        }
-//        DTF_DBG(VERBOSE_ALL_LEVEL, "-> (%d, %d): mst1 %d mst2 %d", (int)chunk->offset, (int)chunk->data_sz, mst1, mst2);
-//        for(i = mst1; i <= mst2; i++)
-//            mst_flag[i] = 1;
-//        chunk = chunk->next;
-//    }
-//    assert(offt == sz);
-//
-//    /*Send the request to the master*/
-//    for(i = 0; i < fbuf->mst_info->nmasters; i++){
-//        if(!mst_flag[i])
-//            continue;
-//        errno = MPI_SUCCESS;
-//
-//        if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->masters[i] == gl_my_rank))
-//            parse_ioreq(sbuf, (int)sz, gl_my_rank, gl_comps[gl_my_comp_id].comm);
-//        else{
-//            assert(gl_comps[fbuf->writer_id].comm != MPI_COMM_NULL);
-//            DTF_DBG(VERBOSE_DBG_LEVEL, "Send req %u to mst %d", ioreq->id, fbuf->mst_info->masters[i]);
-//            errno = MPI_Isend((void*)sbuf, (int)sz, MPI_BYTE, fbuf->mst_info->masters[i], IO_REQ_TAG, gl_comps[fbuf->writer_id].comm, &sreqs[i]);
-//            CHECK_MPI(errno);
-//            gl_stats.nmatching_msg_sent++;
-//            gl_stats.accum_msg_sz += sz;
-//        }
-//    }
-//    errno = MPI_Waitall(fbuf->mst_info->nmasters, sreqs, MPI_STATUSES_IGNORE);
-//    CHECK_MPI(errno);
-//    ioreq->sent_flag = 1;
-////    while(!completed){
-////        errno = MPI_Testall(fbuf->mst_info->nmasters, sreqs, &completed, MPI_STATUSES_IGNORE);
-////        CHECK_MPI(errno);
-////        progress_io_matching();
-////    }
-//
-//    dtf_free(sbuf, sz);
-//    dtf_free(mst_flag, fbuf->mst_info->nmasters*sizeof(int));
-//    dtf_free(sreqs, fbuf->mst_info->nmasters*sizeof(MPI_Request));
-//}
-
 void match_ioreqs_all(int rw_flag)
 {
     file_buffer_t *fbuf;
@@ -2042,7 +1773,7 @@ void match_ioreqs_all(int rw_flag)
         return;
     } else
         DTF_DBG(VERBOSE_DBG_LEVEL, "Will match ioreqs for %d files", fbuf_cnt);
-    int counter = 0;
+
     /*Keep iterating over files and trying to progress I/O*/
     while(fbuf_cnt){
         tmp_cnt = 0;
@@ -2064,14 +1795,10 @@ void match_ioreqs_all(int rw_flag)
             progress_io_matching();
 
             if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->is_master_flag)  ){
-                counter++;
-                if(counter % 300 == 0){
-                    if(gl_conf.io_db_type == DTF_DB_CHUNKS)
-                        do_matching(fbuf, 0);
-                    else
-                        do_matching_ver2(fbuf, 0);
-                    counter = 0;
-                }
+                if(gl_conf.io_db_type == DTF_DB_CHUNKS)
+                    do_matching(fbuf, 0);
+                else
+                    do_matching_ver2(fbuf, 0);
             }
 
             fbuf = fbuf->next;
@@ -2089,7 +1816,9 @@ void match_ioreqs_all(int rw_flag)
             fbuf = fbuf->next;
             continue;
         }
-
+        if ((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag)
+            /*Reset flag for future matchings*/
+            fbuf->mst_info->iodb->updated_flag = 1;
         fbuf->is_matching_flag = 0;
         fbuf->mst_info->nrranks_completed = 0;
         assert(fbuf->mst_info->nwranks_completed == 0);
@@ -2369,8 +2098,6 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
     gl_stats.nmatching_msg_sent++;
     gl_stats.accum_msg_sz += sbufsz;
     dtf_free(sbuf, sbufsz);
-
-    //TODO continue from here
 }
 
 /*writer->reader*/
@@ -2458,9 +2185,7 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
             }
             ioreq = ioreq->next;
         }
-        //DTF_DBG(VERBOSE_ALL_LEVEL, "BEfore assert");
         assert(ioreq != NULL);
-        //DTF_DBG(VERBOSE_ALL_LEVEL, "After assert");
         assert(chunk != NULL);
 
         var = find_var(fbuf->vars, var_id);
@@ -2833,8 +2558,6 @@ static void notify_workgroup(file_buffer_t *fbuf, int msgtag)
     dtf_free(glob_ranks, nranks*sizeof(int));
 }
 
-//TODO think about file overwriting
-//file might not be closed
 void progress_io_matching()
 {
     MPI_Status status;
@@ -3097,8 +2820,6 @@ void progress_io_matching()
                     assert(fbuf->root_writer == -1);
                     fbuf->root_writer = src;
                     break;
-//                case SYNCH_TAG:
-//                    break;
                 case FILE_READY_TAG:
                     errno = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, FILE_READY_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(errno);
@@ -3108,20 +2829,6 @@ void progress_io_matching()
                     assert(fbuf != NULL);
                     fbuf->is_ready = 1;
                     break;
-//                case RECV_READY_TAG:
-//                    errno = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].comm, &status);
-//
-//                    CHECK_MPI(errno);
-//                    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//                    assert(fbuf != NULL);
-//                    DTF_DBG(VERBOSE_DBG_LEVEL, "Receive RECV_READY_TAG notif for %s", filename);
-//                    /*Send the hearder*/
-//                    errno = MPI_Send(fbuf->header, (int)fbuf->hdr_sz, MPI_BYTE, src, HEADER_TAG, gl_comps[i].comm);
-//                    CHECK_MPI(errno);
-//                    send_data(fbuf, src, gl_comps[i].comm);
-//
-//                    fbuf->distr_ndone++;
-//                    break;
                 default:
                     DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown tag %d", status.MPI_TAG);
                     assert(0);

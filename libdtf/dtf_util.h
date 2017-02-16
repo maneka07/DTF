@@ -28,8 +28,7 @@
 //TODO: remove all asserts in the code and replace with proper error handling
 typedef struct component{
     unsigned int    id;
-    //TODO remove +1
-    char            name[MAX_COMP_NAME+1];
+    char            name[MAX_COMP_NAME];
     int             connect_mode; /*0 - I am server, 1 - I am client, -1 - undefined (no interconnection)*/
     MPI_Comm        comm;   /*intra or inter component communicator*/
 }component_t;

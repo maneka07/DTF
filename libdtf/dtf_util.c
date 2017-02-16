@@ -18,36 +18,6 @@
 
 extern file_info_req_q_t *gl_finfo_req_q;
 
-//int get_write_flag(const char* filename)
-//{
-//    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//    if(fbuf == NULL){
-//        DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: file %s not in the configuration file", filename);
-//        assert(0);
-//    }
-//    if(fbuf->writer_id == gl_my_comp_id)
-//        return 1;
-//    else
-//        return 0;
-//}
-//
-
-//int get_read_flag(const char* filename)
-//{
-//    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//    if(fbuf == NULL){
-//        DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: file %s not in the configuration file", filename);
-//        assert(0);
-//    }
-//
-//    if(fbuf->reader_id == gl_my_comp_id)
-//        return 1;
-//    else
-//        return 0;
-//}
-
-
-
 /*global rank 0 periodically checks if it can
   process a file info request from a reader*/
 void process_file_info_req_queue()
@@ -112,144 +82,6 @@ int file_buffer_ready(const char* filename)
     return fbuf->is_ready;
 }
 
-
-//Used in static data distribution
-//void progress_io()
-//{
-//    MPI_Status status;
-//    int i, flag, src, errno;
-//    char filename[MAX_FILE_NAME];
-//    file_buffer_t *fbuf;
-//    int bufsz;
-//    void *rbuf;
-//
-//    /*first check if there are any requests for file info
-//      that we can process. */
-//    process_file_info_req_queue();
-//
-//    for(i = 0; i < gl_ncomp; i++){
-//        if( gl_comps[i].comm == MPI_COMM_NULL)
-//            continue;
-//
-//        MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, gl_comps[i].comm, &flag, &status);
-//        if(!flag)
-//            continue;
-//
-//        src = status.MPI_SOURCE;
-//
-//        switch(status.MPI_TAG){
-//            case FILE_INFO_REQ_TAG:
-//                DTF_DBG(VERBOSE_DBG_LEVEL, "Recv root req from rank %d (comp %s)", src, gl_comps[i].name);
-//                rbuf = dtf_malloc(MAX_FILE_NAME+2*sizeof(int));
-//                assert(rbuf != NULL);
-//                errno = MPI_Recv(rbuf, (int)(MAX_FILE_NAME+2*sizeof(int)), MPI_BYTE, src, FILE_INFO_REQ_TAG, gl_comps[i].comm, &status);
-//                CHECK_MPI(errno);
-//                memcpy(filename, rbuf, MAX_FILE_NAME);
-//                fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//                assert(fbuf != NULL);
-//
-//                /* If the global master zero (global rank 0) couldn't process the
-//                   request immediately because it doesn't know yet who is the root
-//                   writer for the file, the req has to be enqueue and, later, the master
-//                   will periodically check the queue to see if it can process the
-//                   request.
-//                 */
-//                if(fbuf->root_writer == -1){
-//                    DTF_DBG(VERBOSE_DBG_LEVEL, "Don't know who is the root for %s now. Will queue the req.", fbuf->file_path);
-//                    file_info_req_q_t *req = dtf_malloc(sizeof(file_info_req_q_t));
-//                    assert(req != NULL);
-//                    memcpy(req->filename, filename, MAX_FILE_NAME);
-//                    req->buf = rbuf;
-//                    req->next = NULL;
-//                    req->prev = NULL;
-//
-//                    enqueue
-//                    if(gl_finfo_req_q == NULL)
-//                        gl_finfo_req_q = req;
-//                    else {
-//                        req->next = gl_finfo_req_q;
-//                        gl_finfo_req_q->prev = req;
-//                        gl_finfo_req_q = req;
-//                    }
-//                    break;
-//                }
-//                if(gl_my_rank == fbuf->root_writer){
-//                    DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request");
-//                    memcpy(&fbuf->root_reader, (unsigned char*)rbuf+MAX_FILE_NAME, sizeof(int));
-//
-//                    errno = MPI_Send(&fbuf->ncid,1, MPI_INT, fbuf->root_reader, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm);
-//                    CHECK_MPI(errno);
-//
-//                } else {
-//                    DTF_DBG(VERBOSE_DBG_LEVEL, "Forward the request to rank %d", fbuf->root_writer);
-//                    Forward this request to the root master
-//                    errno = MPI_Send(rbuf,(int)(MAX_FILE_NAME+2*sizeof(int)), MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm);
-//                    CHECK_MPI(errno);
-//                }
-//                dtf_free(rbuf, MAX_FILE_NAME+2*sizeof(int));
-//                break;
-//            case FILE_READY_TAG:
-//                errno = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, FILE_READY_TAG, gl_comps[i].comm, &status);
-//                CHECK_MPI(errno);
-//                DTF_DBG(VERBOSE_DBG_LEVEL,   "Receive FILE_READY notif for %s", filename);
-//
-//                fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//                assert(fbuf != NULL);
-//
-//                if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-//                    Notify I am ready to receive
-//                    errno = MPI_Send(filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].comm);
-//                    CHECK_MPI(errno);
-//
-//                    Receive the header
-//                    MPI_Probe(src, HEADER_TAG, gl_comps[i].comm, &status);
-//                    MPI_Get_count(&status, MPI_BYTE, &bufsz);
-//                    fbuf->hdr_sz = (MPI_Offset)bufsz;
-//                    DTF_DBG(VERBOSE_DBG_LEVEL, "Hdr size to receive %d", bufsz);
-//                    fbuf->header = dtf_malloc((size_t)bufsz);
-//                    assert(fbuf->header != NULL);
-//                    errno = MPI_Recv(fbuf->header, bufsz, MPI_BYTE, src, HEADER_TAG, gl_comps[i].comm, &status);
-//                    CHECK_MPI(errno);
-//
-//                    receive_data(fbuf, src, gl_comps[i].comm);
-//                    fbuf->distr_ndone++;
-//                    if(fbuf->distr_ndone == fbuf->distr_nranks)
-//                        fbuf->is_ready = 1;
-//                } else
-//                    fbuf->is_ready = 1;
-//
-//                break;
-//            case RECV_READY_TAG:
-//                errno = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, RECV_READY_TAG, gl_comps[i].comm, &status);
-//
-//                CHECK_MPI(errno);
-//                fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//                assert(fbuf != NULL);
-//                DTF_DBG(VERBOSE_DBG_LEVEL, "Receive RECV_READY_TAG notif for %s", filename);
-//                Send the hearder
-//                errno = MPI_Send(fbuf->header, (int)fbuf->hdr_sz, MPI_BYTE, src, HEADER_TAG, gl_comps[i].comm);
-//                CHECK_MPI(errno);
-//                send_data(fbuf, src, gl_comps[i].comm);
-//
-//                fbuf->distr_ndone++;
-//                break;
-//            case ROOT_MST_TAG:
-//                errno = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, ROOT_MST_TAG, gl_comps[i].comm, &status);
-//                CHECK_MPI(errno);
-//                DTF_DBG(VERBOSE_DBG_LEVEL,   "Receive ROOT_MST_TAG notif for %s", filename);
-//
-//                fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//                assert(fbuf != NULL);
-//                assert(fbuf->root_writer == -1);
-//                fbuf->root_writer = src;
-//                break;
-//            default:
-//                DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: unknown tag %d", status.MPI_TAG);
-//                assert(0);
-//        }
-//    }
-//}
-
 MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape)
 {
     MPI_Offset ret = 0;
@@ -290,18 +122,9 @@ void notify_file_ready(file_buffer_t *fbuf)
 {
     int errno;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Inside notify_file_ready");
-    //comp_id = fbuf->reader_id;
     if(fbuf->iomode == DTF_IO_MODE_FILE){
-        //int rank;
-       // MPI_Comm_rank(fbuf->comm, &rank);
-
-       // MPI_Comm_remote_size(gl_comps[comp_id].comm, &nranks);
         if(gl_my_rank == fbuf->root_writer){
-//            if(fbuf->root_reader == -1){
-//                DTF_DBG(VERBOSE_DBG_LEVEL, "Start waiting to know who is the root reader for file %s", fbuf->file_path);
-//                while(fbuf->root_reader == -1)
-//                    progress_io();
-//            }
+
             if(fbuf->root_reader != -1){
                 DTF_DBG(VERBOSE_DBG_LEVEL,   "Notify reader root rank %d that file %s is ready", fbuf->root_reader, fbuf->file_path);
                 errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_READY_TAG, gl_comps[fbuf->reader_id].comm);
