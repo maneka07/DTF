@@ -6,12 +6,6 @@
 
 #define MAX_FILE_NAME 1024
 
-#define DISTR_RULE_P2P      0  /*default*/
-#define DISTR_RULE_RANGE    1
-
-#define DISTR_PATTERN_SCATTER   0
-#define DISTR_PATTERN_ALL       1
-
 /*
  0 (DTF_UNDEFINED) - the ps does not write to this file
  1 - the ps writes to this file. The file is not ready yet.
@@ -58,13 +52,13 @@ typedef struct file_buffer{
                                       - finished being written (mode = DTF_IO_MODE_FILE)
                                     */
   int                       iomode;               /*Do normal File I/O or direct data transfer?*/
-  /*Static data distribution related stuff*/
-  int                       distr_rule;                   /*Rule for distribution from writer to readers(range or list of ranks)*/
-  int                       distr_pattern;                /*Scatter portions of data or send all data*/
-  int                       distr_range;                  /*Range for distribution*/
-  int                       distr_nranks;                 /*writer: how many ranks I distribute to; reader: how many ranks I receive from*/
-  int                       *distr_ranks;                 /*writer: ranks I distribute to; reader: ranks I receive from*/
-  int                       distr_ndone;                  /*number of completed distributions*/
+//  /*Static data distribution related stuff*/
+//  int                       distr_rule;                   /*Rule for distribution from writer to readers(range or list of ranks)*/
+//  int                       distr_pattern;                /*Scatter portions of data or send all data*/
+//  int                       distr_range;                  /*Range for distribution*/
+//  int                       distr_nranks;                 /*writer: how many ranks I distribute to; reader: how many ranks I receive from*/
+//  int                       *distr_ranks;                 /*writer: ranks I distribute to; reader: ranks I receive from*/
+//  int                       distr_ndone;                  /*number of completed distributions*/
   /*Data distribution through request matching*/
   int                       root_writer;           /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
   int                       root_reader;

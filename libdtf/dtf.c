@@ -8,7 +8,6 @@
 #include "dtf.h"
 #include "dtf_init_finalize.h"
 #include "dtf_util.h"
-#include "dtf_buf_io.h"
 #include "dtf_nbuf_io.h"
 #include "dtf_req_match.h"
 //TODO check for dimension size and not tresspasing when writing
@@ -57,7 +56,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         fflush(stderr);
         exit(1);
     }
-    gl_conf.malloc_size = 0;
+    gl_stats.malloc_size = 0;
+    gl_conf.distr_mode = DISTR_MODE_REQ_MATCH;
 
     gl_stats.nmsg_sent = 0;
     gl_stats.accum_msg_sz = 0;
@@ -87,12 +87,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     else
         gl_conf.io_db_type = atoi(s);
 
-    s = getenv("DTF_SYNCH_WALLTIME");
-    if(s == NULL)
-        gl_conf.synch_walltime_flag = 0; //default no
-    else
-        gl_conf.synch_walltime_flag = atoi(s);
-
     assert( (gl_conf.io_db_type==DTF_DB_BLOCKS) || (gl_conf.io_db_type==DTF_DB_CHUNKS));
     //during init only root will print out stuff
     if(gl_my_rank != 0){
@@ -107,8 +101,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     errno = init_comp_comm();
     if(errno) goto panic_exit;
 
-    errno = init_data_distr();
-    if(errno) goto panic_exit;
     lib_initialized = 1;
 
     //enable print setting for other ranks again
@@ -159,9 +151,8 @@ _EXTERN_C_ int dtf_finalize()
     DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalize");
 
     if(gl_my_rank == 0){
-        if(!gl_conf.synch_walltime_flag)
-            gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
-        assert(gl_stats.walltime>0);
+        gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: walltime %.3f", gl_stats.walltime);
         DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
                  gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
 
@@ -180,8 +171,8 @@ _EXTERN_C_ int dtf_finalize()
 
     }
 
-    if(gl_conf.malloc_size - MAX_COMP_NAME > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_conf.malloc_size - MAX_COMP_NAME);
+    if(gl_stats.malloc_size - MAX_COMP_NAME > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
 
 
     if(gl_stats.num_tsrch > 0){
@@ -519,9 +510,6 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     switch(gl_conf.distr_mode){
-            case DISTR_MODE_STATIC:
-                ret = buf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
-                break;
             case DISTR_MODE_REQ_MATCH:
                 if(request == NULL)
                     ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, NULL);
@@ -607,14 +595,14 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     return ret;
 }
 
-_EXTERN_C_ int dtf_set_distr_count(const char* filename, int varid, int count[])
-{
-    if(!lib_initialized) return 0;
-    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL) return 0;
-    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-    return set_distr_count(fbuf, varid, count);
-}
+//_EXTERN_C_ int dtf_set_distr_count(const char* filename, int varid, int count[])
+//{
+//    if(!lib_initialized) return 0;
+//    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+//    if(fbuf == NULL) return 0;
+//    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
+//    return set_distr_count(fbuf, varid, count);
+//}
 
 /*  Fortran Interfaces  */
 

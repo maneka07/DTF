@@ -133,7 +133,7 @@ MPI_Offset mem_contiguous_write(dtf_var_t *var, MPI_Offset offset, MPI_Offset da
             tmp = realloc(node->data, node->data_sz + ext_sz);
             assert(tmp != NULL);
             node->data = tmp;
-            gl_conf.malloc_size += ext_sz;
+            gl_stats.malloc_size += ext_sz;
             to_cpy = ext_sz;
             DTF_DBG(VERBOSE_ALL_LEVEL, "Copy %d to node with offt %d (sz %d) at node offt %d",
                     (int)to_cpy, (int)node->offset, (int)node->data_sz+(int)ext_sz, (int)(offset - node->offset));
@@ -148,7 +148,7 @@ MPI_Offset mem_contiguous_write(dtf_var_t *var, MPI_Offset offset, MPI_Offset da
                 if( (node->next != NULL) && (offset+left > node->next->offset))
                     ext_sz = node->next->offset - (node->offset + node->data_sz); //adjust
                 tmp = realloc(node->data, node->data_sz + ext_sz);
-                gl_conf.malloc_size += ext_sz;
+                gl_stats.malloc_size += ext_sz;
                 assert(tmp != NULL);
                 node->data = tmp;
                 node->data_sz += ext_sz;

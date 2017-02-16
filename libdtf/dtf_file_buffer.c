@@ -110,7 +110,7 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
 
     dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
     dtf_free(fbuf->mst_info, sizeof(master_info_t));
-    dtf_free(fbuf->distr_ranks, fbuf->distr_nranks*sizeof(int));
+
 
 //    if(*buflist == fbuf)
 //        *buflist = fbuf->next;
@@ -142,12 +142,6 @@ file_buffer_t* new_file_buffer()
     buf->header = NULL;
     buf->hdr_sz = 0;
     buf->iomode = DTF_UNDEFINED;
-    buf->distr_rule = DISTR_RULE_P2P;
-    buf->distr_pattern = DISTR_PATTERN_ALL;
-    buf->distr_range = 0;
-    buf->distr_nranks = 0;
-    buf->distr_ranks = NULL;
-    buf->distr_ndone = 0;
     //buf->ioreq_cnt = 0;
     buf->rreq_cnt = 0;
     buf->wreq_cnt = 0;

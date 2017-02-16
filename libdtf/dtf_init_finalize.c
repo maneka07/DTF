@@ -264,31 +264,7 @@ static void destroy_intercomm(int comp_id){
 
     if(mode == DTF_UNDEFINED) return;
     if(gl_comps[comp_id].comm == MPI_COMM_NULL) return;
-
-    if(gl_conf.synch_walltime_flag){
-        int boo = 0;
-        int errno;
-        if(gl_my_rank == 0 && mode == CONNECT_MODE_SERVER){
-            MPI_Status stat;
-            errno = MPI_Recv(&boo, 1, MPI_INT, MPI_ANY_SOURCE, SYNCH_TAG, gl_comps[comp_id].comm, &stat);
-            CHECK_MPI(errno);
-            //errno = MPI_Send(&boo, 1, MPI_INT, stat.MPI_SOURCE, SYNCH_TAG, gl_comps[comp_id].comm);
-            //CHECK_MPI(errno);
-
-        } else if(gl_my_rank == 0 && mode == CONNECT_MODE_CLIENT){
-            errno = MPI_Send(&boo, 1, MPI_INT, 0, SYNCH_TAG, gl_comps[comp_id].comm);
-            CHECK_MPI(errno);
-            //errno = MPI_Recv(&boo, 1, MPI_INT, 0, SYNCH_TAG, gl_comps[comp_id].comm, MPI_STATUS_IGNORE);
-            //CHECK_MPI(errno);
-        }
-        gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
-        if(gl_my_rank == 0 && mode == CONNECT_MODE_SERVER)
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: Synched walltime %.3f", gl_stats.walltime);
-
-    }
-
     MPI_Comm_disconnect(&(gl_comps[comp_id].comm));
-
     //rank 0 of the server component will remove the file
     if(gl_my_rank == 0 && mode == CONNECT_MODE_SERVER){
 
@@ -345,7 +321,6 @@ int load_config(const char *ini_name, const char *comp_name){
         return 1 ;
   }
 
-  gl_conf.distr_mode = DTF_UNDEFINED;
   gl_conf.buffered_req_match = 0;
 
   while(!feof(in)){
@@ -390,12 +365,6 @@ int load_config(const char *ini_name, const char *comp_name){
             if( (cur_fb->iomode != DTF_IO_MODE_FILE) && (cur_fb->writer_id == -1 || cur_fb->reader_id == -1) ){
                 DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Error: file reader or writer not set for file %s.", cur_fb->file_path);
                 goto panic_exit;
-            }
-            if(cur_fb->distr_rule == DISTR_RULE_RANGE){
-                if(cur_fb->distr_range == 0){
-                    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Please specify range for file %s", cur_fb->file_path);
-                    goto panic_exit;
-                }
             }
         }
         cur_fb = new_file_buffer();
@@ -444,17 +413,15 @@ int load_config(const char *ini_name, const char *comp_name){
                     break;
                 }
             }
-        } else if(strcmp(param, "distr_mode") == 0){
-            if(strcmp(value, "static") == 0)
-                gl_conf.distr_mode = DISTR_MODE_STATIC;
-//            else if(strcmp(value, "buf_req_match") == 0)
-//                gl_conf.distr_mode = DISTR_MODE_BUFFERED_REQ_MATCH;
-            else if(strcmp(value, "req_match") == 0)
-                gl_conf.distr_mode = DISTR_MODE_REQ_MATCH;
-            else{
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: 3 unknown data distribution mode");
-                goto panic_exit;
-            }
+//        } else if(strcmp(param, "distr_mode") == 0){
+//            if(strcmp(value, "static") == 0)
+//                gl_conf.distr_mode = DISTR_MODE_STATIC;
+//            else if(strcmp(value, "req_match") == 0)
+//                gl_conf.distr_mode = DISTR_MODE_REQ_MATCH;
+//            else{
+//                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: 3 unknown data distribution mode");
+//                goto panic_exit;
+//            }
         } else if(strcmp(param, "buffered_req_match") == 0){
 
             gl_conf.buffered_req_match = atoi(value);
@@ -533,26 +500,6 @@ int load_config(const char *ini_name, const char *comp_name){
                 cur_fb->iomode = DTF_IO_MODE_MEMORY;
             }
 
-        } else if(strcmp(param, "distr_rule") == 0){
-            if(strcmp(value, "range") == 0)
-                cur_fb->distr_rule = DISTR_RULE_RANGE;
-            else if (strcmp(value, "p2p") == 0){
-                cur_fb->distr_rule = DISTR_RULE_P2P;
-            } else {
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: distribution rule %s is unknown", value);
-                goto panic_exit;
-            }
-        } else if(strcmp(param, "distr_pattern") == 0){
-            if(strcmp(value, "scatter") == 0)
-                cur_fb->distr_pattern = DISTR_PATTERN_SCATTER;
-            else if(strcmp(value, "all") == 0)
-                cur_fb->distr_pattern = DISTR_PATTERN_ALL;
-            else {
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown distribution pattern %s.", value);
-                goto panic_exit;
-            }
-        } else if(strcmp(param, "distr_range") == 0){
-            cur_fb->distr_range = atoi(value);
         } else {
             DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: unknown parameter %s.", param);
             goto panic_exit;
@@ -652,48 +599,6 @@ void finalize_comp_comm(){
     }
 }
 
-
-int init_data_distr()
-{
-    int nranks;
-
-    file_buffer_t *fbuf = gl_filebuf_list;
-
-    while(fbuf != NULL){
-        if(fbuf->iomode != DTF_IO_MODE_MEMORY)
-            fbuf->distr_rule = DISTR_RULE_P2P;
-
-        if(gl_conf.distr_mode == DISTR_MODE_STATIC){
-            if(fbuf->distr_rule == DISTR_RULE_P2P){
-                fbuf->distr_nranks = 1;
-                fbuf->distr_ranks = dtf_malloc(sizeof(int));
-                assert(fbuf->distr_ranks != NULL);
-                *(fbuf->distr_ranks) = gl_my_rank;
-            } else if(fbuf->distr_rule == DISTR_RULE_RANGE){
-    //            if(fbuf->writer_id == gl_my_comp_id)
-    //                MPI_Comm_remote_size(gl_comps[fbuf->reader_id].comm, &nranks);
-    //            else
-    //                MPI_Comm_remote_size(gl_comps[fbuf->writer_id].comm, &nranks);
-                MPI_Comm_size(MPI_COMM_WORLD, &nranks);
-                fbuf->distr_nranks = (int)(nranks/fbuf->distr_range);
-                assert(fbuf->distr_nranks > 0);
-                fbuf->distr_ranks = (int*)dtf_malloc(fbuf->distr_nranks*sizeof(int));
-                assert(fbuf->distr_ranks != NULL);
-                fbuf->distr_ranks[0] = gl_my_rank % fbuf->distr_range; //
-                int i = 1;
-                while(fbuf->distr_ranks[i-1] + fbuf->distr_range < nranks){
-                    fbuf->distr_ranks[i] = fbuf->distr_ranks[i-1] + fbuf->distr_range;
-                    i++;
-                }
-            }
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Number of ranks to distribute data to/from %d", fbuf->distr_nranks);
-
-        } // else if (gl_conf.distr_mode == DISTR_MODE_NONBUFFERED_REQ_MATCH)
-       fbuf = fbuf->next;
-    }
-    return 0;
-}
-
 void finalize_files()
 {
     int file_cnt = 0, compl_cnt = 0;
@@ -724,7 +629,7 @@ void finalize_files()
                         else{
                             assert(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED);
                             while(fbuf->root_reader == -1)
-                                progress_io();
+                                progress_io_matching();
                             notify_file_ready(fbuf);
                         }
                 } else if(fbuf->iomode == DTF_IO_MODE_MEMORY && gl_conf.distr_mode == DISTR_MODE_REQ_MATCH){
