@@ -90,6 +90,15 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_conf.io_db_type = atoi(s);
 
     assert( (gl_conf.io_db_type==DTF_DB_BLOCKS) || (gl_conf.io_db_type==DTF_DB_CHUNKS));
+
+    s = getenv("DFT_DATA_MSG_SIZE_LIMIT");
+    if(s == NULL)
+        gl_conf.data_msg_size_limit = DTF_DATA_MSG_SIZE_LIMIT;
+    else
+        gl_conf.data_msg_size_limit = atoi(s);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Data message size limit set to %d", gl_conf.data_msg_size_limit);
+    assert(gl_conf.data_msg_size_limit > 0);
+
     //during init only root will print out stuff
     if(gl_my_rank != 0){
         verbose = gl_verbose;

@@ -4,7 +4,7 @@
 #include <mpi.h>
 #include "dtf_file_buffer.h"
 
-#define MAX_WORKGROUP_SIZE     1024
+#define MAX_WORKGROUP_SIZE     64
 
 #define CONNECT_MODE_SERVER     1
 #define CONNECT_MODE_CLIENT     0
@@ -38,6 +38,7 @@ typedef struct dtf_config{
     int         distr_mode;
     int         buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
     int         io_db_type;  /*either mem chunks(1) or data blocks(0)*/
+    int         data_msg_size_limit;
 }dtf_config_t;
 
 typedef struct stats{

@@ -10,6 +10,8 @@
 #define DTF_DB_BLOCKS  0  /*Match based on multidimensional data blocks*/
 #define DTF_DB_CHUNKS  1  /*Match based on contigious memory chunks*/
 
+#define DTF_DATA_MSG_SIZE_LIMIT 256*1024*1024
+
 typedef struct contig_mem_chunk{
     MPI_Offset              offset;
     MPI_Offset              usrbuf_offset;

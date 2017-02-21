@@ -252,9 +252,9 @@ void unpack_file_info(MPI_Offset bufsz, void *buf)
 static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
 {
     int mlc_ranks = 4;
-    //NOTE: hidden bug: if ndims*sizeof(MPI_Offset) > 512 there will be segmenation fault
+    //NOTE: hidden bug: if ndims*sizeof(MPI_Offset) > 512 there will be segmentation fault
     //very unlikely to happen in real life though
-    int mlc_buf   = 512;
+    int mlc_buf   = 1024;
     int i;
     write_db_item_t *witem = NULL;
     read_db_item_t *ritem;
@@ -549,6 +549,7 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
             int my_idx = -1;
 
             double t_start_send;// = MPI_Wtime();
+            t_start_send = MPI_Wtime();
             for(i = 0; i < nwriters; i++){
                 assert(offt[i] > 0);
 
@@ -566,6 +567,10 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
                 gl_stats.nmatching_msg_sent++;
                 gl_stats.accum_msg_sz += offt[i];
             }
+
+            errno = MPI_Waitall(nwriters, sreqs, MPI_STATUSES_IGNORE);
+            CHECK_MPI(errno);
+            gl_stats.accum_comm_time += MPI_Wtime() - t_start_send;
             if(my_idx != -1){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Parse data req to myself");
                 if(gl_conf.io_db_type == DTF_DB_CHUNKS)
@@ -573,11 +578,6 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
                 else
                     send_data_wrt2rdr_ver2(sbuf[my_idx], offt[my_idx]);
             }
-
-            t_start_send = MPI_Wtime();
-            errno = MPI_Waitall(nwriters, sreqs, MPI_STATUSES_IGNORE);
-            CHECK_MPI(errno);
-            gl_stats.accum_comm_time += MPI_Wtime() - t_start_send;
 
 //            completed = 0;
 //            //DTF_DBG(VERBOSE_ALL_LEVEL, "Start waiting (rreq from rank %d)", ritem->rank);
@@ -2048,129 +2048,138 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
     assert(fbuf != NULL);
 
     t_begin = MPI_Wtime();
-    /*First compute the size of buf to allocate*/
-    sbufsz = sizeof(MPI_Offset); //ncid
-    while(rofft < bufsz){
-        var_id = *(MPI_Offset*)(rbuf+rofft);
-        rofft += sizeof(MPI_Offset);
-        if( (var == NULL) || (var->id != var_id)){
-            var = find_var(fbuf->vars, var_id);
-            assert(var != NULL);
-        }
-        //varid + start[] + count[]
-        sbufsz += sizeof(MPI_Offset)+sizeof(MPI_Offset)*var->ndims*2;
-        //skip start[]
-        rofft += sizeof(MPI_Offset)*var->ndims;
-        int nelems = 1;
-        for(i = 0; i < var->ndims; i++){
-            nelems *= *(MPI_Offset*)(rbuf+rofft);
+
+
+    //while(rofft != sbufsz){
+
+        /*First compute the size of buf to allocate. The upper limit
+        for the buffer size is gl_conf.data_msg_size_limit*/
+        sbufsz = sizeof(MPI_Offset); //ncid
+        while(rofft < bufsz){
+            var_id = *(MPI_Offset*)(rbuf+rofft);
             rofft += sizeof(MPI_Offset);
-        }
-        int el_sz;
-        MPI_Type_size(var->dtype, &el_sz);
-        sbufsz += nelems*el_sz;
-    }
-
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Alloc data buf of sz %d", (int)sbufsz);
-    sbuf = dtf_malloc(sbufsz);
-    assert(sbuf != NULL);
-    *(MPI_Offset*)sbuf = (MPI_Offset)ncid;
-    sofft = sizeof(MPI_Offset);
-
-    //rewind
-    rofft = sizeof(MPI_Offset)*3;
-    while(rofft != bufsz){
-        var_id = (int)(*(MPI_Offset*)(rbuf+rofft));
-        rofft += sizeof(MPI_Offset);
-
-        if( (var == NULL) || (var->id != var_id)){
-            var = find_var(fbuf->vars, var_id);
-            assert(var != NULL);
-        }
-
-        start = (MPI_Offset*)(rbuf+rofft);
-        rofft += var->ndims*sizeof(MPI_Offset);
-        count = (MPI_Offset*)(rbuf+rofft);
-        rofft += var->ndims*sizeof(MPI_Offset);
-
-         /*save var_id, start[], count[]*/
-        *(MPI_Offset*)(sbuf+sofft) = (MPI_Offset)var_id;
-        sofft += sizeof(MPI_Offset);
-        memcpy(sbuf+sofft, start, var->ndims*sizeof(MPI_Offset));
-        sofft += var->ndims*sizeof(MPI_Offset);
-        memcpy(sbuf+sofft, count, var->ndims*sizeof(MPI_Offset));
-        sofft += var->ndims*sizeof(MPI_Offset);
-
-        /*Find the ioreq that has info about this mem chunk*/
-        ioreq = fbuf->ioreqs;
-        while(ioreq != NULL){
-            if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_WRITE)){
-                int match = 0;
-                for(i = 0; i < var->ndims; i++)
-                    if( (start[i] >= ioreq->start[i]) && (start[i] < ioreq->start[i]+ioreq->count[i]))
-                        match++;
-                if(match == var->ndims){
-                    for(i = 0; i < var->ndims; i++)
-                        assert(start[i]+count[i]<=ioreq->start[i]+ioreq->count[i]);
-                    break;
-                }
-
+            if( (var == NULL) || (var->id != var_id)){
+                var = find_var(fbuf->vars, var_id);
+                assert(var != NULL);
             }
-            ioreq = ioreq->next;
-        }
-        assert(ioreq != NULL);
-
-        /*Copy data: no support for type conversion now*/
-        MPI_Type_size(ioreq->dtype, &req_el_sz);
-        MPI_Type_size(var->dtype, &def_el_sz);
-
-        assert(req_el_sz == def_el_sz);
-
-        {   /*Copy data*/
-            int nelems;
-            //normalize start
-            MPI_Offset *nrml_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            assert(nrml_start != NULL);
-            nelems = 1;
+            //varid + start[] + count[]
+            sbufsz += sizeof(MPI_Offset)+sizeof(MPI_Offset)*var->ndims*2;
+            //skip start[]
+            rofft += sizeof(MPI_Offset)*var->ndims;
+            int nelems = 1;
             for(i = 0; i < var->ndims; i++){
-                nrml_start[i] = start[i] - ioreq->start[i];
-                assert(nrml_start[i]>=0);
-                nelems *= count[i];
+                nelems *= *(MPI_Offset*)(rbuf+rofft);
+                rofft += sizeof(MPI_Offset);
             }
-            MPI_Offset *cur_coord = (MPI_Offset*)dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            memcpy((void*)cur_coord, (void*)nrml_start, var->ndims*sizeof(MPI_Offset));
-            /*read from user buffer to send buffer*/
-            recur_get_put_data(var, var->dtype, ioreq->user_buf, ioreq->count, nrml_start, count, 0, cur_coord, sbuf+sofft, DTF_READ);
-            dtf_free(nrml_start, var->ndims*sizeof(MPI_Offset));
-            dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
-            sofft += nelems*def_el_sz;
+            int el_sz;
+            MPI_Type_size(var->dtype, &el_sz);
+            sbufsz += nelems*el_sz;
         }
-    }
-    DTF_DBG(VERBOSE_ALL_LEVEL, "Sofft %d, sbufsz %d", (int)sofft, (int)sbufsz);
-    assert(sofft == sbufsz);
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "PROFILE: copy data to sbuf %.3f", MPI_Wtime() - t_begin);
-    double t_start_send = MPI_Wtime();
 
-    MPI_Request req;
-    /* First send the size of the data, then the data itself*/
-    int tmp = (int)sbufsz;
-    if(intracomp_flag){
-        errno = MPI_Send((void*)&tmp,1, MPI_INT, rdr_rank, IO_REQ_RECV_DATA, gl_comps[gl_my_comp_id].comm);
-        CHECK_MPI(errno);
-        errno = MPI_Isend((void*)sbuf, (int)sbufsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[gl_my_comp_id].comm, &req);
-        CHECK_MPI(errno);
-    } else {
-        errno = MPI_Send((void*)&tmp,1, MPI_INT, rdr_rank, IO_REQ_RECV_DATA, gl_comps[fbuf->reader_id].comm);
-        CHECK_MPI(errno);
-        errno = MPI_Isend((void*)sbuf, (int)sbufsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[fbuf->reader_id].comm, &req);
-        CHECK_MPI(errno);
-    }
-    errno = MPI_Wait(&req, MPI_STATUS_IGNORE);
-    CHECK_MPI(errno);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "PROFILE: Alloc data buf of sz %d", (int)sbufsz);
+        if(sbuf == NULL)
+        sbuf = dtf_malloc(sbufsz);
+        assert(sbuf != NULL);
+        *(MPI_Offset*)sbuf = (MPI_Offset)ncid;
+        sofft = sizeof(MPI_Offset);
 
-    gl_stats.accum_comm_time += MPI_Wtime() - t_start_send;
-    gl_stats.nmatching_msg_sent++;
-    gl_stats.accum_msg_sz += sbufsz;
+        //rewind
+        rofft = sizeof(MPI_Offset)*3;
+        while(rofft != bufsz){
+            var_id = (int)(*(MPI_Offset*)(rbuf+rofft));
+            rofft += sizeof(MPI_Offset);
+
+            if( (var == NULL) || (var->id != var_id)){
+                var = find_var(fbuf->vars, var_id);
+                assert(var != NULL);
+            }
+
+            start = (MPI_Offset*)(rbuf+rofft);
+            rofft += var->ndims*sizeof(MPI_Offset);
+            count = (MPI_Offset*)(rbuf+rofft);
+            rofft += var->ndims*sizeof(MPI_Offset);
+
+             /*save var_id, start[], count[]*/
+            *(MPI_Offset*)(sbuf+sofft) = (MPI_Offset)var_id;
+            sofft += sizeof(MPI_Offset);
+            memcpy(sbuf+sofft, start, var->ndims*sizeof(MPI_Offset));
+            sofft += var->ndims*sizeof(MPI_Offset);
+            memcpy(sbuf+sofft, count, var->ndims*sizeof(MPI_Offset));
+            sofft += var->ndims*sizeof(MPI_Offset);
+
+            /*Find the ioreq that has info about this mem chunk*/
+            ioreq = fbuf->ioreqs;
+            while(ioreq != NULL){
+                if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_WRITE)){
+                    int match = 0;
+                    for(i = 0; i < var->ndims; i++)
+                        if( (start[i] >= ioreq->start[i]) && (start[i] < ioreq->start[i]+ioreq->count[i]))
+                            match++;
+                    if(match == var->ndims){
+                        for(i = 0; i < var->ndims; i++)
+                            assert(start[i]+count[i]<=ioreq->start[i]+ioreq->count[i]);
+                        break;
+                    }
+
+                }
+                ioreq = ioreq->next;
+            }
+            assert(ioreq != NULL);
+
+            /*Copy data: no support for type conversion now*/
+            MPI_Type_size(ioreq->dtype, &req_el_sz);
+            MPI_Type_size(var->dtype, &def_el_sz);
+
+            assert(req_el_sz == def_el_sz);
+
+            {   /*Copy data*/
+                int nelems;
+                //normalize start
+                MPI_Offset *nrml_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+                assert(nrml_start != NULL);
+                nelems = 1;
+                for(i = 0; i < var->ndims; i++){
+                    nrml_start[i] = start[i] - ioreq->start[i];
+                    assert(nrml_start[i]>=0);
+                    nelems *= count[i];
+                }
+                MPI_Offset *cur_coord = (MPI_Offset*)dtf_malloc(var->ndims*sizeof(MPI_Offset));
+                memcpy((void*)cur_coord, (void*)nrml_start, var->ndims*sizeof(MPI_Offset));
+                /*read from user buffer to send buffer*/
+                recur_get_put_data(var, var->dtype, ioreq->user_buf, ioreq->count, nrml_start, count, 0, cur_coord, sbuf+sofft, DTF_READ);
+                dtf_free(nrml_start, var->ndims*sizeof(MPI_Offset));
+                dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
+                sofft += nelems*def_el_sz;
+            }
+        }
+        DTF_DBG(VERBOSE_ALL_LEVEL, "Sofft %d, sbufsz %d", (int)sofft, (int)sbufsz);
+        assert(sofft == sbufsz);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "PROFILE: copy data to sbuf %.3f at %.3f", MPI_Wtime() - t_begin, MPI_Wtime() - gl_stats.walltime);
+        double t_start_send = MPI_Wtime();
+
+        MPI_Request req;
+        /* First send the size of the data, then the data itself*/
+        int tmp = (int)sbufsz;
+        if(intracomp_flag){
+            errno = MPI_Send((void*)&tmp,1, MPI_INT, rdr_rank, IO_REQ_RECV_DATA, gl_comps[gl_my_comp_id].comm);
+            CHECK_MPI(errno);
+            errno = MPI_Isend((void*)sbuf, (int)sbufsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[gl_my_comp_id].comm, &req);
+            CHECK_MPI(errno);
+        } else {
+            errno = MPI_Send((void*)&tmp,1, MPI_INT, rdr_rank, IO_REQ_RECV_DATA, gl_comps[fbuf->reader_id].comm);
+            CHECK_MPI(errno);
+            errno = MPI_Isend((void*)sbuf, (int)sbufsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[fbuf->reader_id].comm, &req);
+            CHECK_MPI(errno);
+        }
+        errno = MPI_Wait(&req, MPI_STATUS_IGNORE);
+        CHECK_MPI(errno);
+
+        gl_stats.accum_comm_time += MPI_Wtime() - t_start_send;
+        gl_stats.nmatching_msg_sent++;
+        gl_stats.accum_msg_sz += sbufsz;
+
+    //} /*while(rofft != sbufsz)*/
+
     dtf_free(sbuf, sbufsz);
 }
 
@@ -2352,6 +2361,7 @@ static void recv_data_rdr_ver2(void* buf, int bufsz)
     assert(fbuf != NULL);
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Received data for file %s (ncid %d)", fbuf->file_path, fbuf->ncid);
+    double t_begin = MPI_Wtime();
     while(offt != bufsz){
         var_id = (int)(*(MPI_Offset*)(chbuf+offt));
         offt += sizeof(MPI_Offset);
@@ -2436,6 +2446,8 @@ static void recv_data_rdr_ver2(void* buf, int bufsz)
             }
         }
     } //while(bufsz)
+
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "PROFILE: time to extract the data: %.3f", MPI_Wtime() - t_begin);
 }
 
 
@@ -2773,6 +2785,7 @@ void progress_io_matching()
                     errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_DATA_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(errno);
                     gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
+                    DTF_DBG(VERBOSE_ERROR_LEVEL, "PROFILE: recv data at %.3f", MPI_Wtime() - gl_stats.walltime);
                     if(gl_conf.io_db_type == DTF_DB_CHUNKS)
                         recv_data_rdr(rbuf, bufsz);
                     else
