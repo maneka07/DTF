@@ -67,8 +67,11 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.num_tsrch = 0;
     gl_stats.t_treesrch = 0;
     gl_stats.walltime = MPI_Wtime();
+    if(gl_my_rank == 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "PROFILE: started at %.3f", gl_stats.walltime);
     gl_stats.accum_comm_time = 0;
     gl_stats.t_progress = 0;
+    gl_stats.nprogress_call = 0;
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -167,7 +170,9 @@ _EXTERN_C_ int dtf_finalize()
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: time spent in progress %.4f(%.4f%%)",
                     gl_stats.t_progress, (gl_stats.t_progress/gl_stats.walltime)*100);
         }
-
+        if(gl_stats.nprogress_call > 0){
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
+        }
     }
 
     if(gl_stats.malloc_size - MAX_COMP_NAME > 0)
@@ -348,6 +353,7 @@ _EXTERN_C_ void dtf_close(const char* filename)
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
 //    if(fbuf->reader_id == gl_my_comp_id)
+
     MPI_Barrier(fbuf->comm);
 
     close_file(fbuf);

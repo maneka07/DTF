@@ -13,15 +13,16 @@
 #define ASCIILINESZ   1024
 
 #define FILE_READY_TAG      0       /*writer rank -> reader rank*/
-#define IO_DATA_REQ_TAG     5       /*master -> writer*/
-#define IO_DATA_TAG         6       /*writer -> reader*/
-#define READ_DONE_TAG        7       /*reader->master*/
-#define IO_CLOSE_FILE_TAG   8      /*reader->master, master->writers*/
-#define FILE_INFO_TAG       10
-#define FILE_INFO_REQ_TAG   11
-#define ROOT_MST_TAG        12
-#define MATCH_DONE_TAG      13
-#define IO_REQS_TAG         14
+#define IO_DATA_REQ_TAG     1       /*master -> writer*/
+#define IO_REQ_RECV_DATA    2
+#define IO_DATA_TAG         3       /*writer -> reader*/
+#define READ_DONE_TAG       4       /*reader->master*/
+#define IO_CLOSE_FILE_TAG   5      /*reader->master, master->writers*/
+#define FILE_INFO_TAG       6
+#define FILE_INFO_REQ_TAG   7
+#define ROOT_MST_TAG        8
+#define MATCH_DONE_TAG      9
+#define IO_REQS_TAG         10
 
 #define DISTR_MODE_REQ_MATCH    1
 
@@ -52,6 +53,7 @@ typedef struct stats{
     double          t_progress;
     double          walltime;
     size_t          malloc_size;
+    unsigned long   nprogress_call;
 } stats_t;
 
 
