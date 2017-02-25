@@ -18,6 +18,8 @@ struct dtf_config gl_conf;
 struct stats gl_stats;
 int frt_indexing = 0;
 
+void *gl_msg_buf = NULL;
+
 extern file_info_req_q_t *gl_finfo_req_q;
 
 /**
@@ -68,7 +70,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.t_treesrch = 0;
     gl_stats.walltime = MPI_Wtime();
     if(gl_my_rank == 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "PROFILE: started at %.3f", gl_stats.walltime);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: started at %.3f", gl_stats.walltime);
     gl_stats.accum_comm_time = 0;
     gl_stats.t_progress = 0;
     gl_stats.nprogress_call = 0;
@@ -95,9 +97,15 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     if(s == NULL)
         gl_conf.data_msg_size_limit = DTF_DATA_MSG_SIZE_LIMIT;
     else
-        gl_conf.data_msg_size_limit = atoi(s);
+        gl_conf.data_msg_size_limit = atoi(s) * 1024;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Data message size limit set to %d", gl_conf.data_msg_size_limit);
+
     assert(gl_conf.data_msg_size_limit > 0);
+
+    gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
+    assert(gl_msg_buf != NULL);
+    //touch
+    ((unsigned char*)gl_msg_buf)[0] = 0;
 
     //during init only root will print out stuff
     if(gl_my_rank != 0){
@@ -183,6 +191,7 @@ _EXTERN_C_ int dtf_finalize()
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
         }
     }
+    dtf_free(gl_msg_buf, gl_conf.data_msg_size_limit);
 
     if(gl_stats.malloc_size - MAX_COMP_NAME > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
@@ -565,10 +574,10 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
         DTF_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d size %llu", varid, i, shape[i]);
 //NOTE: c and fortran have different memory layout for arrays, reverse the indexing
     /*For now, can only support unlimited dimension if it's the fasted changing dimension array*/
-    if( (ndims > 0) && (shape[0] == DTF_UNLIMITED))
+    if( (ndims > 0) && (shape[ndims - 1] == DTF_UNLIMITED))
         DTF_DBG(VERBOSE_DBG_LEVEL, "var has unlimited dimension");
 
-    for(i = 1; i < ndims; i++){
+    for(i = 0; i < ndims-1; i++){
         //we can support unlimited dimension if it's the first dimension
         //else abort
         if(shape[i] == DTF_UNLIMITED){
@@ -580,7 +589,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: datatype for var %d (file %s) is null. Aborting.", varid, fbuf->file_path);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
-    if(frt_indexing && ndims > 0){
+  /*  if(frt_indexing && ndims > 0){
         MPI_Offset *cshape = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
         assert(cshape != NULL);
 
@@ -599,7 +608,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
                 cshape[ndims - i - 1] = shape[i];// + 1;
         ret = def_var(fbuf, varid, ndims, dtype, cshape);
         dtf_free(cshape, sizeof(MPI_Offset)*ndims);
-    } else
+    } else*/
       ret = def_var(fbuf, varid, ndims, dtype, shape);
 
     return ret;

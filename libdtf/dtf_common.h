@@ -25,6 +25,7 @@ extern struct dtf_config gl_conf;                 /*Framework settings*/
 extern int frt_indexing;
 extern struct stats gl_stats;
 char _buff[1024];
+extern void* gl_msg_buf;
 char *gl_my_comp_name;
 
 char error_string[1024];
@@ -33,7 +34,7 @@ char error_string[1024];
     if(gl_verbose >= dbg_level){  \
                 memset(_buff,0,1024);                         \
                 snprintf(_buff,1024,__VA_ARGS__);             \
-                fprintf(stdout, "%s %d: %s\n", gl_my_comp_name, gl_my_rank, _buff);  \
+                fprintf(stdout, "%s %d [%.3f]: %s\n", gl_my_comp_name, gl_my_rank, MPI_Wtime() - gl_stats.walltime, _buff);  \
                 fflush(stdout);   \
     }           \
 }while(0)

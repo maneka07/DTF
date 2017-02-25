@@ -221,7 +221,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                 double t_start = MPI_Wtime();
                 while(!fbuf->is_ready)
                     progress_io_matching();
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "PROFILE: Waiting to open file %.3f", MPI_Wtime()-t_start);
+                DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: Waiting to open file %.3f", MPI_Wtime()-t_start);
             }
 
             errno = MPI_Bcast(&fbuf->is_ready, 1, MPI_INT, 0, comm);
@@ -243,7 +243,6 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                 /*Zero rank will inquire the pnetcdf header/dtf vars info/masters info
                 from writer's global zero rank and then broadcast this info to other
                 readers that opened the file*/
-                double t_start = MPI_Wtime();
                 if(rank == 0){
                     buf = dtf_malloc(MAX_FILE_NAME+2*sizeof(int));
                     assert(buf != NULL);
@@ -280,8 +279,6 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
                 unpack_file_info(bufsz, buf);
                 dtf_free(buf, bufsz);
-                if(gl_my_rank == 0)
-                    DTF_DBG(VERBOSE_ERROR_LEVEL, "PROFILE: time to get file ready %.3f", MPI_Wtime() - t_start);
                 fbuf->is_ready = 1;
             }
         }

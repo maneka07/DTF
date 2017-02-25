@@ -23,6 +23,7 @@
 #define ROOT_MST_TAG        8
 #define MATCH_DONE_TAG      9
 #define IO_REQS_TAG         10
+#define READY_RECV_DATA     11
 
 #define DISTR_MODE_REQ_MATCH    1
 

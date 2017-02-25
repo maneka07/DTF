@@ -78,13 +78,13 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     }
     //assert(var->dtype == dtype);
 
-
+    DTF_DBG(VERBOSE_DBG_LEVEL, "------------IOREQ--------:");
     for(i = 0; i < var->ndims; i++)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "RW REQ: -> start %d, count %d", (int)start[i], (int)count[i]);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "  %lld --> %lld", start[i], count[i]);
 
     /*Create an io request*/
 
-    if(frt_indexing){
+   /* if(frt_indexing){
         DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: reversing indeces because fortran!");
         MPI_Offset *new_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
         assert(new_start != NULL);
@@ -100,8 +100,9 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, new_start, new_count, buf, rw_flag, gl_conf.buffered_req_match);
         dtf_free(new_start, var->ndims*sizeof(MPI_Offset));
         dtf_free(new_count, var->ndims*sizeof(MPI_Offset));
-    } else
+    } else*/
         req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
+
 
     if(request != NULL)
         *request = req->id;
