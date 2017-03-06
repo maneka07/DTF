@@ -317,7 +317,7 @@ int load_config(const char *ini_name, const char *comp_name){
   DTF_DBG(VERBOSE_DBG_LEVEL,   "Load config %s for comp %s", ini_name, comp_name);
 
   if ((in=fopen(ini_name, "r"))==NULL) {
-        DTF_DBG(VERBOSE_ERROR_LEVEL,   "Eror: cannot open %s\n", ini_name);
+        DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: cannot open %s\n", ini_name);
         return 1 ;
   }
 
@@ -498,6 +498,11 @@ int load_config(const char *ini_name, const char *comp_name){
                 }
 
                 cur_fb->iomode = DTF_IO_MODE_MEMORY;
+
+                if(gl_msg_buf == NULL){
+                    gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
+                    assert(gl_msg_buf != NULL);
+                }
             }
 
         } else {

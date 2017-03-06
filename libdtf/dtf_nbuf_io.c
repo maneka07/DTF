@@ -101,7 +101,11 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         dtf_free(new_start, var->ndims*sizeof(MPI_Offset));
         dtf_free(new_count, var->ndims*sizeof(MPI_Offset));
     } else*/
-        req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
+
+    /*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
+    we ignore it. Start and count parameters are supposed to be with respect to
+    element size for var->dtype*/
+    req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, var->dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
 
 
     if(request != NULL)

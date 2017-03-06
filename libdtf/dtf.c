@@ -74,6 +74,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.accum_comm_time = 0;
     gl_stats.t_progress = 0;
     gl_stats.nprogress_call = 0;
+    gl_stats.nioreqs = 0;
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -102,10 +103,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 
     assert(gl_conf.data_msg_size_limit > 0);
 
-    gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
-    assert(gl_msg_buf != NULL);
-    //touch
-    ((unsigned char*)gl_msg_buf)[0] = 0;
+    gl_msg_buf = NULL;
 
     //during init only root will print out stuff
     if(gl_my_rank != 0){
@@ -190,8 +188,14 @@ _EXTERN_C_ int dtf_finalize()
         if(gl_stats.nprogress_call > 0){
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
         }
+
+        if(gl_stats.nioreqs > 0)
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: nreqs: %u", gl_stats.nioreqs);
+
     }
-    dtf_free(gl_msg_buf, gl_conf.data_msg_size_limit);
+
+    if(gl_msg_buf != NULL)
+        dtf_free(gl_msg_buf, gl_conf.data_msg_size_limit);
 
     if(gl_stats.malloc_size - MAX_COMP_NAME > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
@@ -268,11 +272,13 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
     if(gl_my_rank == fbuf->root_writer && gl_my_rank != 0){
         /*Notify global rank 0 that I am the root master for this file*/
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify global rank 0 that I am master");
         errno = MPI_Send(fbuf->file_path, (int)(MAX_FILE_NAME), MPI_CHAR, 0, ROOT_MST_TAG, gl_comps[gl_my_comp_id].comm);
         CHECK_MPI(errno);
     }
 
    if( (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH) && (fbuf->iomode == DTF_IO_MODE_MEMORY)){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Init masters");
         init_req_match_masters(comm, fbuf->mst_info);
 
         if(fbuf->mst_info->is_master_flag){
@@ -287,6 +293,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
     } else if(fbuf->iomode == DTF_IO_MODE_FILE){
         fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
     }
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Exit create");
 }
 
 /**
@@ -525,7 +532,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     if(boundary_check(fbuf, varid, start, count ))
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     if( rw_flag != DTF_READ && rw_flag != DTF_WRITE){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "rw_flag value incorrect (%d)", rw_flag);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: rw_flag value incorrect (%d)", rw_flag);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     if(rw_flag==DTF_WRITE && fbuf->reader_id == gl_my_comp_id){
@@ -577,7 +584,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     if( (ndims > 0) && (shape[ndims - 1] == DTF_UNLIMITED))
         DTF_DBG(VERBOSE_DBG_LEVEL, "var has unlimited dimension");
 
-    for(i = 0; i < ndims-1; i++){
+    for(i = 1; i < ndims-1; i++){
         //we can support unlimited dimension if it's the first dimension
         //else abort
         if(shape[i] == DTF_UNLIMITED){

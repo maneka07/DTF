@@ -193,6 +193,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
             if(fbuf->root_writer == -1){
                 if(rank == 0){
                     int ncid;
+                    MPI_Request req;
                     /*First, find out who is the root master.
                       In this case, only need to copy the file name and root reader rank*/
                     void *buf = dtf_malloc(MAX_FILE_NAME+2*sizeof(int));
@@ -200,7 +201,9 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                     memcpy(buf, fbuf->file_path, MAX_FILE_NAME);
                     memcpy((unsigned char*)buf+MAX_FILE_NAME, &gl_my_rank, sizeof(int));
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Asking writer who is the root of file %s", fbuf->file_path);
-                    errno = MPI_Send(buf, (int)(MAX_FILE_NAME+2*sizeof(int)), MPI_BYTE, 0, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm);
+                    errno = MPI_Isend(buf, (int)(MAX_FILE_NAME+2*sizeof(int)), MPI_BYTE, 0, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm, &req);
+                    CHECK_MPI(errno);
+                    errno = MPI_Wait(&req, MPI_STATUS_IGNORE);
                     CHECK_MPI(errno);
                     dtf_free(buf, MAX_FILE_NAME+2*sizeof(int));
 
@@ -341,6 +344,7 @@ int mpitype2int(MPI_Datatype dtype)
     MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     return 0;
 }
+
 
 MPI_Datatype int2mpitype(int num)
 {
