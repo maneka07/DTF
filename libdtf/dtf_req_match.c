@@ -2132,6 +2132,25 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
             assert(new_start != NULL);
             memcpy(new_start, start, var->ndims*sizeof(MPI_Offset));
 
+            //define the biggest full subblock that we must fit
+            int min_subbl_ndims = var->ndims-1;
+            size_t max_mem = sbufsz - sizeof(MPI_Offset) - var->ndims*sizeof(MPI_Offset)*2 - sizeof(MPI_Offset);
+            int nels;
+
+            while(min_subbl_ndims > 0){
+                nels = 1;
+                for(i = var->ndims - min_subbl_ndims; i < var->ndims; i++)
+                    nels *= count[i];
+                if(nels*def_el_sz <= max_mem)
+                    break;
+                else
+                    min_subbl_ndims--;
+            }
+            size_t min_block_sz = nels*def_el_sz;
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Will fit data in min blocks of sz %ld ndims %d out of %d dims", min_block_sz, min_subbl_ndims, var->ndims);
+            assert(min_subbl_ndims>0);
+
+
             while(nelems > 0){
 
                 if(sofft == 0){
@@ -2139,7 +2158,7 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                     sofft = sizeof(MPI_Offset);
                 }
 
-                if(sofft + var->ndims*sizeof(MPI_Offset)*2 + sizeof(MPI_Offset) + def_el_sz > sbufsz)
+                if(sofft + var->ndims*sizeof(MPI_Offset)*2 + sizeof(MPI_Offset) + min_block_sz > sbufsz)
                     fit_nelems = 0;
                 else {
                     size_t left_sbufsz = sbufsz - sofft - var->ndims*sizeof(MPI_Offset)*2 - sizeof(MPI_Offset);
@@ -2148,11 +2167,23 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                     for(i = 0; i < var->ndims; i++)
                         nrml_start[i] = new_start[i] - start[i];
 
-                    /*set to minimum block size*/
-                    for(i = 0; i < var->ndims; i++)
-                        new_count[i] = 1;
+                    if(min_subbl_ndims == var->ndims){
+                        //now can fit whole block
+                        for(i = 0; i < var->ndims; i++)
+                            new_count[i] = count[i];
+                        fit_nelems = nelems;
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "Can fit all");
+                    } else {
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "Will fit in min subblocks");
+                        /*set to minimum block size*/
+                        for(i = 0; i < var->ndims; i++)
+                            if(i < var->ndims - min_subbl_ndims)
+                                new_count[i] = 1;
+                            else
+                                new_count[i] = count[i];
 
-                    find_fit_block(var->ndims, var->ndims-1, count, nrml_start, new_count, left_sbufsz, def_el_sz, &fit_nelems, nelems);
+                        find_fit_block(var->ndims, var->ndims - min_subbl_ndims - 1, count, nrml_start, new_count, left_sbufsz, def_el_sz, &fit_nelems, nelems);
+                    }
                 }
 
                 if(fit_nelems == 0){
