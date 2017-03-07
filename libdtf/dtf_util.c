@@ -324,6 +324,63 @@ MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chu
     return chunk_sz;
 }
 
+/*Find the biggest subblock of data that can fit into given buffer size sbufsz
+  [INOUT] cur_count - the subblock that fits
+  [INOUT] cur_nelems - how many elements managed to fit. Zero means didn't fit anything.
+  [IN] the rest
+*/
+void find_fit_block(int ndims,
+		    int cur_dim,
+		    const MPI_Offset *count,
+		    MPI_Offset *cur_start,
+		    MPI_Offset *cur_count,
+		    const size_t sbufsz,
+		    const size_t el_sz,
+		    MPI_Offset *cur_nelems,
+		    MPI_Offset tot_nelems)
+{
+  int i;
+
+  if(*cur_nelems == tot_nelems)
+    return;
+  if(sbufsz == 0)
+    return;
+
+  /*Compute if current subblock can fit*/
+  MPI_Offset full_subbl = 1;
+  for(i = 0; i < ndims; i++)
+    if(i != cur_dim)
+      full_subbl *= cur_count[i];
+
+  DTF_DBG(VERBOSE_DBG_LEVEL, "full subblock %lld, cur dim %d, ndims %d", full_subbl, cur_dim, ndims);
+
+  for(i = count[cur_dim] - cur_start[cur_dim]; i > 0; i--){
+    //DTF_DBG(VERBOSE_DBG_LEVEL, "left %lld, right %lld", full_subbl * i * el_sz, (MPI_Offset)sbufsz);
+    if(full_subbl * i * el_sz <= (MPI_Offset)sbufsz)
+      break;
+  }
+
+  cur_count[cur_dim] = i;
+  assert(cur_count[cur_dim] > 0);
+
+  *cur_nelems = 1;
+  for(i = 0; i < ndims; i++){
+    *cur_nelems *= cur_count[i];
+  }
+
+  if(cur_count[cur_dim] == count[cur_dim]){
+    if(cur_dim == 0){
+      assert(*cur_nelems == tot_nelems);
+      return;
+    } else {
+      DTF_DBG(VERBOSE_DBG_LEVEL, "Go higher. Cur nelems %lld. Cur count:", *cur_nelems);
+      for(i=0; i < ndims; i++)
+        DTF_DBG(VERBOSE_DBG_LEVEL, "  %lld", cur_count[i]);
+      /*Go higher one dimension*/
+      find_fit_block(ndims, cur_dim - 1, count, cur_start, cur_count, sbufsz, el_sz, cur_nelems, tot_nelems);
+    }
+  }
+}
 
 int mpitype2int(MPI_Datatype dtype)
 {

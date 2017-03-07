@@ -77,5 +77,13 @@ MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape);
 void* dtf_malloc(size_t size);
 void dtf_free(void *ptr, size_t size);
 void process_file_info_req_queue();
-
+void find_fit_block(int ndims,
+		    int cur_dim,
+		    const MPI_Offset *count,
+		     MPI_Offset *cur_start,
+		    MPI_Offset *cur_count,
+		    const size_t sbufsz,
+		    const size_t el_sz,
+		    MPI_Offset *cur_nelems,
+		    MPI_Offset tot_nelems);
 #endif
