@@ -579,7 +579,6 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
 
     for(i = 0; i < ndims; i++)
         DTF_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d size %llu", varid, i, shape[i]);
-//NOTE: c and fortran have different memory layout for arrays, reverse the indexing
     /*For now, can only support unlimited dimension if it's the fasted changing dimension array*/
     if( (ndims > 0) && (shape[ndims - 1] == DTF_UNLIMITED))
         DTF_DBG(VERBOSE_DBG_LEVEL, "var has unlimited dimension");
@@ -596,27 +595,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: datatype for var %d (file %s) is null. Aborting.", varid, fbuf->file_path);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
-  /*  if(frt_indexing && ndims > 0){
-        MPI_Offset *cshape = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
-        assert(cshape != NULL);
-
-//        for(i = 0; i < ndims; i++)
-//            if(shape[i] != DTF_UNLIMITED)
-//                cshape[i] = shape[i] + 1;
-//            else
-//                cshape[i] = 0;
-//TODO (#9#) check fortran indexing for coordinates that are passed to the lib from fortran
-        //1)increment shape by 1 because fortran
-        //2)reverse indeces because fortran
-        for(i = 0; i < ndims; i++)
-            if(shape[i] == DTF_UNLIMITED)
-                cshape[ndims - i - 1] = 0;
-            else
-                cshape[ndims - i - 1] = shape[i];// + 1;
-        ret = def_var(fbuf, varid, ndims, dtype, cshape);
-        dtf_free(cshape, sizeof(MPI_Offset)*ndims);
-    } else*/
-      ret = def_var(fbuf, varid, ndims, dtype, shape);
+    ret = def_var(fbuf, varid, ndims, dtype, shape);
 
     return ret;
 }

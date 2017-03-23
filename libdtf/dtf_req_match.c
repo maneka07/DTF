@@ -2057,8 +2057,8 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
     int nmsg_sent = 0;
     double t_recur_accum = 0, t_recur;
     int nblocks_written = 0;
-
-
+    MPI_Offset *nrml_start = NULL, *cur_coord = NULL, *new_count = NULL, *new_start = NULL, *tmp;
+    MPI_Offset nelems, fit_nelems;
     double t_begin;
 
     rdr_rank = (int)(*(MPI_Offset*)rbuf);
@@ -2111,45 +2111,37 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
             DTF_DBG(VERBOSE_DBG_LEVEL, "       %lld --> %lld", start[i], count[i]);
 
         /*Find out if this portion of data fits in sbuf*/
-        MPI_Offset nelems = count[0];
+        nelems = count[0];
         for(i = 1; i < var->ndims; i++)
             nelems *= count[i];
+        {
+            tmp = realloc(nrml_start, var->ndims*sizeof(MPI_Offset)); assert(tmp != NULL); nrml_start = tmp;
+            tmp = realloc(cur_coord, var->ndims*sizeof(MPI_Offset));  assert(tmp != NULL); cur_coord = tmp;
 
-        data_sz = nelems * def_el_sz + /*padding*/ (nelems*def_el_sz)%sizeof(MPI_Offset);
-
-        if(sofft + var->ndims*sizeof(MPI_Offset)*2 + sizeof(MPI_Offset) + data_sz > sbufsz){
-
-            MPI_Offset *nrml_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            assert(nrml_start != NULL);
-            MPI_Offset *cur_coord = (MPI_Offset*)dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            assert(cur_coord != NULL);
-
-            /*Will fit subblocks.*/
-            MPI_Offset fit_nelems = 0;
-            MPI_Offset *new_count = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            assert(new_count != NULL);
-            MPI_Offset *new_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            assert(new_start != NULL);
+            /*For subblock that will fit in the buffer.*/
+            fit_nelems = 0;
+            tmp = realloc(new_count, var->ndims*sizeof(MPI_Offset)); assert(tmp != NULL);new_count = tmp;
+            tmp = realloc(new_start, var->ndims*sizeof(MPI_Offset)); assert(tmp != NULL);new_start = tmp;
             memcpy(new_start, start, var->ndims*sizeof(MPI_Offset));
 
-            //define the biggest full subblock that we must fit
-            int min_subbl_ndims = var->ndims-1;
-            size_t max_mem = sbufsz - sizeof(MPI_Offset) - var->ndims*sizeof(MPI_Offset)*2 - sizeof(MPI_Offset);
-            int nels;
+            /*Define the biggest full subblock that we can fit
+              if the buffer was empty*/
+            int min_subbl_ndims = var->ndims;
+            size_t max_mem = sbufsz - /*ncid*/sizeof(MPI_Offset) - var->ndims*sizeof(MPI_Offset)*2 - sizeof(MPI_Offset);
+            int max_nels;
 
             while(min_subbl_ndims > 0){
-                nels = 1;
+                max_nels = 1;
                 for(i = var->ndims - min_subbl_ndims; i < var->ndims; i++)
-                    nels *= count[i];
-                if(nels*def_el_sz <= max_mem)
+                    max_nels *= count[i];
+                if(max_nels*def_el_sz <= max_mem)
                     break;
                 else
                     min_subbl_ndims--;
             }
-            size_t min_block_sz = nels*def_el_sz;
+            size_t min_block_sz = max_nels*def_el_sz;
             DTF_DBG(VERBOSE_DBG_LEVEL, "Will fit data in min blocks of sz %ld ndims %d out of %d dims", min_block_sz, min_subbl_ndims, var->ndims);
             assert(min_subbl_ndims>0);
-
 
             while(nelems > 0){
 
@@ -2157,11 +2149,12 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                     *(MPI_Offset*)sbuf = (MPI_Offset)ncid;
                     sofft = sizeof(MPI_Offset);
                 }
-
-                if(sofft + var->ndims*sizeof(MPI_Offset)*2 + sizeof(MPI_Offset) + min_block_sz > sbufsz)
+                /*How many elements can we fit right now?*/
+                size_t left_sbufsz = sbufsz - sofft - var->ndims*sizeof(MPI_Offset)*2 - sizeof(MPI_Offset);
+                if( min_block_sz > left_sbufsz)
                     fit_nelems = 0;
                 else {
-                    size_t left_sbufsz = sbufsz - sofft - var->ndims*sizeof(MPI_Offset)*2 - sizeof(MPI_Offset);
+
                     fit_nelems = 0;
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Need to fit %lld nelems (sz %lld), have sz %lu", nelems, nelems*def_el_sz, left_sbufsz);
                     for(i = 0; i < var->ndims; i++)
@@ -2172,9 +2165,9 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                         for(i = 0; i < var->ndims; i++)
                             new_count[i] = count[i];
                         fit_nelems = nelems;
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Can fit all");
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "Can fit whole block");
                     } else {
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Will fit in min subblocks");
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "Will fit in subblocks");
                         /*set to minimum block size*/
                         for(i = 0; i < var->ndims; i++)
                             if(i < var->ndims - min_subbl_ndims)
@@ -2182,15 +2175,16 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                             else
                                 new_count[i] = count[i];
 
-                        find_fit_block(var->ndims, var->ndims - min_subbl_ndims - 1, count, nrml_start, new_count, left_sbufsz, def_el_sz, &fit_nelems, nelems);
+                        find_fit_block(var->ndims, var->ndims - min_subbl_ndims - 1, count,
+                                       nrml_start, new_count, left_sbufsz, def_el_sz, &fit_nelems, nelems);
                     }
                 }
 
                 if(fit_nelems == 0){
                     if(sofft == sizeof(MPI_Offset)){
                         /*The message is empty but we cannot even fit a minimum subblock*/
-                        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Cannot fit min contiguous subblock, \
-                                min sz %d, increase DFT_DATA_MSG_SIZE_LIMIT\n", def_el_sz);
+                        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Cannot fit min contiguous subblock,\
+                        min sz %d, increase DFT_DATA_MSG_SIZE_LIMIT (cur %d)\n", def_el_sz, (int)gl_conf.data_msg_size_limit);
                         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
                     } else {
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Send msg to %d, size %d at %.3f", rdr_rank,(int)sofft, MPI_Wtime() - gl_stats.walltime);
@@ -2234,19 +2228,9 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                                     match++;
                             if(match == var->ndims){
                                 DTF_DBG(VERBOSE_DBG_LEVEL, "Matched ioreq (strt->cnt):");
-                                for(i = 0; i < var->ndims; i++)
+                                for(i = 0; i < var->ndims; i++){
                                     DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld", ioreq->start[i], ioreq->count[i]);
-                                int adjusted = 0;
-                                /*adjust count*/
-                                for(i = 0; i < var->ndims; i++)
-                                    if(new_start[i]+new_count[i] > ioreq->start[i]+ioreq->count[i]){
-                                        new_count[i] = ioreq->start[i]+ioreq->count[i] - new_start[i];
-                                        adjusted = 1;
-                                    }
-                                if(adjusted){
-                                    DTF_DBG(VERBOSE_DBG_LEVEL, "ioreq doesn't have all data. Had to adjust count to:");
-                                    for(i=0; i < var->ndims; i++)
-                                        DTF_DBG(VERBOSE_DBG_LEVEL, "  %lld", new_count[i]);
+                                    assert(new_start[i]+new_count[i] <= ioreq->start[i]+ioreq->count[i]);
                                 }
                                 break;
                             }
@@ -2280,12 +2264,13 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                             DTF_DBG(VERBOSE_DBG_LEVEL, "    %lld\t --> %lld \t ioreq: \t %lld\t --> %lld", new_start[i], new_count[i], ioreq->start[i], ioreq->count[i]);
                             assert(nrml_start[i]>=0);
                             new_nelems *= new_count[i];
+                            cur_coord[i] = nrml_start[i];
                         }
+                        assert(new_nelems == fit_nelems);
 
                         DTF_DBG(VERBOSE_DBG_LEVEL, "total data to getput %lld (of nelems %lld)", new_nelems, nelems);
 
                         t_recur = MPI_Wtime();
-                        memcpy((void*)cur_coord, (void*)nrml_start, var->ndims*sizeof(MPI_Offset));
                         /*read from user buffer to send buffer*/
                         recur_get_put_data(var, var->dtype, ioreq->user_buf, ioreq->count, nrml_start, new_count, 0, cur_coord, sbuf+sofft, DTF_READ);
                         t_recur_accum += MPI_Wtime() - t_recur;
@@ -2317,25 +2302,19 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                         DTF_DBG(VERBOSE_DBG_LEVEL, "New start before adjustment:");
                         for(i = 0; i < var->ndims; i++)
                             DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
-                        //int plusone = 0;
+
                         for(i = var->ndims - 1; i > 0; i--)
                             if(new_start[i] == start[i] + count[i]){
                                 new_start[i] = start[i];
                                 if( (new_start[i-1] != start[i-1] + count[i-1]) && (new_count[i-1] == 1)){
                                     new_start[i-1]++;
                                 }
-                                //plusone = 1;
+
                             } else
                                 break;
                         DTF_DBG(VERBOSE_DBG_LEVEL, "New start after adjustment:");
                         for(i = 0; i < var->ndims; i++)
                             DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
-                        //                      if(plusone){
-                        //                        new_start[i]++;
-                        //                        while(i>0){
-                        //                            if(new_start[i] == count)
-                        //                        }
-                        //                      }
                     }
 
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Copied subblock. Shift start:");
@@ -2351,70 +2330,7 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
             } /*while(nelems>0)*/
 
             DTF_DBG(VERBOSE_DBG_LEVEL, "Finished copying block");
-            dtf_free(new_start, var->ndims*sizeof(MPI_Offset));
-            dtf_free(new_count, var->ndims*sizeof(MPI_Offset));
-            dtf_free(nrml_start, var->ndims*sizeof(MPI_Offset));
-            dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
-        } else { /*if(...> sbufsz)*/
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Can fit whole block");
-            /*save var_id, start[], count[]*/
-            t_recur = MPI_Wtime();
-            *(MPI_Offset*)(sbuf+sofft) = (MPI_Offset)var_id;
-            sofft += sizeof(MPI_Offset);
-            memcpy(sbuf+sofft, start, var->ndims*sizeof(MPI_Offset));
-            sofft += var->ndims*sizeof(MPI_Offset);
-            memcpy(sbuf+sofft, count, var->ndims*sizeof(MPI_Offset));
-            sofft += var->ndims*sizeof(MPI_Offset);
-            t_recur_accum += MPI_Wtime() - t_recur;
-            nblocks_written++;
 
-            /*Find the ioreq that has info about this block*/
-            ioreq = fbuf->ioreqs;
-            while(ioreq != NULL){
-                if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_WRITE)){
-                    int match = 0;
-                    for(i = 0; i < var->ndims; i++)
-                        if( (start[i] >= ioreq->start[i]) && (start[i] < ioreq->start[i]+ioreq->count[i]))
-                            match++;
-                    if(match == var->ndims){
-                        for(i = 0; i < var->ndims; i++)
-                            //TODO: FIX A BUG!!! (See line 2201)
-                            assert(start[i]+count[i]<=ioreq->start[i]+ioreq->count[i]);
-                        break;
-                    }
-
-                }
-                ioreq = ioreq->next;
-            }
-            assert(ioreq != NULL);
-
-            /*Copy data: no support for type conversion now*/
-            //MPI_Type_size(ioreq->dtype, &req_el_sz);
-            //DTF_DBG(VERBOSE_DBG_LEVEL, "def sz %d, reqsz %d", def_el_sz, req_el_sz);
-            //assert(req_el_sz == def_el_sz);
-
-            {   /*Copy data*/
-                MPI_Offset *nrml_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-                assert(nrml_start != NULL);
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Getput (strt->cnt):");
-                for(i = 0; i < var->ndims; i++){
-                    nrml_start[i] = start[i] - ioreq->start[i];
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "    %lld  --> %lld \t ioreq: %lld --> %lld", start[i], count[i], ioreq->start[i], ioreq->count[i]);
-                    assert(nrml_start[i]>=0);
-                }
-
-                DTF_DBG(VERBOSE_DBG_LEVEL, "total data to getput %lld", def_el_sz*nelems);
-
-                t_recur = MPI_Wtime();
-                MPI_Offset *cur_coord = (MPI_Offset*)dtf_malloc(var->ndims*sizeof(MPI_Offset));
-                memcpy((void*)cur_coord, (void*)nrml_start, var->ndims*sizeof(MPI_Offset));
-                /*read from user buffer to send buffer*/
-                recur_get_put_data(var, var->dtype, ioreq->user_buf, ioreq->count, nrml_start, count, 0, cur_coord, sbuf+sofft, DTF_READ);
-                t_recur_accum += MPI_Wtime() - t_recur;
-                dtf_free(nrml_start, var->ndims*sizeof(MPI_Offset));
-                dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
-                sofft += nelems*def_el_sz+/*padding*/(nelems*def_el_sz)%sizeof(MPI_Offset);
-            }
         }
         DTF_DBG(VERBOSE_DBG_LEVEL, "rofft %d (bufsz %d), Sofft %d", (int)rofft,bufsz, (int)sofft);
         //assert(sofft == sbufsz);
@@ -2450,6 +2366,10 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
     DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: copy data to sbuf %.3f (recur+memcpy %.3f) (sent %d msgs) (%d blocks)",
             MPI_Wtime() - t_begin, t_recur_accum, nmsg_sent, nblocks_written);
 
+    free(new_start);
+    free(new_count);
+    free(nrml_start);
+    free(cur_coord);
    // dtf_free(sbuf, sbufsz); //comment out since use gl_msg_buf
 }
 
