@@ -6,6 +6,36 @@
 #include "dtf.h"
 #include "dtf_common.h"
 
+/*API for handling rb_tree in write_db_item*/
+void var_destroy(void* _var)
+{
+   dtf_var_t *var = (dtf_var_t*)_var;
+   buffer_node_t *node = var->nodes;
+   while(node != NULL){
+        dtf_free(node->data, node->data_sz);
+        var->nodes = var->nodes->next;
+        dtf_free(node, sizeof(buffer_node_t));
+        node = var->nodes;
+    }
+    dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
+    if(var->distr_count != NULL)
+        dtf_free(var->distr_count, var->ndims*sizeof(MPI_Offset));
+    if(var->first_coord != NULL)
+        dtf_free(var->first_coord, var->ndims*sizeof(MPI_Offset));
+    dtf_free(_var, sizeof(dtf_var_t));
+}
+
+int var_cmp(const void *a, const void *b)
+{
+  if( ((dtf_var_t*)a)->id > ((dtf_var_t*)b)->id ) return 1;
+  if( ((dtf_var_t*)a)->id < ((dtf_var_t*)b)->id ) return -1;
+  return 0;
+}
+
+void var_print(const void *var)
+{
+  DTF_DBG(VERBOSE_DBG_LEVEL, "(varid %d)", ((dtf_var_t*)var)->id);
+}
 
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid)
 {
@@ -26,31 +56,21 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
     return ptr;
 }
 
-dtf_var_t* find_var(dtf_var_t* varlist, int varid)
+dtf_var_t* find_var(file_buffer_t* fbuf, int varid)
 {
-    dtf_var_t *ptr = varlist;
-
-    while(ptr != NULL)
-    {
-        if(ptr->id == varid)
-            break;
-
-        ptr = ptr->next;
-    }
-
-    return ptr;
+    dtf_var_t var;
+    var.id = varid;
+    rb_red_blk_node *node = RBExactQuery(fbuf->vars, &var);
+    if(node == NULL)
+        return NULL;
+    else
+        return (dtf_var_t*)(node->key);
 }
 
-void add_var(dtf_var_t **vars, dtf_var_t *var)
+void add_var(file_buffer_t *fbuf, dtf_var_t *var)
 {
-    if(*vars == NULL)
-        *vars = var;
-    else{
-        dtf_var_t *tmp = *vars;
-        while(tmp->next != NULL)
-            tmp = tmp->next;
-        tmp->next = var;
-    }
+    rb_red_blk_node *var_node = RBTreeInsert(fbuf->vars, var, 0);
+    assert(var_node != NULL);
 }
 
 void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
@@ -65,26 +85,9 @@ void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
     }
 }
 
-static void delete_var(dtf_var_t *var)
-{
-   buffer_node_t *node = var->nodes;
-    while(node != NULL){
-        dtf_free(node->data, node->data_sz);
-        var->nodes = var->nodes->next;
-        dtf_free(node, sizeof(buffer_node_t));
-        node = var->nodes;
-    }
-    dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
-    if(var->distr_count != NULL)
-        dtf_free(var->distr_count, var->ndims*sizeof(MPI_Offset));
-    if(var->first_coord != NULL)
-        dtf_free(var->first_coord, var->ndims*sizeof(MPI_Offset));
-    dtf_free(var, sizeof(dtf_var_t));
-}
-
 void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
 {
-    dtf_var_t    *var;
+
     if(fbuf == NULL)
         return;
 
@@ -93,13 +96,7 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
     if(fbuf->header != NULL)
         dtf_free(fbuf->header, fbuf->hdr_sz);
 
-    var = fbuf->vars;
-    while(var != NULL){
-        fbuf->vars = var->next;
-        delete_var(var);
-        var = fbuf->vars;
-    }
-
+    RBTreeDestroy(fbuf->vars);
     assert(fbuf->ioreqs == NULL);
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
@@ -110,17 +107,6 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
 
     dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
     dtf_free(fbuf->mst_info, sizeof(master_info_t));
-
-
-//    if(*buflist == fbuf)
-//        *buflist = fbuf->next;
-//    else{
-//        prev = *buflist;
-//        while(prev->next != fbuf)
-//            prev = prev->next;
-//        prev->next = fbuf->next;
-//    }
-
     dtf_free(fbuf, sizeof(file_buffer_t));
 }
 
@@ -137,7 +123,7 @@ file_buffer_t* new_file_buffer()
     buf->version = 0;
     buf->writer_id=-1;
     buf->is_ready = 0;
-    buf->vars = NULL;
+    buf->vars = RBTreeCreate(var_cmp, var_destroy, NullFunction, var_print, NullFunction);
     buf->var_cnt = 0;
     buf->header = NULL;
     buf->hdr_sz = 0;
@@ -201,7 +187,6 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
     var->first_coord = NULL;
     var->ndims = ndims;
     var->distr_count = NULL;
-    var->next = NULL;
     var->dtype = dtype;
     return var;
 }
@@ -209,7 +194,7 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 
 int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start, const MPI_Offset *count )
 {
-    dtf_var_t *var = find_var(fbuf->vars, varid);
+    dtf_var_t *var = find_var(fbuf, varid);
     if(var == NULL){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "Did not find var id %d in file %s", varid, fbuf->file_path);
         return 1;

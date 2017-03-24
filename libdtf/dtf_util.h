@@ -38,7 +38,7 @@ typedef struct component{
 typedef struct dtf_config{
     int         distr_mode;
     int         buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
-    int         io_db_type;  /*either mem chunks(1) or data blocks(0)*/
+    int         io_db_type;  /*data blocks(0)*/
     int         data_msg_size_limit;
 }dtf_config_t;
 

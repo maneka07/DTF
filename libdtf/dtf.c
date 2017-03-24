@@ -92,7 +92,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     else
         gl_conf.io_db_type = atoi(s);
 
-    assert( (gl_conf.io_db_type==DTF_DB_BLOCKS) || (gl_conf.io_db_type==DTF_DB_CHUNKS));
+    assert(gl_conf.io_db_type==DTF_DB_BLOCKS);
 
     s = getenv("DFT_DATA_MSG_SIZE_LIMIT");
     if(s == NULL)

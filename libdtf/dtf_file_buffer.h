@@ -2,6 +2,7 @@
 #define FILE_BUFFER_H_INCLUDED
 
 #include "dtf_buffer_node.h"
+#include "rb_red_black_tree.h"
 //#include "dtf_req_match.h"
 
 #define MAX_FILE_NAME 1024
@@ -26,7 +27,6 @@ typedef struct dtf_var{
     MPI_Offset *first_coord;            /*Coordinate of the first element in this node. Needed for scatter distribution. Needed only by writer.*/
 /*Static data distribution related stuff*/
     MPI_Offset *distr_count;                 /*Number of elements in each dimension to distribute*/
-    struct dtf_var *next;
 }dtf_var_t;
 
 
@@ -41,7 +41,7 @@ typedef struct file_buffer{
   MPI_Comm                  comm;               /*MPI_Communicator used to open the file*/
   void                      *header;            /*buffer to store netcdf header*/
   MPI_Offset                hdr_sz;             /*size of the netcdf header*/
-  struct dtf_var           *vars;              /*Variables in the file*/
+  rb_red_blk_tree           *vars;              /*Variables in the file*/
   int                       var_cnt;            /*Number of defined variables*/
   int                       version;            /*To keep track in case the component generates
                                     several output files with the same name pattern*/
@@ -86,9 +86,9 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf);
 
 file_buffer_t* new_file_buffer();
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid);
-dtf_var_t* find_var(dtf_var_t* varlist, int varid);
+dtf_var_t* find_var(file_buffer_t* fbuf, int varid);
 dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
-void add_var(dtf_var_t **vars, dtf_var_t *var);
+void add_var(file_buffer_t *fbuf, dtf_var_t *var);
 int has_unlim_dim(dtf_var_t *var);
 int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
 #endif

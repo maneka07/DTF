@@ -8,16 +8,10 @@
 #define UNLIM_NELEMS_RANGE 256
 
 #define DTF_DB_BLOCKS  0  /*Match based on multidimensional data blocks*/
-#define DTF_DB_CHUNKS  1  /*Match based on contigious memory chunks*/
+
 
 #define DTF_DATA_MSG_SIZE_LIMIT 256*1024*1024
 
-typedef struct contig_mem_chunk{
-    MPI_Offset              offset;
-    MPI_Offset              usrbuf_offset;
-    MPI_Offset              data_sz;
-    struct contig_mem_chunk *next;
-}contig_mem_chunk_t;
 
 typedef struct io_req{
     unsigned int            id;
@@ -25,7 +19,6 @@ typedef struct io_req{
     int                     sent_flag;  /*set to 1 if this req has already been forwarded to the master*/
     int                     rw_flag;
     void                    *user_buf;
-    //MPI_Offset              user_buf_el_sz;     //In case this does
     MPI_Datatype            dtype;                /*need to save the type passed in the request
                                                     in case there is mismatch with the type passed
                                                     when the var was defined*/
@@ -33,8 +26,6 @@ typedef struct io_req{
     MPI_Offset              *start;
     MPI_Offset              *count;
     MPI_Offset              get_sz;     /*size of data received from writer ranks*/
-    int                     nchunks;
-    struct contig_mem_chunk *mem_chunks;
     struct io_req           *next;
     struct io_req           *prev;
 }io_req_t;
@@ -43,17 +34,6 @@ typedef struct io_req{
   All read record will be grouped by reader's rank.
   This is done for simplicity of matching and sending
   data requests to writer ranks*/
-
-//typedef struct chunk_tuple{
-//    MPI_Offset             offset;
-//    MPI_Offset             data_sz;
-//}chunk_tuple_t;
-
-typedef struct write_chunk_rec{
-    int                    rank;
-    MPI_Offset             offset;
-    MPI_Offset             data_sz;
-}write_chunk_rec_t;
 
 typedef struct write_dblock{
     int rank;
@@ -65,23 +45,12 @@ typedef struct write_dblock{
 typedef struct write_db_item{
     int                    var_id;
     int                    ndims;
-    rb_red_blk_tree        *chunks;
-    MPI_Offset             nchunks;
     write_dblock_t         *dblocks;
     write_dblock_t         *last_block;
     MPI_Offset             nblocks;
-    //struct write_chunk_rec *chunks;
-    //struct write_chunk_rec *last;
     struct write_db_item   *next;
 }write_db_item_t;
 
-typedef struct read_chunk_rec{
-    int                     var_id;
-    MPI_Offset             offset;
-    MPI_Offset             data_sz;
-    struct read_chunk_rec   *next;
-    struct read_chunk_rec   *prev;
-}read_chunk_rec_t;
 
 typedef struct read_dblock{
     int                     var_id;
@@ -95,10 +64,6 @@ typedef struct read_dblock{
 typedef struct read_db_item{
     int                     rank;
     MPI_Comm                comm;   /*Both writer and reader may read the file, hence, need to distinguish.*/
-    MPI_Offset              nchunks;
-    struct read_chunk_rec   *chunks;
-    struct read_chunk_rec   *last;
-
     read_dblock_t           *dblocks;
     read_dblock_t           *last_block;
     MPI_Offset              nblocks;

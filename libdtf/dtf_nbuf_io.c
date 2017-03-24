@@ -2,8 +2,8 @@
 #include "dtf_nbuf_io.h"
 #include "dtf_util.h"
 #include "dtf.h"
-#include "dtf_mem.h"
 #include "dtf_common.h"
+#include "dtf_req_match.h"
 
 MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
                                int varid,
@@ -42,7 +42,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         return 0;
     }
 
-    dtf_var_t *var = find_var(fbuf->vars, varid);
+    dtf_var_t *var = find_var(fbuf, varid);
     if(var == NULL){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: could not find var with id %d", varid);
         return 0;
@@ -114,16 +114,6 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         fbuf->rreq_cnt++;
     else
         fbuf->wreq_cnt++;
-
-    if(gl_conf.io_db_type == DTF_DB_CHUNKS){
-        get_contig_mem_list(var, dtype, start, count, &(req->nchunks), &(req->mem_chunks));
-        DTF_DBG(VERBOSE_DBG_LEVEL, "RW_REQ: nchunks %d ------------------", req->nchunks);
-        assert(req->mem_chunks != NULL);
-    } else {
-        req->nchunks = 0;
-        req->mem_chunks = NULL;
-    }
-
 
     /*Enqueue the request*/
     if(fbuf->ioreqs == NULL)

@@ -1,39 +1,11 @@
 #include "dtf_req_match.h"
 #include "dtf_common.h"
 #include "dtf_util.h"
-#include "dtf_mem.h"
 #include "dtf.h"
 #include <unistd.h>
 
 file_info_req_q_t *gl_finfo_req_q = NULL;
 
-/*API for handling rb_tree in write_db_item*/
-void chunk_destroy(void* chunk)
-{
-  dtf_free((write_chunk_rec_t *)chunk, sizeof(write_chunk_rec_t));
-}
-
-int chunk_cmp(const void *a, const void *b)
-{
-  if( ((write_chunk_rec_t*)a)->offset > ((write_chunk_rec_t*)b)->offset ) return 1;
-  if( ((write_chunk_rec_t*)a)->offset + ((write_chunk_rec_t*)a)->data_sz -1 < ((write_chunk_rec_t*)b)->offset ) return -1;
-  return 0;
-}
-
-void chunk_print(const void *chunk)
-{
-  printf("(ps %d,offt %d,sz %d)", ((write_chunk_rec_t*)chunk)->rank, (int)( ((write_chunk_rec_t*)chunk)->offset), (int)(((write_chunk_rec_t*)chunk)->data_sz));
-}
-
-void info_print(void *chunk)
-{;}
-
-void info_destroy(void *chunk)
-{;}
-
-//====================================================
-
-static void send_data_wrt2rdr(void* buf, int bufsz);
 static void send_data_wrt2rdr_ver2(void* buf, int bufsz);
 
 void init_iodb(file_buffer_t *fbuf)
@@ -46,16 +18,6 @@ void init_iodb(file_buffer_t *fbuf)
     fbuf->mst_info->iodb->updated_flag = 0;
 }
 
-static void print_read_dbitem(read_db_item_t *dbitem)
-{
-    read_chunk_rec_t *tmp;
-    DTF_DBG(VERBOSE_ALL_LEVEL, "Read dbitem for rank %d. %d chunks:", dbitem->rank, (int)dbitem->nchunks);
-    tmp = dbitem->chunks;
-    while(tmp != NULL){
-        DTF_DBG(VERBOSE_ALL_LEVEL, "       (var %d, %d, %d)", tmp->var_id, (int)tmp->offset, (int)tmp->data_sz);
-        tmp = tmp->next;
-    }
-}
 
 io_req_t *find_io_req(io_req_t *list, int var_id)
 {
@@ -88,8 +50,8 @@ static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     dtf_var_t *var;
     MPI_Offset sz = 0, offt = 0;
     unsigned char *chbuf;
-
-
+    int i;
+    rb_red_blk_node *var_node;
     /*Pack:
        - file name
        - file ncid
@@ -105,12 +67,15 @@ static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
            (fbuf->hdr_sz + fbuf->hdr_sz%sizeof(MPI_Offset)) +
            fbuf->mst_info->nmasters*sizeof(MPI_Offset) +
            sizeof(MPI_Offset)*4;
-    var = fbuf->vars;
-    while(var != NULL){
+    dtf_var_t tmp_var;
+    for(i = 0; i < fbuf->var_cnt; i++){
+        tmp_var.id = i;
+        var_node = RBExactQuery(fbuf->vars, &tmp_var);
+        assert(var_node != NULL);
+        var = (dtf_var_t*)(var_node->key);
         /*sz += sizeof(var->id) + sizeof(var->el_sz) +
-                sizeof(var->ndims) + sizeof(MPI_Offset)*var->ndims;*/
+        sizeof(var->ndims) + sizeof(MPI_Offset)*var->ndims;*/
         sz += sizeof(MPI_Offset)*3+ sizeof(MPI_Offset)*var->ndims;
-        var = var->next;
     }
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Packing info: sz %lld", sz);
@@ -145,8 +110,12 @@ static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     offt += sizeof(MPI_Offset);
     DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d vars", fbuf->var_cnt);
     /*vars*/
-    var = fbuf->vars;
-    while(var != NULL){
+
+    for(i = 0; i < fbuf->var_cnt; i++){
+        tmp_var.id = i;
+        var_node = RBExactQuery(fbuf->vars, &tmp_var);
+        assert(var_node != NULL);
+        var = (dtf_var_t*)(var_node->key);
         *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)var->id;
         offt += sizeof(MPI_Offset);
         *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)mpitype2int(var->dtype);
@@ -155,7 +124,6 @@ static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
         offt += sizeof(MPI_Offset);
         memcpy((void*)(chbuf+offt), (void*)var->shape, sizeof(MPI_Offset)*var->ndims);
         offt += sizeof(MPI_Offset)*var->ndims;
-        var = var->next;
     }
     DTF_DBG(VERBOSE_ALL_LEVEL, "offt %lld", offt);
     assert(offt == sz);
@@ -225,7 +193,7 @@ void unpack_file_info(MPI_Offset bufsz, void *buf)
     for(i = 0; i < var_cnt; i++){
         varid = (int)(*((MPI_Offset*)(chbuf+offt)));
         offt += sizeof(MPI_Offset);
-        var = find_var(fbuf->vars, varid);
+        var = find_var(fbuf, varid);
         assert(var == NULL);
         var = new_var(varid, 0, 0, NULL);
         type = (int)(*((MPI_Offset*)(chbuf+offt)));
@@ -242,7 +210,7 @@ void unpack_file_info(MPI_Offset bufsz, void *buf)
         } else
             var->shape = NULL;
 
-        add_var(&(fbuf->vars), var);
+        add_var(fbuf, var);
         fbuf->var_cnt++;
     }
     assert(offt == bufsz);
@@ -318,8 +286,7 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
         if(!intracomp_io_flag && (ritem->comm == gl_comps[gl_my_comp_id].comm)){
             //for now put assert here, need to think if such situation
             //should ever happen
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Writer has unfinished intracomp rreqs for rank %d, chunks are:", ritem->rank);
-           // print_read_dbitem(ritem);
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Writer has unfinished intracomp rreqs for rank %d", ritem->rank);
             assert(0);
             ritem = ritem->next;
             continue;
@@ -335,11 +302,9 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
             //writers[i] = -1;
         }
         if(ritem->comm == gl_comps[gl_my_comp_id].comm)
-            DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in my comp, chunks before matching:", ritem->rank);
+            DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in my comp", ritem->rank);
         else
-            DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in other comp, chunks before matching:", ritem->rank);
-        print_read_dbitem(ritem);
-
+            DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in other comp", ritem->rank);
 
 
         rblock = ritem->dblocks;
@@ -368,7 +333,7 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
             //DTF_DBG(VERBOSE_ALL_LEVEL, "write record for this var:");
 //            print_write_dbitem(witem);
             if( (var == NULL) || (var->id != var_id))
-                var = find_var(fbuf->vars, var_id);
+                var = find_var(fbuf, var_id);
             assert(var != NULL);
             ndims = var->ndims;
             //TODO what if a scalar var?
@@ -573,10 +538,7 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
             gl_stats.accum_comm_time += MPI_Wtime() - t_start_send;
             if(my_idx != -1){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Parse data req to myself");
-                if(gl_conf.io_db_type == DTF_DB_CHUNKS)
-                    send_data_wrt2rdr(sbuf[my_idx], offt[my_idx]);
-                else
-                    send_data_wrt2rdr_ver2(sbuf[my_idx], offt[my_idx]);
+                send_data_wrt2rdr_ver2(sbuf[my_idx], offt[my_idx]);
             }
             t_send += MPI_Wtime() - t_start_send;
 //            completed = 0;
@@ -600,7 +562,7 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
 //                dtf_free(sbuf[i], offt[i]);
 
             DTF_DBG(VERBOSE_DBG_LEVEL, "Matched rreq for rank %d", ritem->rank);
-            print_read_dbitem(ritem);
+
         } //else {
 //            DTF_DBG(VERBOSE_DBG_LEVEL, "Did not manage to match anything for rank %d", ritem->rank);
 //        }
@@ -648,380 +610,15 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
     //DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time to match db reqs %.4f, time to send %.4f", MPI_Wtime() - t_start, t_send);
 }
 
-/*Master rank tries to match as many memchunks in the read request as it can
-and forwards corresponding part of the read request to those writer ranks that
-hold the data */
-static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
-{
-    int mlc_ranks = 4;
-    int mlc_buf   = 512;
-    int i;
-    read_chunk_rec_t  *rchunk;
-    write_chunk_rec_t  match_chunk;
-    int rank_idx, var_id;
-    int nwriters, allocd_nwriters;
-    write_db_item_t *witem = NULL;
-    read_db_item_t *ritem;
-    int *writers;
-    unsigned char **sbuf;
-    int *bufsz;
-    size_t *offt;
-    int matched_rank;
-    MPI_Offset matched_offt, matched_sz;
-
-
-    double t_start, t_send = 0;
-
-    t_start = MPI_Wtime();
-
-    if(!fbuf->mst_info->iodb->updated_flag){ //no new info since last time matching was done, ignore
-        gl_stats.accum_db_match_time += MPI_Wtime() - t_start;
-        return;
-    }
-    fbuf->mst_info->iodb->updated_flag = 0; //reset
-    writers = (int*)dtf_malloc(mlc_ranks*sizeof(int));
-    assert(writers != NULL);
-    sbuf = (unsigned char**)dtf_malloc(mlc_ranks*sizeof(unsigned char*));
-    assert(sbuf != NULL);
-    bufsz = (int*)dtf_malloc(mlc_ranks*sizeof(int));
-    assert(bufsz != NULL);
-    offt = (size_t*)dtf_malloc(mlc_ranks*sizeof(size_t));
-    assert(offt != NULL);
-
-    allocd_nwriters = mlc_ranks;
-
-    for(i = 0; i < mlc_ranks; i++){
-        sbuf[i] = NULL;
-        bufsz[i] = 0;
-        offt[i] = 0;
-    }
-
-    /*Try to match as many read and write
-    requests as we can*/
-    ritem = fbuf->mst_info->iodb->ritems;
-    while(ritem != NULL){
-
-        /*If we are supposed to match intra component io requests
-        then skip all other requests*/
-        if(intracomp_io_flag && (ritem->comm != gl_comps[gl_my_comp_id].comm)){
-            ritem = ritem->next;
-            continue;
-        }
-
-        if(!intracomp_io_flag && (ritem->comm == gl_comps[gl_my_comp_id].comm)){
-            //for now put assert here, need to think if such situation
-            //should ever happen
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Writer has unfinished intracomp rreqs for rank %d, chunks are:", ritem->rank);
-            print_read_dbitem(ritem);
-            assert(0);
-            ritem = ritem->next;
-            continue;
-        }
-
-        nwriters = 0;
-
-        for(i = 0; i < allocd_nwriters; i++){
-            //sbuf[i] = NULL;
-            //bufsz[i] = 0;
-            offt[i] = 0;
-            //writers[i] = -1;
-        }
-        if(ritem->comm == gl_comps[gl_my_comp_id].comm)
-            DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in my comp, chunks before matching:", ritem->rank);
-        else
-            DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in other comp, chunks before matching:", ritem->rank);
-        print_read_dbitem(ritem);
-
-
-
-        rchunk = ritem->chunks;
-        while(rchunk != NULL){
-
-            var_id = rchunk->var_id;
-
-            if( (witem == NULL) || (witem->var_id != var_id)){
-                //find the write record for this var_id
-                witem = fbuf->mst_info->iodb->witems;
-                while(witem != NULL){
-                    if(witem->var_id == var_id)
-                        break;
-                    witem = witem->next;
-                }
-                if(witem == NULL){
-                    rchunk = rchunk->next;
-                    /*No match right now*/
-                    continue;
-                }
-            }
-            DTF_DBG(VERBOSE_ALL_LEVEL, "write record for this var:");
-//            print_write_dbitem(witem);
-
-            rb_red_blk_node *wchunk;
-            while(rchunk->data_sz){
-                match_chunk.offset = rchunk->offset;
-                match_chunk.data_sz = rchunk->data_sz;
-                double t_st_srch = MPI_Wtime();
-                wchunk = RBExactQuery(witem->chunks, &match_chunk);
-                gl_stats.t_treesrch += MPI_Wtime() - t_st_srch;
-                gl_stats.num_tsrch++;
-
-                if(wchunk == NULL){
-                    //couldn't match
-                    //rchunk = rchunk->next;
-                    break;
-                }
-
-                matched_rank = ((write_chunk_rec_t*)wchunk->key)->rank;
-                matched_offt = match_chunk.offset;
-                if(match_chunk.offset+match_chunk.data_sz >
-                    ((write_chunk_rec_t*)wchunk->key)->offset + ((write_chunk_rec_t*)wchunk->key)->data_sz){
-                    //matched only part of the chunk
-                    matched_sz = ((write_chunk_rec_t*)wchunk->key)->offset +
-                                 ((write_chunk_rec_t*)wchunk->key)->data_sz -
-                                 match_chunk.offset;
-                } else {
-                    matched_sz = match_chunk.data_sz;
-                }
-
-                {
-                    /*Find send buffer for this rank*/
-                    for(i = 0; i < nwriters; i++)
-                        if(writers[i] == matched_rank)
-                            break;
-
-                    if(i == nwriters){
-                        /*add new send buffer*/
-                        if(nwriters == allocd_nwriters ){
-                            //extend buffers
-                            void *tmp;
-                            unsigned char **tmp1;
-                            tmp = realloc((void*)writers, (nwriters+mlc_ranks)*sizeof(int));
-                            gl_stats.malloc_size += mlc_ranks*sizeof(int);
-                            assert(tmp != NULL);
-                            writers = (int*)tmp;
-
-                            tmp = realloc((void*)offt, (nwriters+mlc_ranks)*sizeof(size_t));
-                            gl_stats.malloc_size += mlc_ranks*sizeof(int);
-                            assert(tmp != NULL);
-                            offt = (size_t*)tmp;
-
-                            tmp = realloc((void*)bufsz, (nwriters+mlc_ranks)*sizeof(int));
-                            gl_stats.malloc_size += mlc_ranks*sizeof(int);
-                            assert(tmp != NULL);
-                            bufsz = (int*)tmp;
-
-                            tmp1 = realloc(sbuf, (nwriters+mlc_ranks)*sizeof(unsigned char*));
-                            gl_stats.malloc_size += mlc_ranks*sizeof(unsigned char*);
-                            assert(tmp1 != NULL);
-                            sbuf = tmp1;
-                            allocd_nwriters += mlc_ranks;
-
-                            int j;
-                            for(j = nwriters; j < allocd_nwriters; j++)
-                                sbuf[j] = NULL;
-                        }
-                        offt[nwriters] = 0;
-                        bufsz[nwriters] = 0;
-                        sbuf[nwriters] = NULL;
-                        rank_idx = nwriters;
-                        writers[rank_idx] = matched_rank;
-                        nwriters++;
-                    } else
-                        rank_idx = i;
-
-                    /*If first time to write then, first, save the file ncid
-                      and intracomp flag and reader rank*/
-                    if(offt[rank_idx] == 0) {
-                        if(bufsz[rank_idx] < sizeof(MPI_Offset)*3){
-                            //extend
-                            unsigned char *tmp;
-                            tmp = realloc(sbuf[rank_idx], bufsz[rank_idx] + mlc_buf);
-                            assert(tmp != NULL);
-                            sbuf[rank_idx] = tmp;
-                            bufsz[rank_idx] += mlc_buf;
-                            gl_stats.malloc_size += mlc_buf;
-                        }
-
-                        *(MPI_Offset*)(sbuf[rank_idx]) = (MPI_Offset)ritem->rank; //to whom writer should send the data
-                        offt[rank_idx] += sizeof(MPI_Offset);
-                        if(intracomp_io_flag)
-                            DTF_DBG(VERBOSE_DBG_LEVEL, "Tell w to send the data to another w");
-                        else
-                           DTF_DBG(VERBOSE_DBG_LEVEL, "Tell w to send the data to reader");
-                        *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)intracomp_io_flag; //intra- or inter- component?
-                        offt[rank_idx] += sizeof(MPI_Offset);
-                        *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)fbuf->ncid;  //data from what file
-                        offt[rank_idx] += sizeof(MPI_Offset);
-                     }
-                     /*Save infor about the mem chunk*/
-                    //DTF_DBG(VERBOSE_ALL_LEVEL, "rank idx %d, nranks %d", rank_idx, nwriters);
-                    if(offt[rank_idx] + sizeof(MPI_Offset)*3 > bufsz[rank_idx]){
-                        unsigned char *tmp;
-                        tmp = realloc(sbuf[rank_idx], bufsz[rank_idx] + mlc_buf);
-                        assert(tmp != NULL);
-                        sbuf[rank_idx] = tmp;
-                        bufsz[rank_idx] += mlc_buf;
-                        gl_stats.malloc_size += mlc_buf;
-                    }
-
-                    *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)rchunk->var_id;
-                    offt[rank_idx] += sizeof(MPI_Offset);
-                    *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = matched_offt;
-                    offt[rank_idx] += sizeof(MPI_Offset);
-                    *(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = matched_sz;
-                    offt[rank_idx] += sizeof(MPI_Offset);
-
-                    DTF_DBG(VERBOSE_ALL_LEVEL, "Will ask %d for data (%d, %d)", matched_rank, (int)matched_offt, (int)matched_sz);
-                }
-
-                rchunk->offset += matched_offt;
-                rchunk->data_sz -= matched_sz;
-            }
-
-            if(rchunk->data_sz == 0){
-                //matched all
-                DTF_DBG(VERBOSE_ALL_LEVEL, "Matched all chunk (%d, %d). Will delete (nchunk %d)", (int)rchunk->offset, (int)rchunk->data_sz, (int)ritem->nchunks);
-                /*delete this chunk*/
-                read_chunk_rec_t *tmp = rchunk;
-                if(rchunk == ritem->last)
-                    ritem->last = ritem->last->prev;
-                if(rchunk == ritem->chunks)
-                    ritem->chunks = ritem->chunks->next;
-                if(rchunk->next != NULL)
-                    rchunk->next->prev = rchunk->prev;
-                if(rchunk->prev != NULL)
-                    rchunk->prev->next = rchunk->next;
-
-                rchunk = rchunk->next;
-                dtf_free(tmp, sizeof(read_chunk_rec_t));
-                ritem->nchunks--;
-                continue;
-            }
-
-            rchunk = rchunk->next;
-        }
-
-        if(nwriters > 0){
-            int errno;
-            int completed;
-            MPI_Request *sreqs = (MPI_Request*)dtf_malloc(nwriters*sizeof(MPI_Request));
-            assert(sreqs != NULL);
-           // int my_idx = -1;
-
-            double t_start_send = MPI_Wtime();
-            for(i = 0; i < nwriters; i++){
-                assert(offt[i] > 0);
-
-//                if(writers[i] == gl_my_rank){
-//                    my_idx = i;
-//                    sreqs[i] = MPI_REQUEST_NULL;
-//                    continue;
-//                } else {
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Send data req to wrt %d", writers[i]);
-                errno = MPI_Isend((void*)sbuf[i], offt[i], MPI_BYTE, writers[i], IO_DATA_REQ_TAG, gl_comps[gl_my_comp_id].comm, &sreqs[i]);
-                CHECK_MPI(errno);
-                //}
-                gl_stats.nmatching_msg_sent++;
-                gl_stats.accum_msg_sz += offt[i];
-            }
-
-//            errno = MPI_Waitall(nwriters, sreqs, MPI_STATUSES_IGNORE);
-//            CHECK_MPI(errno);
-//            if(my_idx != -1){
-//                DTF_DBG(VERBOSE_DBG_LEVEL, "Parse data req to myself");
-//                send_data_wrt2rdr(sbuf[my_idx], offt[my_idx]);
-//            }
-            completed = 0;
-            //DTF_DBG(VERBOSE_ALL_LEVEL, "Start waiting (rreq from rank %d)", ritem->rank);
-            double t_progress = 0;
-            while(!completed){
-                errno = MPI_Testall(nwriters, sreqs, &completed, MPI_STATUSES_IGNORE);
-                CHECK_MPI(errno);
-                double tmp = MPI_Wtime();
-                progress_io_matching();
-                t_progress += MPI_Wtime() - tmp;
-            }
-
-            gl_stats.accum_comm_time += MPI_Wtime() - t_start_send - t_progress;
-            t_send += MPI_Wtime() - t_start_send;
-
-
-            //DTF_DBG(VERBOSE_ALL_LEVEL, "Finish waiting (rreq from rank %d)", ritem->rank);
-            dtf_free(sreqs, nwriters*sizeof(MPI_Request));
-//            for(i = 0; i < nwriters; i++)
-//                dtf_free(sbuf[i], offt[i]);
-
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Matched rreq for rank %d", ritem->rank);
-            print_read_dbitem(ritem);
-        } //else {
-//            DTF_DBG(VERBOSE_DBG_LEVEL, "Did not manage to match anything for rank %d", ritem->rank);
-//        }
-
-        /*If we matched all chunks for this rank, then delete this ritem*/
-        if(ritem->nchunks == 0){
-            read_db_item_t *tmp = ritem;
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Matched all. Delete ritem of rank %d (left ritems %d). ", ritem->rank,  (int)(fbuf->mst_info->iodb->nritems - 1));
-            //DTF_DBG(VERBOSE_ALL_LEVEL, "Ritems before:");
-            //print_ritems(fbuf->mst_info->iodb->ritems);
-            if(ritem == fbuf->mst_info->iodb->ritems)
-                fbuf->mst_info->iodb->ritems = ritem->next;//fbuf->mst_info->iodb->ritems->next;
-            if(ritem->prev != NULL)
-                ritem->prev->next = ritem->next;
-            if(ritem->next != NULL)
-                ritem->next->prev = ritem->prev;
-            ritem = ritem->next;
-            dtf_free(tmp, sizeof(read_db_item_t));
-            fbuf->mst_info->iodb->nritems--;
-        } else {
-//            DTF_DBG(VERBOSE_DBG_LEVEL, "Not all chunks for rreq from rank %d have been matched (%d left)", ritem->rank, (int)ritem->nchunks);
-//            DTF_DBG(VERBOSE_ALL_LEVEL, "Chunks left:");
-            print_read_dbitem(ritem);
-            ritem = ritem->next;
-        }
-    }
-
-    for(i = 0; i < allocd_nwriters; i++){
-        if(sbuf[i] != NULL)
-            dtf_free(sbuf[i], (size_t)bufsz[i]);
-    }
-    /*dealloc stuff*/
-    dtf_free(writers, allocd_nwriters*sizeof(int));
-    dtf_free(offt, allocd_nwriters*sizeof(size_t));
-    dtf_free(bufsz, allocd_nwriters*sizeof(int));
-    dtf_free(sbuf, allocd_nwriters*sizeof(unsigned char*));
-
-    gl_stats.ndb_match++;
-    gl_stats.accum_db_match_time += MPI_Wtime() - t_start;
-    //DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time to match db reqs %.4f, time to send %.4f", MPI_Wtime() - t_start, t_send);
-
-}
-
 void clean_iodb(ioreq_db_t *iodb)
 {
     write_db_item_t *witem;
     read_db_item_t *ritem;
-    read_chunk_rec_t *rrec;
-
-    size_t old_mem_sz;
     unsigned nitems = 0, ndblocks = 0;
 
     witem = iodb->witems;
     while(witem != NULL){
         nitems++;
-//        wrec = witem->chunks;
-//        while(wrec != NULL){
-//            witem->chunks = witem->chunks->next;
-//            dtf_free(wrec, sizeof(write_chunk_rec_t));
-//            wrec = witem->chunks;
-//        }
-        if(witem->chunks != NULL){
-            old_mem_sz = gl_stats.malloc_size;
-            RBTreeDestroy(witem->chunks);
-            //check that no mem leakage
-            DTF_DBG(VERBOSE_DBG_LEVEL, "mem before destroy tree %lu, after %lu, should differ by %lu",
-                     old_mem_sz, gl_stats.malloc_size, (size_t)witem->nchunks*sizeof(write_chunk_rec_t));
-            assert(old_mem_sz - gl_stats.malloc_size  == (size_t)witem->nchunks*sizeof(write_chunk_rec_t));
-        }
 
         if(witem->dblocks != NULL){
             write_dblock_t *block = witem->dblocks;
@@ -1046,18 +643,6 @@ void clean_iodb(ioreq_db_t *iodb)
     ndblocks = 0;
     ritem = iodb->ritems;
     while(ritem != NULL){
-
-        if(ritem->chunks != NULL){
-            rrec = ritem->chunks;
-            while(rrec != NULL){
-                ritem->chunks = ritem->chunks->next;
-                dtf_free(rrec, sizeof(read_chunk_rec_t));
-                rrec = ritem->chunks;
-                ritem->nchunks--;
-            }
-            assert(ritem->nchunks == 0);
-        }
-
         if(ritem->dblocks != NULL){
             read_dblock_t *block = ritem->dblocks;
             while(block != NULL){
@@ -1111,7 +696,7 @@ static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
         offt += sizeof(MPI_Offset);
 
         if((var == NULL) || (var->id != var_id)){
-            var = find_var(fbuf->vars, var_id);
+            var = find_var(fbuf, var_id);
             assert(var != NULL);
         }
 
@@ -1133,9 +718,6 @@ static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
                 dbitem->comm = comm;
                 dbitem->next = NULL;
                 dbitem->prev = NULL;
-                dbitem->chunks = NULL;
-                dbitem->last = NULL;
-                dbitem->nchunks = 0;
                 dbitem->dblocks = NULL;
                 dbitem->nblocks = 0;
                 dbitem->last_block = NULL;
@@ -1196,7 +778,6 @@ static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
                 assert(dbitem != NULL);
                 dbitem->var_id = var_id;
                 dbitem->next = NULL;
-                dbitem->chunks = NULL;
                 dbitem->dblocks = NULL;
                 dbitem->last_block = NULL;
                 dbitem->nblocks = 0;
@@ -1239,154 +820,6 @@ static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_stats.malloc_size);
 }
 
-static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
-{
-    int ncid, var_id, rw_flag, nchunks;
-    file_buffer_t *fbuf;
-    size_t offt = 0;
-    unsigned char *chbuf = (unsigned char*)buf;
-    ncid = (int)(*((MPI_Offset*)chbuf));
-    offt += sizeof(MPI_Offset);
-    double t_start = MPI_Wtime();
-
-    fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
-    assert(fbuf != NULL);
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Start parsing reqs for file %s", fbuf->file_path);
-    if(comm == gl_comps[fbuf->reader_id].comm)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Reqs are from reader");
-    else {
-        assert(comm == gl_comps[fbuf->writer_id].comm);
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Req are from writer");
-    }
-
-    while(offt != (size_t)bufsz){
-        rw_flag = (int)(*(MPI_Offset*)(chbuf+offt));
-        offt += sizeof(MPI_Offset);
-        var_id = (int)(*(MPI_Offset*)(chbuf+offt));
-        offt += sizeof(MPI_Offset);
-        nchunks = (int)(*(MPI_Offset*)(chbuf+offt));
-        offt += sizeof(MPI_Offset);
-
-        if(nchunks == 0)
-            continue;
-
-        if(rw_flag == DTF_READ){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "its a rreq");
-            read_db_item_t *dbitem;
-            read_chunk_rec_t *chunk;
-            /*Find corresponding record in the database*/
-            dbitem = fbuf->mst_info->iodb->ritems;
-            while(dbitem != NULL){
-                if( (dbitem->rank == rank) && (dbitem->comm == comm) )
-                    break;
-                dbitem = dbitem->next;
-            }
-
-            if(dbitem == NULL){
-                dbitem = (read_db_item_t*)dtf_malloc(sizeof(read_db_item_t));
-                assert(dbitem != NULL);
-                dbitem->rank = rank;
-                dbitem->comm = comm;
-                dbitem->next = NULL;
-                dbitem->prev = NULL;
-                dbitem->chunks = NULL;
-                dbitem->last = NULL;
-                dbitem->nchunks = nchunks;
-                //enqueue
-                if(fbuf->mst_info->iodb->ritems == NULL)
-                    fbuf->mst_info->iodb->ritems = dbitem;
-                else{
-                    dbitem->next = fbuf->mst_info->iodb->ritems;
-                    fbuf->mst_info->iodb->ritems->prev = dbitem;
-                    fbuf->mst_info->iodb->ritems = dbitem;
-                }
-                fbuf->mst_info->iodb->nritems++;
-            } else
-                dbitem->nchunks += nchunks;
-            DTF_DBG(VERBOSE_DBG_LEVEL, "ritems %d",(int)fbuf->mst_info->iodb->nritems);
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Add %d chunks", nchunks);
-            //add to read items
-            while(nchunks){
-
-                chunk = (read_chunk_rec_t*)dtf_malloc(sizeof(read_chunk_rec_t));
-                assert(chunk != NULL);
-                chunk->var_id = var_id;
-                chunk->offset = *(MPI_Offset*)(chbuf+offt);
-                offt+=sizeof(MPI_Offset);
-                chunk->data_sz = *(MPI_Offset*)(chbuf+offt);
-                offt+=sizeof(MPI_Offset);
-                chunk->next = NULL;
-                chunk->prev = NULL;
-
-                if(dbitem->chunks == NULL){
-                    dbitem->chunks = chunk;
-                    dbitem->last = chunk;
-                } else{
-                    dbitem->last->next = chunk;
-                    chunk->prev = dbitem->last;
-                    dbitem->last = chunk;
-                }
-                nchunks--;
-            }
-        } else {
-            DTF_DBG(VERBOSE_DBG_LEVEL, "its a wreq");
-            write_chunk_rec_t *chunk;
-            write_db_item_t *dbitem;
-            /*Allow write requests only from the writer*/
-            assert(comm == gl_comps[fbuf->writer_id].comm);
-
-            /*Find corresponding record in the database*/
-            assert(fbuf->mst_info->iodb!=NULL);
-            dbitem = fbuf->mst_info->iodb->witems;
-            while(dbitem != NULL){
-                if(dbitem->var_id == var_id)
-                    break;
-                dbitem = dbitem->next;
-            }
-
-            if(dbitem == NULL){
-                dbitem = (write_db_item_t*)dtf_malloc(sizeof(write_db_item_t));
-                assert(dbitem != NULL);
-                dbitem->var_id = var_id;
-                dbitem->next = NULL;
-                dbitem->chunks = RBTreeCreate(chunk_cmp, chunk_destroy, info_destroy, chunk_print, info_print);
-                assert(dbitem->chunks != NULL);
-                //enqueue
-                if(fbuf->mst_info->iodb->witems == NULL)
-                    fbuf->mst_info->iodb->witems = dbitem;
-                else{
-                    dbitem->next = fbuf->mst_info->iodb->witems;
-                    fbuf->mst_info->iodb->witems = dbitem;
-                }
-                dbitem->nchunks = (MPI_Offset)nchunks;
-            } else
-                dbitem->nchunks += (MPI_Offset)nchunks;
-
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Add %d chunks", nchunks);
-            //add to write items
-            while(nchunks){
-                chunk = (write_chunk_rec_t*)dtf_malloc(sizeof(write_chunk_rec_t));
-                assert(chunk != NULL);
-                chunk->offset = *(MPI_Offset*)(chbuf+offt);
-                offt+=sizeof(MPI_Offset);
-                chunk->data_sz = *(MPI_Offset*)(chbuf+offt);
-                offt+=sizeof(MPI_Offset);
-                chunk->rank = rank;
-                //TODO the library doesnt detect if there is overlapping!!
-                RBTreeInsert(dbitem->chunks, chunk, 0);
-                nchunks--;
-            }
-        }
-        DTF_DBG(VERBOSE_DBG_LEVEL, "cur offt %lu, bufsz %d", offt, bufsz);
-    }
-    assert(offt == (size_t)bufsz);
-    fbuf->mst_info->iodb->updated_flag = 1;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: time to parse reqs %.4f", MPI_Wtime()-t_start);
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_stats.malloc_size);
-
-}
-
-
 io_req_t *new_ioreq(int id,
                     int var_id,
                     int ndims,
@@ -1426,10 +859,8 @@ io_req_t *new_ioreq(int id,
     ioreq->user_buf = buf;
     ioreq->next = NULL;
     ioreq->sent_flag = 0;
-    ioreq->mem_chunks = NULL; //will init later
     ioreq->id = id;
     ioreq->var_id = var_id;
-    ioreq->nchunks = 0;
     ioreq->get_sz = 0;
     ioreq->prev = NULL;
     ioreq->dtype = dtype;
@@ -1440,8 +871,7 @@ io_req_t *new_ioreq(int id,
 
 void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
 {
-    contig_mem_chunk_t *chunk;
-    dtf_var_t *var = find_var(fbuf->vars, (*ioreq)->var_id);
+    dtf_var_t *var = find_var(fbuf, (*ioreq)->var_id);
     assert(var != NULL);
 
     if(*ioreq == fbuf->ioreqs)
@@ -1460,13 +890,6 @@ void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
         dtf_free((*ioreq)->count, var->ndims*sizeof(MPI_Offset));
     if((*ioreq)->start != NULL)
         dtf_free((*ioreq)->start, var->ndims*sizeof(MPI_Offset));
-
-    chunk = (*ioreq)->mem_chunks;
-    while(chunk != NULL){
-        (*ioreq)->mem_chunks = chunk->next;
-        dtf_free(chunk, sizeof(contig_mem_chunk_t));
-        chunk = (*ioreq)->mem_chunks;
-    }
     dtf_free((*ioreq), sizeof(io_req_t));
 }
 
@@ -1492,7 +915,7 @@ void send_ioreqs_ver2(file_buffer_t *fbuf)
     ioreq = fbuf->ioreqs;
     while(ioreq != NULL){
         if( (var == NULL) || (var->id != ioreq->var_id)){
-            var = find_var(fbuf->vars, ioreq->var_id);
+            var = find_var(fbuf, ioreq->var_id);
             assert(var != NULL);
         }
         bufsz[mst] += sizeof(MPI_Offset)*2 + var->ndims*2*sizeof(MPI_Offset);
@@ -1510,7 +933,7 @@ void send_ioreqs_ver2(file_buffer_t *fbuf)
     ioreq = fbuf->ioreqs;
     while(ioreq != NULL){
         if( (var == NULL) || (var->id != ioreq->var_id)){
-            var = find_var(fbuf->vars, ioreq->var_id);
+            var = find_var(fbuf, ioreq->var_id);
             assert(var != NULL);
         }
         /*Store var_id, rw_flag, start[] and count[]*/
@@ -1548,220 +971,6 @@ void send_ioreqs_ver2(file_buffer_t *fbuf)
     dtf_free(sbuf, nmasters*sizeof(unsigned char*));
     dtf_free(bufsz, nmasters*sizeof(unsigned char*));
     dtf_free(offt, nmasters*sizeof(unsigned char*));
-}
-
-void send_ioreqs(file_buffer_t *fbuf)
-{
-    io_req_t *ioreq;
-    contig_mem_chunk_t *chunk;
-    unsigned char **sbuf;
-    size_t *offt, *bufsz, *nchuncks_offt;
-    int errno, i;
-    MPI_Request *sreqs;
-    int nmasters = fbuf->mst_info->nmasters;
-    size_t dflt_sz = 256*sizeof(MPI_Offset);
-    dtf_var_t *var;
-    MPI_Offset cur_offt, cur_dsz, tmp_dsz;
-    int el_sz;
-    size_t offt_range;
-    int mst;
-    int *mst_flag;
-    unsigned int *nchunks;
-    double t_start = MPI_Wtime();
-
-    assert(nmasters > 0);
-    /*init*/
-    sbuf = (unsigned char**)dtf_malloc(nmasters*sizeof(unsigned char*));
-    assert(sbuf != NULL);
-    sreqs = (MPI_Request*)dtf_malloc(nmasters*sizeof(MPI_Request));
-    assert(sreqs != NULL);
-    offt = (size_t*)dtf_malloc(nmasters*sizeof(size_t));
-    assert(offt != NULL);
-    bufsz = (size_t*)dtf_malloc(nmasters*sizeof(size_t));
-    assert(bufsz != NULL);
-    nchuncks_offt = (size_t*)dtf_malloc(nmasters*sizeof(size_t));
-    assert(nchuncks_offt != NULL);
-    mst_flag = (int*)dtf_malloc(nmasters*sizeof(int));
-    assert(mst_flag != NULL);
-    nchunks = (unsigned int*)dtf_malloc(nmasters*sizeof(unsigned int));
-    assert(nchunks != NULL);
-
-    for(i = 0; i < nmasters; i++){
-        sreqs[i] = MPI_REQUEST_NULL;
-        //offt[i] = 0;
-        sbuf[i] = (unsigned char*)dtf_malloc(dflt_sz);
-        assert(sbuf[i] != NULL);
-        *(MPI_Offset*)sbuf[i] = (MPI_Offset)fbuf->ncid;
-        offt[i] = sizeof(MPI_Offset);
-        bufsz[i] = dflt_sz;
-        mst_flag[i] = 0;
-    }
-
-    /*Pack requests*/
-    ioreq = fbuf->ioreqs;
-    while(ioreq != NULL){
-        if(ioreq->sent_flag){
-            ioreq = ioreq->next;
-            continue;
-        }
-        if(ioreq->rw_flag == DTF_READ)
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Pack read request to master for var %d (%s)", ioreq->var_id, fbuf->file_path);
-        else
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Pack write request to master for var %d (%s)", ioreq->var_id, fbuf->file_path);
-
-
-        if(gl_conf.io_db_type == DTF_DB_BLOCKS){
-           ;
-        } else { /*DTF_DB_CHUNKS*/
-            /*Store varid, rw flag and remember the offset where number of chunks will
-            be written
-            */
-            for(i = 0; i < nmasters; i++){
-                /*extend the buf if needed*/
-                if(offt[i]+sizeof(MPI_Offset)*3 > bufsz[i]){
-                    unsigned char* tmp = realloc(sbuf[i], bufsz[i]+dflt_sz);
-                    assert(tmp != NULL);
-                    sbuf[i] = tmp;
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "buf reallocd fr %lu to %lu", bufsz[i], bufsz[i]+dflt_sz);
-                    bufsz[i] += dflt_sz;
-                    gl_stats.malloc_size += dflt_sz;
-
-                }
-                //DTF_DBG(VERBOSE_DBG_LEVEL, "offt %lu", offt[i]);
-                //assert(sbuf[i] != NULL);
-                *(MPI_Offset*)(sbuf[i] + offt[i]) = (MPI_Offset)ioreq->rw_flag;
-                offt[i] += sizeof(MPI_Offset);
-                *(MPI_Offset*)(sbuf[i] + offt[i]) = (MPI_Offset)ioreq->var_id;
-                offt[i] += sizeof(MPI_Offset);
-                /*remember where to save the written nchunks later*/
-                nchuncks_offt[i] = offt[i];
-                offt[i] += sizeof(MPI_Offset);
-                nchunks[i] = 0; //reset
-            }
-
-            var = find_var(fbuf->vars, ioreq->var_id);
-            /*Find out the offset range size for this var*/
-            MPI_Type_size(var->dtype, &el_sz);
-            assert(el_sz > 0);
-            if(has_unlim_dim(var)){
-                int nelems = 1;
-    //            assert(var->shape[0] == DTF_UNLIMITED);
-                for(i = 0; i < var->ndims; i++)
-                    if(var->shape[i] != DTF_UNLIMITED)
-                        nelems *= var->shape[i];
-                assert(nelems>0);
-                offt_range = (size_t)(nelems / fbuf->mst_info->nmasters);
-                if(offt_range < UNLIM_NELEMS_RANGE)
-                    offt_range = UNLIM_NELEMS_RANGE;
-                offt_range *= el_sz;
-
-            } else {
-                //DTF_DBG(VERBOSE_ALL_LEVEL, "last idx %d, offt %d", (int)last_1d_index(var->ndims, var->shape), (int)(last_1d_index(var->ndims, var->shape)*el_sz));
-                offt_range = (size_t)((last_1d_index(var->ndims, var->shape) + 1)/fbuf->mst_info->nmasters);
-                offt_range *= el_sz;
-            }
-            DTF_DBG(VERBOSE_DBG_LEVEL, "offt_range %lu", offt_range);
-            assert(offt_range > 0);
-
-            chunk = ioreq->mem_chunks;
-            while(chunk != NULL){
-
-                cur_offt = chunk->offset;
-                cur_dsz = chunk->data_sz;
-
-                int tmp;
-                while(cur_dsz){
-                    /*found out the master who's responsible for
-                     this data.*/
-                    tmp = (int)(cur_offt/offt_range);
-                    mst = tmp%nmasters;
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "mst %d, cur_offt %lld", mst, cur_offt);
-                    assert(mst < nmasters);
-                    /*if the last written bit for this chunk
-                      falls inside the range of the next master
-                      we have to split the current chunk*/
-                    if(cur_offt+cur_dsz-1 >= (tmp+1)*offt_range){
-                        tmp_dsz = (tmp+1)*offt_range - cur_offt;
-                    } else
-                        tmp_dsz = cur_dsz;
-
-                    assert(tmp_dsz > 0);
-
-                    /*extend the buf if needed*/
-                    if(offt[mst]+sizeof(MPI_Offset)*2 > bufsz[mst]){
-                        unsigned char* tmp = realloc(sbuf[mst], bufsz[mst]+dflt_sz);
-                        assert(tmp != NULL);
-                        sbuf[mst] = tmp;
-                       // DTF_DBG(VERBOSE_DBG_LEVEL, "buf reallocd fr %lu to %lu", bufsz[mst], bufsz[mst]+dflt_sz);
-                        bufsz[mst] += dflt_sz;
-                        gl_stats.malloc_size += dflt_sz;
-                    }
-                    DTF_DBG(VERBOSE_ALL_LEVEL, "  chunk (r %d, off %lld, sz %lld)", fbuf->mst_info->masters[mst],
-                             cur_offt, tmp_dsz);
-                    *(MPI_Offset*)(sbuf[mst]+offt[mst]) = cur_offt;
-                    offt[mst] += sizeof(MPI_Offset);
-                    *(MPI_Offset*)(sbuf[mst]+offt[mst]) = tmp_dsz;
-                    offt[mst] += sizeof(MPI_Offset);
-                    nchunks[mst]++;
-                    mst_flag[mst] = 1;
-                    cur_offt += tmp_dsz;
-                    cur_dsz -= tmp_dsz;
-                }
-
-                chunk = chunk->next;
-            }
-            /*write number of chunks stored*/
-            for(i = 0; i < nmasters; i++){
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Stored %u chunks for mst %d", nchunks[i], fbuf->mst_info->masters[i]);
-                *(MPI_Offset*)(sbuf[i] + nchuncks_offt[i]) = (MPI_Offset)nchunks[i];
-            }
-        }
-        ioreq->sent_flag = 1;
-        ioreq = ioreq->next;
-    }
-
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Before sending reqs");
-    double t_start_sendreq = MPI_Wtime();
-    double t_parse = 0;
-
-    /*Send the request to the master*/
-    for(i = 0; i < nmasters; i++){
-         if(!mst_flag[i])
-            continue;   //nothing to send
-        if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->masters[i] == gl_my_rank)){
-            double tmp = MPI_Wtime();
-            parse_ioreqs(sbuf[i], (int)offt[i], gl_my_rank, gl_comps[gl_my_comp_id].comm);
-            t_parse += MPI_Wtime() - tmp;
-        }
-        else{
-            assert(gl_comps[fbuf->writer_id].comm != MPI_COMM_NULL);
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Send reqs to mst %d (bufsz %lu)", fbuf->mst_info->masters[i], offt[i]);
-            errno = MPI_Isend((void*)sbuf[i], (int)offt[i], MPI_BYTE, fbuf->mst_info->masters[i],
-                                IO_REQS_TAG, gl_comps[fbuf->writer_id].comm, &sreqs[i]);
-            CHECK_MPI(errno);
-            gl_stats.nmatching_msg_sent++;
-            gl_stats.accum_msg_sz += bufsz[i];
-        }
-    }
-    errno = MPI_Waitall(nmasters, sreqs, MPI_STATUSES_IGNORE);
-    CHECK_MPI(errno);
-    gl_stats.accum_comm_time += MPI_Wtime() - t_start_sendreq - t_parse;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Sent reqs");
-
-
-    /*dealloc*/
-    dtf_free(sreqs, fbuf->mst_info->nmasters*sizeof(MPI_Request));
-    for(i = 0; i < nmasters; i++){
-        dtf_free(sbuf[i], bufsz[i]);
-    }
-    dtf_free(sbuf, nmasters*sizeof(unsigned char*));
-    dtf_free(offt, nmasters*sizeof(size_t));
-    dtf_free(bufsz, nmasters*sizeof(size_t));
-    dtf_free(nchuncks_offt, nmasters*sizeof(size_t));
-    dtf_free(mst_flag, sizeof(int) * nmasters);
-    dtf_free(nchunks, sizeof(unsigned int)*nmasters);
-
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time to pack and send reqs %.4f", MPI_Wtime() - t_start);
 }
 
 void match_ioreqs_all(int rw_flag)
@@ -1806,10 +1015,7 @@ void match_ioreqs_all(int rw_flag)
             ioreq = ioreq->next;
         }
         /*Send ioreqs to master(s)*/
-        if(gl_conf.io_db_type == DTF_DB_CHUNKS)
-            send_ioreqs(fbuf);
-        else
-            send_ioreqs_ver2(fbuf);
+        send_ioreqs_ver2(fbuf);
         /*set/reset flags*/
         fbuf->done_matching_flag = 0;
         fbuf->is_matching_flag = 1;
@@ -1844,10 +1050,7 @@ void match_ioreqs_all(int rw_flag)
             progress_io_matching();
 
             if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->is_master_flag)  ){
-                if(gl_conf.io_db_type == DTF_DB_CHUNKS)
-                    do_matching(fbuf, 0);
-                else
-                    do_matching_ver2(fbuf, 0);
+            do_matching_ver2(fbuf, 0);
             }
 
             fbuf = fbuf->next;
@@ -1905,16 +1108,8 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
         }
     } else{
         DTF_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs to match", fbuf->rreq_cnt, fbuf->wreq_cnt);
-        if(gl_conf.io_db_type == DTF_DB_CHUNKS)
-            send_ioreqs(fbuf);
-        else
-            send_ioreqs_ver2(fbuf);
-//        ioreq = fbuf->ioreqs;
-//        while(ioreq != NULL){
-//            /*Forward the info about the request to writer's master rank(s)*/
-//            send_ioreq(fbuf, ioreq);
-//            ioreq = ioreq->next;
-//        }
+        send_ioreqs_ver2(fbuf);
+
     }
     //reset
     fbuf->done_matching_flag = 0;
@@ -1947,10 +1142,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 
                 if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag  ){
                     t_match_start = MPI_Wtime();
-                    if(gl_conf.io_db_type == DTF_DB_CHUNKS)
-                        do_matching(fbuf, intracomp_io_flag);
-                    else
-                        do_matching_ver2(fbuf, intracomp_io_flag);
+                    do_matching_ver2(fbuf, intracomp_io_flag);
                     t_match += MPI_Wtime() - t_match_start;
                 }
             }
@@ -2050,7 +1242,7 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
     dtf_var_t *var = NULL;
     size_t rofft = 0, sofft = 0;
     unsigned char *sbuf = NULL;
-    size_t sbufsz = 0, data_sz;
+    size_t sbufsz = 0;
     int def_el_sz, intracomp_flag;
     unsigned char *rbuf = (unsigned char*)buf;
     MPI_Offset *start, *count;
@@ -2090,7 +1282,7 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
         rofft += sizeof(MPI_Offset);
 
         if((var == NULL) || (var->id != var_id)){
-            var = find_var(fbuf->vars, var_id);
+            var = find_var(fbuf, var_id);
             assert(var != NULL);
             MPI_Type_size(var->dtype, &def_el_sz);
             /*Make sure that we can fit in at least one
@@ -2374,164 +1566,6 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
 }
 
 /*writer->reader*/
-static void send_data_wrt2rdr(void* buf, int bufsz)
-{
-    int ncid, var_id, rdr_rank, errno, i;
-    io_req_t *ioreq = NULL;
-    file_buffer_t *fbuf;
-    dtf_var_t *var;
-    size_t rofft = 0, sofft = 0;
-    unsigned char *sbuf = NULL;
-    size_t sbufsz = 0;
-    MPI_Offset read_offt, read_sz, dbuf_offt;
-    contig_mem_chunk_t *chunk;
-    int def_el_sz, req_el_sz, intracomp_flag;
-    unsigned char *rbuf = (unsigned char*)buf;
-
-    rdr_rank = (int)(*(MPI_Offset*)rbuf);
-    rofft += sizeof(MPI_Offset);
-    intracomp_flag = (int)(*(MPI_Offset*)(rbuf+rofft));
-    rofft += sizeof(MPI_Offset);
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Sending data to rank %d (intracomp flag %d)", rdr_rank, intracomp_flag);
-    ncid = (int)(*(MPI_Offset*)(rbuf+rofft));
-    rofft += sizeof(MPI_Offset);
-
-    fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
-    assert(fbuf != NULL);
-
-    /*First compute the size of buf to allocate*/
-    //skip var_id and start_offt
-    rofft += sizeof(MPI_Offset)*2;
-    sbufsz = sizeof(MPI_Offset); //ncid
-    while(rofft < bufsz){
-        read_sz = *(MPI_Offset*)(rbuf+rofft);
-        //padding
-        read_sz += read_sz%sizeof(MPI_Offset);
-        //var_id+start_offt+chunk_sz+chunk
-        sbufsz += sizeof(MPI_Offset)+sizeof(MPI_Offset)*2+(size_t)read_sz;
-        //skip until next chunk_sz
-        rofft += sizeof(MPI_Offset)+sizeof(MPI_Offset)*2;
-    }
-
-    DTF_DBG(VERBOSE_ALL_LEVEL, "Alloc buf of sz %d", (int)sbufsz);
-    sbuf = dtf_malloc(sbufsz);
-    assert(sbuf != NULL);
-    *(MPI_Offset*)sbuf = (MPI_Offset)ncid;
-    sofft = sizeof(MPI_Offset);
-
-    //rewind
-    rofft = sizeof(MPI_Offset)*3;
-    while(rofft != bufsz){
-        var_id = (int)(*(MPI_Offset*)(rbuf+rofft));
-        rofft += sizeof(MPI_Offset);
-
-        read_offt = *(MPI_Offset*)(rbuf+rofft);
-        rofft += sizeof(MPI_Offset);
-        read_sz = *(MPI_Offset*)(rbuf+rofft);
-        rofft += sizeof(MPI_Offset);
-
-        /*Save info about the memory chunk*/
-        *(MPI_Offset*)(sbuf+sofft) = (MPI_Offset)var_id;
-        sofft += sizeof(MPI_Offset);
-        *(MPI_Offset*)(sbuf+sofft) = read_offt;
-        sofft += sizeof(MPI_Offset);
-        *(MPI_Offset*)(sbuf+sofft) = read_sz;
-        sofft += sizeof(MPI_Offset);
-
-        DTF_DBG(VERBOSE_ALL_LEVEL, "Will copy (var %d, offt %d, sz %d), padding %d", var_id, (int)read_offt, (int)read_sz, (int)(read_sz%sizeof(MPI_Offset)));
-
-        /*Find the ioreq that has info about this mem chunk*/
-        ioreq = fbuf->ioreqs;
-        while(ioreq != NULL){
-            if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_WRITE)){
-                chunk = ioreq->mem_chunks;
-                while(chunk != NULL){
-                    if( (read_offt >= chunk->offset) &&
-                        (read_offt < chunk->offset+chunk->data_sz) &&
-                        (read_offt+read_sz <= chunk->offset+chunk->data_sz))
-                        break;
-
-                    chunk = chunk->next;
-                }
-                if(chunk != NULL)
-                    break;
-            }
-            ioreq = ioreq->next;
-        }
-        assert(ioreq != NULL);
-        assert(chunk != NULL);
-
-        var = find_var(fbuf->vars, var_id);
-        /*Copy data: if the var datatype passed in I/O function differs
-        from the datatype with which the var was defined then we will
-        need to do type conversion*/
-        MPI_Type_size(ioreq->dtype, &req_el_sz);
-        MPI_Type_size(var->dtype, &def_el_sz);
-        if(req_el_sz == def_el_sz){
-            assert(read_offt - ioreq->mem_chunks->offset >= 0);
-            dbuf_offt = chunk->usrbuf_offset + read_offt - chunk->offset;
-            //DTF_DBG(VERBOSE_ALL_LEVEL, "dbuf offt %d, chunk usr buf offt %d (usrbuf sz %d)", (int)dbuf_offt, (int)chunk->usrbuf_offset, (int)ioreq->user_buf_sz);
-            assert(dbuf_offt < ioreq->user_buf_sz);
-            memcpy(sbuf+sofft, (unsigned char*)ioreq->user_buf+dbuf_offt, (size_t)read_sz);
-            sofft += (size_t)read_sz+/*padding*/(size_t)(read_sz%sizeof(MPI_Offset));
-        } else {
-            void *cpbuf;
-            MPI_Offset offt_within_chunk;
-            int nelems_to_read;
-
-            DTF_DBG(VERBOSE_ALL_LEVEL, "Converting from %d-bit to %d bit type for var %d", req_el_sz, def_el_sz, var_id);
-            assert(read_offt - ioreq->mem_chunks->offset >= 0);
-            assert((read_offt - chunk->offset)%def_el_sz == 0);
-            offt_within_chunk = (MPI_Offset)((read_offt - chunk->offset)/def_el_sz)*req_el_sz;
-            nelems_to_read = (int)(read_sz/def_el_sz);
-
-            cpbuf = dtf_malloc(read_sz);
-            assert(cpbuf != NULL);
-            dbuf_offt = chunk->usrbuf_offset + offt_within_chunk;
-
-            if(var->dtype == MPI_FLOAT){
-                double *ubuf;
-                /*MPI_DOUBLE->MPI_FLOAT*/
-                assert(ioreq->dtype == MPI_DOUBLE);
-                ubuf = (double*)((unsigned char*)ioreq->user_buf+dbuf_offt);
-                for(i = 0; i < nelems_to_read; i++){
-                    ((float*)cpbuf)[i] = (float)(ubuf[i]);
-                    DTF_DBG(VERBOSE_ALL_LEVEL, "Send: uval %.10f, bval %.10f",ubuf[i], ((float*)cpbuf)[i]);
-                }
-            } else if (var->dtype == MPI_DOUBLE){
-                float *ubuf;
-              //  DTF_DBG(VERBOSE_DBG_LEVEL, "req_el_sz %d, def_el_sz %d, req dt %d, def dt %d", req_el_sz, def_el_sz, (int)ioreq->dtype, (int)var->dtype);
-                /*MPI_FLOAT->MPI_DOUBLE*/
-                assert(ioreq->dtype == MPI_FLOAT);
-                ubuf = (float*)((unsigned char*)ioreq->user_buf+dbuf_offt);
-                for(i = 0; i < nelems_to_read; i++){
-                    ((double*)cpbuf)[i] = (double)(ubuf[i]);
-                    DTF_DBG(VERBOSE_ALL_LEVEL, "Send: uval %.10f, bval %.10f",ubuf[i], ((double*)cpbuf)[i]);
-                }
-            } else {
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "This conversion type is not supported. Aborting.");
-                assert(0);
-            }
-            memcpy(sbuf+sofft, cpbuf, (size_t)read_sz);
-            sofft += (size_t)read_sz+/*padding*/(size_t)(read_sz%sizeof(MPI_Offset));
-            dtf_free(cpbuf, read_sz);
-        }
-    }
-    DTF_DBG(VERBOSE_ALL_LEVEL, "Sofft %d, sbufsz %d", (int)sofft, (int)sbufsz);
-    assert(sofft == sbufsz);
-    double t_start_send = MPI_Wtime();
-    if(intracomp_flag)
-        errno = MPI_Send((void*)sbuf, (int)sbufsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[gl_my_comp_id].comm);
-    else
-        errno = MPI_Send((void*)sbuf, (int)sbufsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[fbuf->reader_id].comm);
-    CHECK_MPI(errno);
-    gl_stats.accum_comm_time += MPI_Wtime() - t_start_send;
-    gl_stats.nmatching_msg_sent++;
-    gl_stats.accum_msg_sz += sbufsz;
-    dtf_free(sbuf, sbufsz);
-}
-
-/*writer->reader*/
 static void recv_data_rdr_ver2(void* buf, int bufsz)
 {
     int ncid, var_id, i;
@@ -2557,7 +1591,7 @@ static void recv_data_rdr_ver2(void* buf, int bufsz)
         var_id = (int)(*(MPI_Offset*)(chbuf+offt));
         offt += sizeof(MPI_Offset);
         if( (var == NULL) || (var->id != var_id)){
-            var = find_var(fbuf->vars, var_id);
+            var = find_var(fbuf, var_id);
             assert(var != NULL);
         }
         start = (MPI_Offset*)(chbuf+offt);
@@ -2567,7 +1601,7 @@ static void recv_data_rdr_ver2(void* buf, int bufsz)
         data = (void*)(chbuf+offt);
         nblocks_read++;
 
-        /*Find the ioreq that has info about this mem chunk*/
+        /*Find the ioreq that has info about this block*/
         ioreq = fbuf->ioreqs;
         while(ioreq != NULL){
             if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_READ)){
@@ -2645,141 +1679,6 @@ static void recv_data_rdr_ver2(void* buf, int bufsz)
     } //while(bufsz)
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: time to extract the data: %.3f (%d blocks)", MPI_Wtime() - t_begin, nblocks_read);
-}
-
-
-/*writer->reader*/
-static void recv_data_rdr(void* buf, int bufsz)
-{
-    int ncid, var_id, i;
-    int def_el_sz, req_el_sz;
-    dtf_var_t *var;
-    io_req_t *ioreq = NULL;
-    file_buffer_t *fbuf;
-    size_t offt = 0;
-    MPI_Offset read_offt, read_sz, dbuf_offt;
-    contig_mem_chunk_t *chunk;
-    unsigned char *chbuf = (unsigned char*)buf;
-    ncid = (int)(*(MPI_Offset*)(chbuf));
-    offt += sizeof(MPI_Offset);
-
-    fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
-    assert(fbuf != NULL);
-
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Received data for file %s (ncid %d)", fbuf->file_path, fbuf->ncid);
-    while(offt != bufsz){
-        var_id = (int)(*(MPI_Offset*)(chbuf+offt));
-        offt += sizeof(MPI_Offset);
-        read_offt = *(MPI_Offset*)(chbuf+offt);
-        offt += sizeof(MPI_Offset);
-        read_sz = *(MPI_Offset*)(chbuf+offt);
-        offt += sizeof(MPI_Offset);
-
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Will recv (var %d, offt %d, sz %d)", var_id, (int)read_offt, (int)read_sz);
-
-        /*Find the ioreq*/
-        ioreq = fbuf->ioreqs;
-        while(ioreq != NULL){
-            if(ioreq->var_id == var_id && ioreq->rw_flag == DTF_READ){
-                chunk = ioreq->mem_chunks;
-                while(chunk != NULL){
-                    if( (read_offt >= chunk->offset) &&
-                        (read_offt < chunk->offset+chunk->data_sz) &&
-                        (read_offt+read_sz <= chunk->offset+chunk->data_sz))
-                        break;
-
-                    chunk = chunk->next;
-                }
-                if(chunk != NULL)
-                    break;
-            }
-            ioreq = ioreq->next;
-        }
-        assert(ioreq != NULL);
-        assert(chunk != NULL);
-
-        var = find_var(fbuf->vars, var_id);
-        /*Copy data*/
-        MPI_Type_size(ioreq->dtype, &req_el_sz);
-        MPI_Type_size(var->dtype, &def_el_sz);
-        if(req_el_sz == def_el_sz){
-            assert(read_offt - ioreq->mem_chunks->offset >= 0);
-            dbuf_offt = chunk->usrbuf_offset + read_offt - chunk->offset;
-            DTF_DBG(VERBOSE_ALL_LEVEL, "dbuf offt %d", (int)dbuf_offt);
-            assert(dbuf_offt < ioreq->user_buf_sz);
-            memcpy((unsigned char*)(ioreq->user_buf)+dbuf_offt, (unsigned char*)buf+offt, (size_t)read_sz);
-            offt += (size_t)read_sz+/*padding*/(size_t)(read_sz%sizeof(MPI_Offset));
-            ioreq->get_sz += read_sz;
-        } else {
-            void *cpbuf;
-            MPI_Offset offt_within_chunk;
-            int nelems_to_read;
-
-            DTF_DBG(VERBOSE_ALL_LEVEL, "Converting from %d-bit to %d bit type for var %d", req_el_sz, def_el_sz, var_id);
-            assert(read_offt - ioreq->mem_chunks->offset >= 0);
-            assert((read_offt - chunk->offset)%def_el_sz == 0);
-            offt_within_chunk = (MPI_Offset)((read_offt - chunk->offset)/def_el_sz)*req_el_sz;
-            dbuf_offt = chunk->usrbuf_offset + offt_within_chunk;
-
-            cpbuf = dtf_malloc(read_sz);
-            assert(cpbuf != NULL);
-
-            /*Copy the data to temporary buffer and then do the conversion*/
-            memcpy(cpbuf, (unsigned char*)buf+offt, (size_t)read_sz);
-            offt += (size_t)read_sz+/*padding*/(size_t)(read_sz%sizeof(MPI_Offset));
-
-            nelems_to_read = (int)(read_sz/def_el_sz);
-            if(var->dtype == MPI_FLOAT){
-                double *ubuf;
-                /*MPI_DOUBLE->MPI_FLOAT*/
-                assert(ioreq->dtype == MPI_DOUBLE);
-                ubuf = (double*)((unsigned char*)ioreq->user_buf+dbuf_offt);
-                for(i = 0; i < nelems_to_read; i++){
-                    ubuf[i] = (double)(((float*)cpbuf)[i]);
-                    DTF_DBG(VERBOSE_ALL_LEVEL, "Recv: uval %.10f, bval %.10f",ubuf[i], ((float*)cpbuf)[i]);
-                }
-            } else if (var->dtype == MPI_DOUBLE){
-                float *ubuf;
-                /*MPI_FLOAT->MPI_DOUBLE*/
-                assert(ioreq->dtype == MPI_FLOAT);
-                ubuf = (float*)((unsigned char*)ioreq->user_buf+dbuf_offt);
-                for(i = 0; i < nelems_to_read; i++){
-                    ubuf[i] = (float)(((double*)cpbuf)[i]);
-                    DTF_DBG(VERBOSE_ALL_LEVEL, "Recv: uval %.10f, bval %.10f",ubuf[i], ((double*)cpbuf)[i]);
-                }
-            } else {
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "This conversion type is not supported. Aborting.");
-                assert(0);
-            }
-            dtf_free(cpbuf, read_sz);
-
-            ioreq->get_sz += (MPI_Offset)(read_sz/def_el_sz)*req_el_sz;
-        }
-        DTF_DBG(VERBOSE_ALL_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, ioreq->var_id, (int)ioreq->get_sz, (int)ioreq->user_buf_sz);
-
-        if(ioreq->get_sz == ioreq->user_buf_sz){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Complete req %d (left %d)", ioreq->id, fbuf->rreq_cnt-1);
-            //delete this ioreq
-
-            delete_ioreq(fbuf, &ioreq);
-
-
-            if(fbuf->rreq_cnt == 0){
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Completed all rreqs. Notify master.");
-                /*Notify my master writer rank that all my read io
-                requests for this file have been completed*/
-                int errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm);
-                CHECK_MPI(errno);
-                gl_stats.nmsg_sent++;
-
-                /*Process of the reader component can set this flag now.
-                  Writer component will set this flag only when the master
-                  rank says so.*/
-                if(fbuf->reader_id == gl_my_comp_id)
-                    fbuf->done_matching_flag = 1;
-            }
-        }
-    }
 }
 
 /*Send the file header and info about vars to the reader when the writer finishes the def mode*/
@@ -2947,10 +1846,7 @@ void progress_io_matching()
                     errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_REQS_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(errno);
                     gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
-                    if(gl_conf.io_db_type == DTF_DB_CHUNKS)
-                        parse_ioreqs(rbuf, bufsz, src, gl_comps[comp].comm);
-                    else
-                        parse_ioreqs_ver2(rbuf, bufsz, src, gl_comps[comp].comm);
+                    parse_ioreqs_ver2(rbuf, bufsz, src, gl_comps[comp].comm);
                     dtf_free(rbuf, bufsz);
                     break;
                 case IO_DATA_REQ_TAG:
@@ -2963,10 +1859,7 @@ void progress_io_matching()
                     errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_DATA_REQ_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(errno);
                     gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
-                    if(gl_conf.io_db_type == DTF_DB_CHUNKS)
-                        send_data_wrt2rdr(rbuf, bufsz);
-                    else
-                        send_data_wrt2rdr_ver2(rbuf, bufsz);
+                    send_data_wrt2rdr_ver2(rbuf, bufsz);
                     dtf_free(rbuf, bufsz);
                     break;
                 case IO_REQ_RECV_DATA:
@@ -2986,10 +1879,7 @@ void progress_io_matching()
                     CHECK_MPI(errno);
                     gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
                     DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: recv data from %d", src);
-                    if(gl_conf.io_db_type == DTF_DB_CHUNKS)
-                        recv_data_rdr(rbuf, bufsz);
-                    else
-                        recv_data_rdr_ver2(rbuf, bufsz);
+                    recv_data_rdr_ver2(rbuf, bufsz);
                    // dtf_free(rbuf, bufsz);
                     break;
                 case READ_DONE_TAG:

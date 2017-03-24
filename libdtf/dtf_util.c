@@ -10,7 +10,6 @@
 #include <errno.h>
 
 #include "dtf_util.h"
-#include "dtf_mem.h"
 #include "dtf.h"
 #include "dtf_file_buffer.h"
 #include "dtf_common.h"
@@ -296,7 +295,8 @@ fn_exit:
 int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 {
     dtf_var_t *var = new_var(varid, ndims, dtype, shape);
-    add_var(&fbuf->vars, var);
+    add_var(fbuf, var);
+
     fbuf->var_cnt++;
     return 0;
 }
