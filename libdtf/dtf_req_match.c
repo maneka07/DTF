@@ -34,7 +34,7 @@ void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq);
 void delete_ioreqs(file_buffer_t *fbuf)
 {
     io_req_t *ioreq;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Delete io requests for file %s", fbuf->file_path);
+    DTF_DBG(VERBOSE_ALL_LEVEL, "Delete io requests for file %s", fbuf->file_path);
 
     ioreq = fbuf->ioreqs;
     while(ioreq != NULL){
@@ -808,6 +808,25 @@ static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
                 dbitem->dblocks = dblock;
                 dbitem->last_block = dblock;
             } else {
+                if(gl_conf.detect_overlap_flag){
+                    /*detect if there is write overlap
+                    among different ranks*/
+                    write_dblock_t *tmp = dbitem->dblocks;
+                    int overlap;
+                    int i;
+                    while(tmp != NULL){
+                        overlap = 0;
+                        for(i = 0; i < var->ndims; i++)
+                            if( (dblock->start[i] >= tmp->start[i]) && (dblock->start[i] < tmp->start[i] + tmp->count[i]))
+                                overlap++;
+                            else
+                                break;
+                        if( (overlap == var->ndims) && (dblock->rank != tmp->rank) && (var->ndims > 0))
+                            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: data for var %d written by ranks %d \
+                            and %d overlaps. State of file %s is undefined.", var->id, dblock->rank, tmp->rank, fbuf->file_path );
+                        tmp = tmp->next;
+                    }
+                }
                 dbitem->last_block->next = dblock;
                 dbitem->last_block = dblock;
             }
@@ -902,7 +921,8 @@ void send_ioreqs_ver2(file_buffer_t *fbuf)
     unsigned char **sbuf;
     size_t *bufsz, *offt;
     int nmasters = 1;
-
+    if(fbuf->ioreqs == NULL)
+        return;
     sbuf = (unsigned char**)dtf_malloc(nmasters*sizeof(unsigned char*));
     assert(sbuf != NULL);
     offt = (size_t*)dtf_malloc(nmasters*sizeof(size_t));
@@ -911,9 +931,13 @@ void send_ioreqs_ver2(file_buffer_t *fbuf)
     assert(bufsz != NULL);
 
     //alloc mem
-    bufsz[mst] = sizeof(MPI_Offset);
+    bufsz[mst] = 0;
     ioreq = fbuf->ioreqs;
     while(ioreq != NULL){
+        if(ioreq->sent_flag){
+            ioreq = ioreq->next;
+            continue;
+        }
         if( (var == NULL) || (var->id != ioreq->var_id)){
             var = find_var(fbuf, ioreq->var_id);
             assert(var != NULL);
@@ -921,7 +945,10 @@ void send_ioreqs_ver2(file_buffer_t *fbuf)
         bufsz[mst] += sizeof(MPI_Offset)*2 + var->ndims*2*sizeof(MPI_Offset);
         ioreq = ioreq->next;
     }
+    if(bufsz[mst] == 0)
+        goto fn_exit;   //nothing to send
 
+    bufsz[mst] += sizeof(MPI_Offset); //ncid
     DTF_DBG(VERBOSE_DBG_LEVEL, "bufsz %lu", bufsz[mst]);
     sbuf[mst] = dtf_malloc(bufsz[mst]);
     assert(sbuf[mst] != NULL);
@@ -966,7 +993,7 @@ void send_ioreqs_ver2(file_buffer_t *fbuf)
         gl_stats.accum_comm_time += MPI_Wtime() - t_start;
         CHECK_MPI(errno);
     }
-
+fn_exit:
     dtf_free(sbuf[mst], bufsz[mst]);
     dtf_free(sbuf, nmasters*sizeof(unsigned char*));
     dtf_free(bufsz, nmasters*sizeof(unsigned char*));
@@ -1120,14 +1147,14 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     (maybe they receive IO_CLOSE_FILE_TAG before READ_DONE_TAG by mistake?)*/
 
     //NOTE: put this only for s3d benchmark!!!!!
-    if((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag ){
-        //sleep(1);
-        while(fbuf->mst_info->nrranks_opened == 0)
-            progress_io_matching();
-
-        while(fbuf->mst_info->iodb->nritems != fbuf->mst_info->nrranks_opened)
-            progress_io_matching();
-    }
+//    if((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag ){
+//        //sleep(1);
+//        while(fbuf->mst_info->nrranks_opened == 0)
+//            progress_io_matching();
+//
+//        while(fbuf->mst_info->iodb->nritems != fbuf->mst_info->nrranks_opened)
+//            progress_io_matching();
+//    }
 
     int counter = 0;
     double t_prog_start, t_match_start, t_prog = 0, t_match=0;
@@ -1176,7 +1203,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
       from two different match processes may mix up on the writer's side.
       It may lead to a dead lock situation.*/
       //if(fbuf->reader_id == gl_my_comp_id){
-      DTF_DBG(VERBOSE_DBG_LEVEL, "Barrier before completing matching for %s", fbuf->file_path);
+      //DTF_DBG(VERBOSE_DBG_LEVEL, "Barrier before completing matching for %s", fbuf->file_path);
       //TODO uncomment the barrier?
 //      MPI_Barrier(fbuf->comm);
       //}
@@ -1472,52 +1499,53 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                         assert(nelems >= 0);
                     }
 
-                    /*Shift the start position*/
-                     if(fit_nelems == 1){ //special case
-                      new_start[var->ndims-1]++;
-                      int j = var->ndims-1;
-                      while(j > 0){
-                        if(new_start[j] == count[j]){
-                              new_start[j] = start[j];
-                              new_start[j-1]++;
-                        } else
-                              break;
-                        j--;
-                      }
-                      assert(0); //not sure this block is correct
-                    } else {
+                    if(var->ndims > 0){
+                        /*Shift the start position*/
+//                         if(fit_nelems == 1){ //special case
+//                          new_start[var->ndims-1]++;
+//                          int j = var->ndims-1;
+//                          while(j > 0){
+//                            if(new_start[j] == count[j]){
+//                                  new_start[j] = start[j];
+//                                  new_start[j-1]++;
+//                            } else
+//                                  break;
+//                            j--;
+//                          }
+//                          assert(0); //not sure this block is correct
+//                        } else {
 
-                        for(i = 0; i < var->ndims; i++)
-                            if(new_count[i] > 1){
-                                  new_start[i] += new_count[i];
-                            }
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "New start before adjustment:");
-                        for(i = 0; i < var->ndims; i++)
-                            DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
-
-                        for(i = var->ndims - 1; i > 0; i--)
-                            if(new_start[i] == start[i] + count[i]){
-                                new_start[i] = start[i];
-                                if( (new_start[i-1] != start[i-1] + count[i-1]) && (new_count[i-1] == 1)){
-                                    new_start[i-1]++;
+                            for(i = 0; i < var->ndims; i++)
+                                if(new_count[i] > 1){
+                                      new_start[i] += new_count[i];
                                 }
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "New start before adjustment:");
+                            for(i = 0; i < var->ndims; i++)
+                                DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
 
-                            } else
-                                break;
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "New start after adjustment:");
+                            for(i = var->ndims - 1; i > 0; i--)
+                                if(new_start[i] == start[i] + count[i]){
+                                    new_start[i] = start[i];
+                                    if( (new_start[i-1] != start[i-1] + count[i-1]) && (new_count[i-1] == 1)){
+                                        new_start[i-1]++;
+                                    }
+
+                                } else
+                                    break;
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "New start after adjustment:");
+                            for(i = 0; i < var->ndims; i++)
+                                DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
+                        //}
+
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "Copied subblock. Shift start:");
                         for(i = 0; i < var->ndims; i++)
-                            DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "   %lld\t -->\t %lld", start[i], new_start[i]);
+                        if(new_start[0] == start[0]+count[0]){
+                            if(nelems != 0)
+                                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: nelems not zzzzero");
+                            assert(nelems == 0); //we should finish now
+                        }
                     }
-
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "Copied subblock. Shift start:");
-                    for(i = 0; i < var->ndims; i++)
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "   %lld\t -->\t %lld", start[i], new_start[i]);
-                    if(new_start[0] == start[0]+count[0]){
-                        if(nelems != 0)
-                            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: nelems not zzzzero");
-                        assert(nelems == 0); //we should finish now
-                    }
-
                 } /*copy subblock to sbuf*/
             } /*while(nelems>0)*/
 

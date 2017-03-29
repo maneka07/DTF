@@ -5,17 +5,17 @@ TODO: general description of what the middleware does
 
 ******************* USAGE *************************
 
-1) Before running applications set global variable FARB_GLOBAL_PATH to some path accessible by all processes:
+1) Before running applications set global variable DTF_GLOBAL_PATH to some path accessible by all processes:
 
-	e.g.:  export FARB_GLOBAL_PATH=/some/path/in/PFS
+	e.g.:  export DTF_GLOBAL_PATH=/some/path/in/PFS
 
-2) Include the FARB header to your source code:
+2) Include the DTF header to your source code:
 
-	#include "farb.h"
+	#include "dtf.h"
 
 3) Other params that can be set:
 
-*** FARB_VERBOSE_LEVEL: how much information to print out (default: 1). Note: not to pollute the logs, only rank 0 prints messages. 
+*** DTF_VERBOSE_LEVEL: how much information to print out (default: 1). Note: not to pollute the logs, only rank 0 prints messages. 
 
 	Possible values:
 	0 - no diagnostic messages
@@ -23,17 +23,18 @@ TODO: general description of what the middleware does
 	2 - debug information
 	3 - everything
 
-*** 
+*** DTF_DETECT_OVERLAP - should master process detect write overlap by different processes? 1 -yes, 0 (default) - no
+
 
 
 ******************** C API *****************************
 =================APPLICATION API========================
 
->>>>   int farb_init(char* filename, char* module_name): Library initialization 
+>>>>   int dtf_init(char* filename, char* module_name): Library initialization 
 
 PARAMETERS:
 
-	[in] filename - path to the FARB configuration file
+	[in] filename - path to the DTF configuration file
 	[in] module_name    - name of the component calling the function. 
 
 RETURN: 
@@ -43,7 +44,7 @@ NOTE:
         Init function should be called after MPI_Init. 
 	The function is not thread-safe.
 
->>>>  int farb_finalize(): Library finalization
+>>>>  int dtf_finalize(): Library finalization
 
 PARAMETERS:
 	None
@@ -54,26 +55,12 @@ NOTE:
         The function should be called before MPI_Finalize. 
 	The function is not thread-safe.	
 
-=================I/O LIBRARY API========================
-
->>>> int farb_write(char* filename, off_t const offset, const size_t data_sz, void *const data): write data to the corresponding memory buffer
-
-PARAMETERS:
-	[in] filename - I/O file to which the data is supposed to be written
-	[in] offset - offsted from the beginnig of the file where the data should be written
-	[in] data_sz - size of data to be written in bytes
-	[data] data - pointer to the data to be written
-RETURN:
-	0 - success, otherwise 1 
 
 ***************** USAGE IN FORTRAN *******************
 
-Because we don't have a proper C binding implementation of the  library interfaces, 
-for now when calling the library interface from Fortran, user has to manually add
-the string terminating null. Otherwise strings are not correctly passed from Fortran to C.
 E.g.: 
 
-	call farb_init('../farb.ini'//CHAR(0), 'letkf'//CHAR(0), error)
+	call dtf_init('../dtf.ini'//CHAR(0), 'letkf'//CHAR(0), error)
 
 ************** SAMPLE CONFIG FILE ************************
 [INFO]
@@ -83,15 +70,14 @@ comp_name="letkf"
 comp_name="obs"            
 
 [FILE]
-filename='bla_%pe.nc'
+filename='bla.nc'
 writer="scale"
 reader="letkf"
 alias='blah'
 mode="memory"
 
 [FILE]
-filename='bla'
-version=1       
+filename='bla'      
 writer="obs"
 reader="letkf"
 reader="scale"

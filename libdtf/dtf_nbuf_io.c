@@ -69,12 +69,11 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 //            DTF_DBG(VERBOSE_ERROR_LEVEL, "WE HAVE A ZERO");
 //    }
 
-
     if(var->dtype != dtype){
         int el_sz1, el_sz2;
         MPI_Type_size(var->dtype, &el_sz1);
         MPI_Type_size(dtype, &el_sz2);
-        DTF_DBG(VERBOSE_ALL_LEVEL, "Warning: el_sz mismatch (defined as %d-bit, accessed as %d-bit var). Using the original size.", el_sz1, el_sz2);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Warning: var %d el_sz mismatch (def %d-bit, access %d).", var->id, el_sz1, el_sz2);
     }
     //assert(var->dtype == dtype);
 
@@ -119,6 +118,27 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     if(fbuf->ioreqs == NULL)
         fbuf->ioreqs = req;
     else{
+        /*Check if some data is overwritten (just to print out a warning message).
+          Becase the new I/O req is pushed to the head of the queue, the
+          writer will access the newest data.*/
+        io_req_t *tmpreq = fbuf->ioreqs;
+        while(tmpreq != NULL){
+            if( (req->rw_flag == DTF_WRITE) && (tmpreq->var_id == req->var_id)){
+                int overlap = 0;
+                for(i = 0; i < var->ndims; i++ )
+                    if( (req->start[i] >= tmpreq->start[i]) && (req->start[i] < tmpreq->start[i] + tmpreq->count[i]))
+                        overlap++;
+                    else
+                        break;
+
+                if(overlap == var->ndims){
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: overwriting var %d data: (old (start,count) --> new (start,count)", var->id);
+                    for(i = 0; i < var->ndims; i++)
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "(%lld, %lld) --> (%lld, %lld)", tmpreq->start[i], tmpreq->count[i], req->start[i], req->count[i]);
+                }
+            }
+            tmpreq = tmpreq->next;
+        }
         fbuf->ioreqs->prev = req;
         req->next = fbuf->ioreqs;
         fbuf->ioreqs = req;

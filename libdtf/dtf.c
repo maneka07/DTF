@@ -86,6 +86,12 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     else
         gl_verbose = atoi(s);
 
+    s = getenv("DTF_DETECT_OVERLAP");
+    if(s == NULL)
+        gl_conf.detect_overlap_flag = 1;
+    else
+        gl_conf.detect_overlap_flag = atoi(s);
+
     s = getenv("DTF_IODB_TYPE");
     if(s == NULL)
         gl_conf.io_db_type = DTF_DB_BLOCKS;
