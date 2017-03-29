@@ -1000,6 +1000,34 @@ fn_exit:
     dtf_free(offt, nmasters*sizeof(unsigned char*));
 }
 
+
+static void reset_fbuf_match(file_buffer_t *fbuf)
+{
+    if ((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag)
+        /*Reset flag for future matchings*/
+        fbuf->mst_info->iodb->updated_flag = 1;
+
+    fbuf->is_matching_flag = 0;
+    fbuf->mst_info->nrranks_completed = 0;
+    fbuf->mst_info->nwranks_completed = 0;
+    //assert(fbuf->mst_info->nwranks_completed == 0);
+    //fbuf->done_matching_flag = 0;
+
+
+//    if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag ){
+//        if(fbuf->mst_info->nrranks_completed != 0){
+//            assert(fbuf->mst_info->nrranks_completed == fbuf->mst_info->nrranks_opened);
+//            fbuf->mst_info->nrranks_completed = 0;
+//        }
+//        if(fbuf->mst_info->nwranks_completed != 0){
+//            DTF_DBG(VERBOSE_DBG_LEVEL, "compl %d, open %d",fbuf->mst_info->nwranks_completed, fbuf->mst_info->nwranks_opened );
+//            assert(fbuf->mst_info->nwranks_completed == fbuf->mst_info->nwranks_opened);
+//            fbuf->mst_info->nwranks_completed = 0;
+//        }
+//        //fbuf->done_matching_flag = 0;
+//    }
+}
+
 void match_ioreqs_all(int rw_flag)
 {
     file_buffer_t *fbuf;
@@ -1043,6 +1071,7 @@ void match_ioreqs_all(int rw_flag)
         }
         /*Send ioreqs to master(s)*/
         send_ioreqs_ver2(fbuf);
+
         /*set/reset flags*/
         fbuf->done_matching_flag = 0;
         fbuf->is_matching_flag = 1;
@@ -1095,16 +1124,12 @@ void match_ioreqs_all(int rw_flag)
             fbuf = fbuf->next;
             continue;
         }
-        if ((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag)
-            /*Reset flag for future matchings*/
-            fbuf->mst_info->iodb->updated_flag = 1;
-        fbuf->is_matching_flag = 0;
-        fbuf->mst_info->nrranks_completed = 0;
-        assert(fbuf->mst_info->nwranks_completed == 0);
-        //fbuf->done_matching_flag = 0;
+        reset_fbuf_match(fbuf);
         fbuf = fbuf->next;
     }
 }
+
+
 
 int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 {
@@ -1136,13 +1161,10 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     } else{
         DTF_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs to match", fbuf->rreq_cnt, fbuf->wreq_cnt);
         send_ioreqs_ver2(fbuf);
-
     }
-    //reset
+    //set
     fbuf->done_matching_flag = 0;
     fbuf->is_matching_flag = 1;
-    if(fbuf->mst_info->is_master_flag)
-        fbuf->mst_info->iodb->updated_flag = 1;
     /*Have to check for both things otherwise writers sometime hang
     (maybe they receive IO_CLOSE_FILE_TAG before READ_DONE_TAG by mistake?)*/
 
@@ -1183,20 +1205,23 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time for matching %.4f", MPI_Wtime() - t_start);
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
-    //reset
-    if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag ){
-        if(fbuf->mst_info->nrranks_completed != 0){
-            assert(fbuf->mst_info->nrranks_completed == fbuf->mst_info->nrranks_opened);
-            fbuf->mst_info->nrranks_completed = 0;
-        }
-        if(fbuf->mst_info->nwranks_completed != 0){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "compl %d, open %d",fbuf->mst_info->nwranks_completed, fbuf->mst_info->nwranks_opened );
-            assert(fbuf->mst_info->nwranks_completed == fbuf->mst_info->nwranks_opened);
-            fbuf->mst_info->nwranks_completed = 0;
-        }
-        //fbuf->done_matching_flag = 0;
-    }
-    fbuf->is_matching_flag = 0;
+
+    reset_fbuf_match(fbuf);
+
+//    //reset
+//    if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag ){
+//        if(fbuf->mst_info->nrranks_completed != 0){
+//            assert(fbuf->mst_info->nrranks_completed == fbuf->mst_info->nrranks_opened);
+//            fbuf->mst_info->nrranks_completed = 0;
+//        }
+//        if(fbuf->mst_info->nwranks_completed != 0){
+//            DTF_DBG(VERBOSE_DBG_LEVEL, "compl %d, open %d",fbuf->mst_info->nwranks_completed, fbuf->mst_info->nwranks_opened );
+//            assert(fbuf->mst_info->nwranks_completed == fbuf->mst_info->nwranks_opened);
+//            fbuf->mst_info->nwranks_completed = 0;
+//        }
+//        //fbuf->done_matching_flag = 0;
+//    }
+//    fbuf->is_matching_flag = 0;
 
     /*Make readers synch before they complete. Otherwise it may happen
       that if readers call match_ioreqs multiple times, the ioreqs
@@ -1208,9 +1233,9 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 //      MPI_Barrier(fbuf->comm);
       //}
 
-     if ((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag)
-        /*Reset flag for future matchings*/
-        fbuf->mst_info->iodb->updated_flag = 1;
+//     if ((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag)
+//        /*Reset flag for future matchings*/
+//        fbuf->mst_info->iodb->updated_flag = 1;
 
     return 0;
 }
@@ -2097,19 +2122,6 @@ int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
             if(myrank >= (mst_info->nmasters-1)*wg)
                 mst_info->my_workgroup_sz = nranks % wg;
         }
-//            if(fbuf->mst_info->nmasters == 0)
-//                fbuf->mst_info->nmasters++;
-//            else if(nranks % wg > (int)(wg/2) ){
-//                if(myrank >= fbuf->mst_info->nmasters * wg){
-//                    fbuf->mst_info->my_master = fbuf->mst_info->nmasters * wg;
-//                    gl_conf.my_workgroup_sz = nranks % wg;
-//                }
-//                fbuf->mst_info->nmasters++;
-//            } else if ( (nranks % wg > 0) && (myrank >= (fbuf->mst_info->nmasters-1)*wg)){
-//                /*Merge last smaller group with the previous group*/
-//                fbuf->mst_info->my_master = (fbuf->mst_info->nmasters-1) * wg;
-//                gl_conf.my_workgroup_sz = wg + nranks % wg;
-//            }
     }
 
     if(myrank == 0)
@@ -2131,11 +2143,6 @@ int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     /*Translate the rank of my master*/
     errno = MPI_Group_translate_ranks(file_group, 1, &my_master, glob_group, &my_master_glob);
     CHECK_MPI(errno);
-
-//    if(gl_my_rank == my_master_glob)
-//        mst_info->is_master_flag = 1;
-//    else
-//        mst_info->is_master_flag = 0;
     mst_info->is_master_flag = (gl_my_rank == my_master_glob) ? 1 : 0;
 
     if(myrank == 0){
@@ -2148,23 +2155,8 @@ int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     MPI_Group_free(&glob_group);
     MPI_Group_free(&file_group);
 
-
-//    //For each component, find out to which master I should send read requests
-//    for(i=0; i < gl_ncomp; i++){
-//        if(i == gl_my_comp_id)
-//            continue;
-//        MPI_Comm_remote_size(gl_comps[i].comm, &nrranks);
-//
-//        if(myrank < nrranks)
-//            gl_comps[i].master = fbuf->mst_info->my_master; //use same rank
-//        else {
-//            int nmasters = (int)(nrranks/wg);
-//            if( nrranks % wg > (int)(wg/2))
-//               nmasters++;
-//            gl_comps[i].master = (nmasters-1)*wg;
-//        }
-//    }
-
+    mst_info->nrranks_completed = 0;
+    mst_info->nwranks_completed = 0;
     return 0;
 }
 
