@@ -72,15 +72,15 @@ MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chu
 int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 int set_distr_count(file_buffer_t *fbuf, int varid, int count[]);
 void open_file(file_buffer_t *fbuf, MPI_Comm comm);
-MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coord);
-MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape);
+MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord);
 void* dtf_malloc(size_t size);
 void dtf_free(void *ptr, size_t size);
 void process_file_info_req_queue();
 void find_fit_block(int ndims,
 		    int cur_dim,
+		    const MPI_Offset *start,
 		    const MPI_Offset *count,
-		     MPI_Offset *cur_start,
+		    MPI_Offset *cur_start,
 		    MPI_Offset *cur_count,
 		    const size_t sbufsz,
 		    const size_t el_sz,

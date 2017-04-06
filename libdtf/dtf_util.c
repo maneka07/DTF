@@ -81,24 +81,8 @@ int file_buffer_ready(const char* filename)
     return fbuf->is_ready;
 }
 
-MPI_Offset last_1d_index(int ndims, const MPI_Offset *shape)
-{
-    MPI_Offset ret = 0;
 
-    if(ndims > 0){
-        int i;
-        MPI_Offset *tmp = (MPI_Offset*)dtf_malloc(ndims*sizeof(MPI_Offset));
-        assert(tmp != NULL);
-        for(i = 0; i < ndims; i++)
-            tmp[i] = shape[i] - 1;
-        ret = to_1d_index(ndims, shape, tmp);
-        dtf_free(tmp, ndims*sizeof(MPI_Offset));
-    }
-
-    return ret;
-}
-
-MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coord)
+MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord)
 {
       int i, j;
       MPI_Offset idx = 0, mem=0;
@@ -106,12 +90,12 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *shape, const MPI_Offset *coo
       if(ndims == 0) //scalar
         return 0;
       else if(ndims == 1) //1d array
-        return *coord;
+        return *coord - *block_start;
 
       for(i = 0; i < ndims; i++){
-        mem = coord[i];
+        mem = coord[i] - block_start[i];
         for(j = i+1; j < ndims; j++)
-          mem *= shape[j];
+          mem *= block_count[j];
         idx += mem;
       }
     return idx;
@@ -331,6 +315,7 @@ MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chu
 */
 void find_fit_block(int ndims,
 		    int cur_dim,
+		    const MPI_Offset *start,
 		    const MPI_Offset *count,
 		    MPI_Offset *cur_start,
 		    MPI_Offset *cur_count,
@@ -354,7 +339,7 @@ void find_fit_block(int ndims,
 
   DTF_DBG(VERBOSE_DBG_LEVEL, "full subblock %lld, cur dim %d, ndims %d", full_subbl, cur_dim, ndims);
 
-  for(i = count[cur_dim] - cur_start[cur_dim]; i > 0; i--){
+  for(i = count[cur_dim] - (cur_start[cur_dim] - start[cur_dim]); i > 0; i--){
     //DTF_DBG(VERBOSE_DBG_LEVEL, "left %lld, right %lld", full_subbl * i * el_sz, (MPI_Offset)sbufsz);
     if(full_subbl * i * el_sz <= (MPI_Offset)sbufsz)
       break;
@@ -377,7 +362,7 @@ void find_fit_block(int ndims,
       for(i=0; i < ndims; i++)
         DTF_DBG(VERBOSE_DBG_LEVEL, "  %lld", cur_count[i]);
       /*Go higher one dimension*/
-      find_fit_block(ndims, cur_dim - 1, count, cur_start, cur_count, sbufsz, el_sz, cur_nelems, tot_nelems);
+      find_fit_block(ndims, cur_dim - 1, start, count, cur_start, cur_count, sbufsz, el_sz, cur_nelems, tot_nelems);
     }
   }
 }

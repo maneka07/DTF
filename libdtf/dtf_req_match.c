@@ -701,7 +701,6 @@ static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
         }
 
          if(rw_flag == DTF_READ){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "its a rreq");
             read_db_item_t *dbitem;
             /*Find corresponding record in the database*/
             dbitem = fbuf->mst_info->iodb->ritems;
@@ -759,7 +758,6 @@ static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
             dbitem->nblocks++;
             DTF_DBG(VERBOSE_DBG_LEVEL, "ritems %d, cur item %lld blocks",(int)fbuf->mst_info->iodb->nritems, dbitem->nblocks);
         } else { /*DTF_WRITE*/
-            DTF_DBG(VERBOSE_DBG_LEVEL, "its a wreq");
             write_db_item_t *dbitem;
             /*Allow write requests only from the writer*/
             assert(comm == gl_comps[fbuf->writer_id].comm);
@@ -821,9 +819,13 @@ static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
                                 overlap++;
                             else
                                 break;
-                        if( (overlap == var->ndims) && (dblock->rank != tmp->rank) && (var->ndims > 0))
+                        if( (overlap == var->ndims) && (dblock->rank != tmp->rank) && (var->ndims > 0)){
                             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: data for var %d written by ranks %d \
-                            and %d overlaps. State of file %s is undefined.", var->id, dblock->rank, tmp->rank, fbuf->file_path );
+                            and %d overlaps. State of file %s is undefined. Overlapping blocks:", var->id, dblock->rank, tmp->rank, fbuf->file_path );
+                            for(i = 0; i < var->ndims; i++)
+                                DTF_DBG(VERBOSE_DBG_LEVEL, "(%lld, %lld) and (%lld, %lld)",
+                                dblock->start[i], dblock->count[i], tmp->start[i], tmp->count[i]);
+                        }
                         tmp = tmp->next;
                     }
                 }
@@ -989,6 +991,7 @@ void send_ioreqs_ver2(file_buffer_t *fbuf)
         offt[mst] += var->ndims*sizeof(MPI_Offset);
         memcpy(sbuf[mst]+offt[mst], ioreq->count, var->ndims*sizeof(MPI_Offset));
         offt[mst] += var->ndims*sizeof(MPI_Offset);
+        ioreq->sent_flag = 1;
         ioreq = ioreq->next;
     }
 
@@ -1266,47 +1269,38 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 }
 
 static void recur_get_put_data(dtf_var_t *var,
-                          MPI_Datatype dtype,
-                          unsigned char *arr,
-                          MPI_Offset *arr_shape,
-                          const MPI_Offset start[], /*should be normalized agains sbuf_shape*/
-                          const MPI_Offset count[],
+                          int type_sz,
+                          unsigned char *block_data,
+                          const MPI_Offset *block_start,
+                          const MPI_Offset *block_count,
+                          MPI_Offset subbl_start[],
+                          MPI_Offset subbl_count[],
                           int dim,
                           MPI_Offset coord[],
-                          unsigned char *subarr,
+                          unsigned char *subbl_data,
                           int get_put_flag)
 {
     int i;
     if(dim == var->ndims - 1){
-        int usr_el_sz;
-        MPI_Offset *tmp = (MPI_Offset*)dtf_malloc(var->ndims*sizeof(MPI_Offset));
-        assert(tmp != NULL);
-        for(i = 0; i < var->ndims; i++){
-            tmp[i] = coord[i] - start[i];
-            //DTF_DBG(VERBOSE_ALL_LEVEL, "coord %d", (int)coord[i]);
-        }
-        //MPI_Type_size(var->dtype, &def_el_sz);
-        MPI_Type_size(dtype, &usr_el_sz);
-
-        MPI_Offset arr_offset = to_1d_index(var->ndims, arr_shape, coord)*usr_el_sz;
-        MPI_Offset subarr_offset = to_1d_index(var->ndims, count, tmp)*usr_el_sz;
-        MPI_Offset data_sz = count[var->ndims-1]*usr_el_sz;    //data_sz
+        MPI_Offset block_offt = to_1d_index(var->ndims, block_start, block_count, coord)*type_sz;
+        MPI_Offset subbl_offt = to_1d_index(var->ndims, subbl_start, subbl_count, coord)*type_sz;
+        MPI_Offset data_sz = subbl_count[var->ndims-1]*type_sz;    //data_sz
 
         if(get_put_flag == DTF_READ){
-            /*copy data array -> subarray*/
-            memcpy(subarr+subarr_offset, arr+arr_offset, data_sz);
+            /*copy data block -> subblock*/
+            memcpy(subbl_data+subbl_offt, block_data+block_offt, data_sz);
         } else { /*DTF_WRITE*/
-            /*copy data subarray -> array*/
-            memcpy(arr+arr_offset, subarr+subarr_offset, data_sz);
+            /*copy data subblock -> block*/
+            memcpy(block_data+block_offt, subbl_data+subbl_offt, data_sz);
         }
-
-        dtf_free(tmp, var->ndims*sizeof(MPI_Offset));
         return;
     }
 
-    for(i = 0; i < count[dim]; i++){
-        coord[dim] = start[dim] + i;
-        recur_get_put_data(var, dtype, arr, arr_shape, start, count, dim+1, coord,subarr, get_put_flag);
+    for(i = 0; i < subbl_count[dim]; i++){
+        coord[dim] = subbl_start[dim] + i;
+        recur_get_put_data(var, type_sz, block_data, block_start, block_count,
+                           subbl_start, subbl_count, dim+1, coord, subbl_data,
+                           get_put_flag);
     }
 }
 
@@ -1326,7 +1320,7 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
     int nmsg_sent = 0;
     double t_recur_accum = 0, t_recur;
     int nblocks_written = 0;
-    MPI_Offset *nrml_start = NULL, *cur_coord = NULL, *new_count = NULL, *new_start = NULL, *tmp;
+    MPI_Offset *cur_coord = NULL, *new_count = NULL, *new_start = NULL, *tmp;
     MPI_Offset nelems, fit_nelems;
     double t_begin;
 
@@ -1384,7 +1378,6 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
         for(i = 1; i < var->ndims; i++)
             nelems *= count[i];
         {
-            tmp = realloc(nrml_start, var->ndims*sizeof(MPI_Offset)); assert(tmp != NULL); nrml_start = tmp;
             tmp = realloc(cur_coord, var->ndims*sizeof(MPI_Offset));  assert(tmp != NULL); cur_coord = tmp;
 
             /*For subblock that will fit in the buffer.*/
@@ -1426,8 +1419,6 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
 
                     fit_nelems = 0;
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Need to fit %lld nelems (sz %lld), have sz %lu", nelems, nelems*def_el_sz, left_sbufsz);
-                    for(i = 0; i < var->ndims; i++)
-                        nrml_start[i] = new_start[i] - start[i];
 
                     if(min_subbl_ndims == var->ndims){
                         //now can fit whole block
@@ -1444,8 +1435,8 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                             else
                                 new_count[i] = count[i];
 
-                        find_fit_block(var->ndims, var->ndims - min_subbl_ndims - 1, count,
-                                       nrml_start, new_count, left_sbufsz, def_el_sz, &fit_nelems, nelems);
+                        find_fit_block(var->ndims, var->ndims - min_subbl_ndims - 1, start, count,
+                                       new_start, new_count, left_sbufsz, def_el_sz, &fit_nelems, nelems);
                     }
                 }
 
@@ -1529,11 +1520,8 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                         //normalize start
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Getput (strt->cnt):");
                         for(i = 0; i < var->ndims; i++){
-                            nrml_start[i] = new_start[i] - ioreq->start[i];
-                            DTF_DBG(VERBOSE_DBG_LEVEL, "    %lld\t --> %lld \t ioreq: \t %lld\t --> %lld", new_start[i], new_count[i], ioreq->start[i], ioreq->count[i]);
-                            assert(nrml_start[i]>=0);
                             new_nelems *= new_count[i];
-                            cur_coord[i] = nrml_start[i];
+                            cur_coord[i] = new_start[i];
                         }
                         assert(new_nelems == fit_nelems);
 
@@ -1541,7 +1529,10 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
 
                         t_recur = MPI_Wtime();
                         /*read from user buffer to send buffer*/
-                        recur_get_put_data(var, var->dtype, ioreq->user_buf, ioreq->count, nrml_start, new_count, 0, cur_coord, sbuf+sofft, DTF_READ);
+                        recur_get_put_data(var, def_el_sz, ioreq->user_buf, ioreq->start,
+                                           ioreq->count, new_start, new_count, 0,
+                                           cur_coord, sbuf+sofft, DTF_READ);
+
                         t_recur_accum += MPI_Wtime() - t_recur;
                         sofft += new_nelems*def_el_sz+/*padding*/(new_nelems*def_el_sz)%sizeof(MPI_Offset);
                         nelems -= new_nelems;
@@ -1638,7 +1629,6 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
 
     free(new_start);
     free(new_count);
-    free(nrml_start);
     free(cur_coord);
    // dtf_free(sbuf, sbufsz); //comment out since use gl_msg_buf
 }
@@ -1706,26 +1696,22 @@ static void recv_data_rdr_ver2(void* buf, int bufsz)
 
         {   /*Copy data*/
             int nelems;
-            //normalize start
-            MPI_Offset *nrml_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            assert(nrml_start != NULL);
+            MPI_Offset *cur_coord = (MPI_Offset*)dtf_malloc(var->ndims*sizeof(MPI_Offset));
+
             nelems = 1;
             DTF_DBG(VERBOSE_DBG_LEVEL, "Getput data:");
             for(i = 0; i < var->ndims; i++){
-                nrml_start[i] = start[i] - ioreq->start[i];
-                assert(nrml_start[i]>=0);
                 nelems *= count[i];
-                DTF_DBG(VERBOSE_DBG_LEVEL, "    %lld (%lld) --> %lld", start[i], nrml_start[i], count[i]);
+                cur_coord[i] = start[i];
             }
             if(req_el_sz != def_el_sz){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Dtype mismatch: def %d, req %d. Total getput datasz %d", def_el_sz, req_el_sz, def_el_sz*nelems);
             }
             DTF_DBG(VERBOSE_DBG_LEVEL, "Will get %d elems for var %d", nelems, var->id);
-            MPI_Offset *cur_coord = (MPI_Offset*)dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            memcpy((void*)cur_coord, (void*)nrml_start, var->ndims*sizeof(MPI_Offset));
             /*Copy from rbuf to user buffer*/
-            recur_get_put_data(var, var->dtype, ioreq->user_buf, ioreq->count, nrml_start, count, 0, cur_coord, data, DTF_WRITE);
-            dtf_free(nrml_start, var->ndims*sizeof(MPI_Offset));
+            //recur_get_put_data(var, var->dtype, ioreq->user_buf, ioreq->count, nrml_start, count, 0, cur_coord, data, DTF_WRITE);
+            recur_get_put_data(var, def_el_sz, ioreq->user_buf, ioreq->start,
+                               ioreq->count, start, count, 0, cur_coord, data, DTF_WRITE);
             dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
             offt += nelems*def_el_sz;
             ioreq->get_sz += (MPI_Offset)(nelems*def_el_sz);

@@ -101,48 +101,97 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         dtf_free(new_count, var->ndims*sizeof(MPI_Offset));
     } else*/
 
-    /*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
-    we ignore it. Start and count parameters are supposed to be with respect to
-    element size for var->dtype*/
-    req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, var->dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
+    /*If the process has the data to match a read request completely, then
+    copy the data and do not create an I/O request.*/
+    int create_ioreq = 1;
+//    if((rw_flag == DTF_READ) && (fbuf->writer_id == gl_my_comp_id)){
+//        io_req_t *tmp = fbuf->ioreqs;
+//        while(tmp != NULL){
+//            if(tmp->var_id == varid){
+//                assert(tmp->rw_flag == DTF_WRITE);
+//                if(var->ndims == 0){ //scalar var
+//                    MPI_Type_size(dtype, &el_sz);
+//                    assert(tmp->user_buf_sz == el_sz);
+//                    memcpy(buf, tmp->user_buf, (size_t)el_sz);
+//                    DTF_DBG(VERBOSE_DBG_LEVEL, "Read data for var %d, no rreq created", varid);
+//                    create_ioreq = 0;
+//                    break;
+//                } else {
+//                    int match = 0;
+//                    for(i = 0; i < var->ndims; i++)
+//                        if( (start[i] >= tmp->start[i]) && (start[i] + count[i] <= tmp->start[i] + tmp->count[i]))
+//                            match++;
+//                        else
+//                            break;
+//                    if(match == var->ndims){
+//                        int full_fit = 0;
+//                        for(i = 0; i < var->ndims; i++)
+//                            if( (start[i] == tmp->start[i]) && (count[i] == tmp->count[i]))
+//                                full_fit++;
+//                            else
+//                                break;
+//                        if(full_fit)
+//                            memcpy(buf, tmp->user_buf, (size_t)tmp->user_buf_sz);
+//                        else{
+//
+//                            recur_get_put_data(var, var->dtype, tmp->user_buf, ioreq->count, nrml_start, new_count, 0, cur_coord, sbuf+sofft, DTF_READ)
+//                        }
+//
+//
+//
+//                        create_ioreq = 0;
+//                        break;
+//                    }
+//                }
+//
+//            }
+//            tmp = tmp->next;
+//        }
+//    }
 
+    if(create_ioreq){
+        /*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
+        we ignore it. Start and count parameters are supposed to be with respect to
+        element size for var->dtype*/
+        req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, var->dtype, start, count, buf, rw_flag, gl_conf.buffered_req_match);
 
-    if(request != NULL)
-        *request = req->id;
-    if(rw_flag == DTF_READ)
-        fbuf->rreq_cnt++;
-    else
-        fbuf->wreq_cnt++;
+        if(request != NULL)
+            *request = req->id;
+        if(rw_flag == DTF_READ)
+            fbuf->rreq_cnt++;
+        else
+            fbuf->wreq_cnt++;
 
-    /*Enqueue the request*/
-    if(fbuf->ioreqs == NULL)
-        fbuf->ioreqs = req;
-    else{
-        /*Check if some data is overwritten (just to print out a warning message).
-          Becase the new I/O req is pushed to the head of the queue, the
-          writer will access the newest data.*/
-        io_req_t *tmpreq = fbuf->ioreqs;
-        while(tmpreq != NULL){
-            if( (req->rw_flag == DTF_WRITE) && (tmpreq->var_id == req->var_id)){
-                int overlap = 0;
-                for(i = 0; i < var->ndims; i++ )
-                    if( (req->start[i] >= tmpreq->start[i]) && (req->start[i] < tmpreq->start[i] + tmpreq->count[i]))
-                        overlap++;
-                    else
-                        break;
+        /*Enqueue the request*/
+        if(fbuf->ioreqs == NULL)
+            fbuf->ioreqs = req;
+        else{
+            /*Check if some data is overwritten (just to print out a warning message).
+              Becase the new I/O req is pushed to the head of the queue, the
+              writer will access the newest data.*/
+            io_req_t *tmpreq = fbuf->ioreqs;
+            while(tmpreq != NULL){
+                if( (req->rw_flag == DTF_WRITE) && (tmpreq->var_id == req->var_id)){
+                    int overlap = 0;
+                    for(i = 0; i < var->ndims; i++ )
+                        if( (req->start[i] >= tmpreq->start[i]) && (req->start[i] < tmpreq->start[i] + tmpreq->count[i]))
+                            overlap++;
+                        else
+                            break;
 
-                if(overlap == var->ndims){
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: overwriting var %d data: (old (start,count) --> new (start,count)", var->id);
-                    for(i = 0; i < var->ndims; i++)
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "(%lld, %lld) --> (%lld, %lld)", tmpreq->start[i], tmpreq->count[i], req->start[i], req->count[i]);
+                    if(overlap == var->ndims){
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: overwriting var %d data: (old (start,count) --> new (start,count)", var->id);
+                        for(i = 0; i < var->ndims; i++)
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "(%lld, %lld) --> (%lld, %lld)", tmpreq->start[i], tmpreq->count[i], req->start[i], req->count[i]);
+                    }
                 }
+                tmpreq = tmpreq->next;
             }
-            tmpreq = tmpreq->next;
+            fbuf->ioreqs->prev = req;
+            req->next = fbuf->ioreqs;
+            fbuf->ioreqs = req;
         }
-        fbuf->ioreqs->prev = req;
-        req->next = fbuf->ioreqs;
-        fbuf->ioreqs = req;
-    }
+    } /*if(create_ioreq)*/
 
     MPI_Type_size(dtype, &el_sz);
     ret = 1;

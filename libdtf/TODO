@@ -3,12 +3,13 @@
 -> on the writer's side -> discard old I/O request
 -> if master detects overlap from different processes, throw a warning "State of the file undefined" but continue executing. 
 
-* dealing with multiple master processes
-
 * after a discussion with Wei-keng: 
 
-1) instead of using master nodes send I/O requests to all writers?
 2) replace packing of data with derived datatypes - will avoid memcopy
 
 * for scalar var no need to do request matching? Everyone should have the data?
+
+GIT commit note: 
+
+bugfix in send_ioreqs
 
