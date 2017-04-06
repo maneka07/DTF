@@ -6,7 +6,7 @@
 
 file_info_req_q_t *gl_finfo_req_q = NULL;
 
-static void send_data_wrt2rdr_ver2(void* buf, int bufsz);
+static void send_data_wrt2rdr(void* buf, int bufsz);
 
 void init_iodb(file_buffer_t *fbuf)
 {
@@ -218,7 +218,7 @@ void unpack_file_info(MPI_Offset bufsz, void *buf)
 }
 
 /*match subblocks of data*/
-static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
+static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
 {
     int mlc_ranks = 4;
     //NOTE: hidden bug: if ndims*sizeof(MPI_Offset) > 512 there will be segmentation fault
@@ -331,7 +331,6 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
             }
 
             //DTF_DBG(VERBOSE_ALL_LEVEL, "write record for this var:");
-//            print_write_dbitem(witem);
             if( (var == NULL) || (var->id != var_id))
                 var = find_var(fbuf, var_id);
             assert(var != NULL);
@@ -538,7 +537,7 @@ static void do_matching_ver2(file_buffer_t *fbuf, int intracomp_io_flag)
             gl_stats.accum_comm_time += MPI_Wtime() - t_start_send;
             if(my_idx != -1){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Parse data req to myself");
-                send_data_wrt2rdr_ver2(sbuf[my_idx], offt[my_idx]);
+                send_data_wrt2rdr(sbuf[my_idx], offt[my_idx]);
             }
             t_send += MPI_Wtime() - t_start_send;
 //            completed = 0;
@@ -668,7 +667,7 @@ void clean_iodb(ioreq_db_t *iodb)
     assert(iodb->nritems == 0);
 }
 
-static void parse_ioreqs_ver2(void *buf, int bufsz, int rank, MPI_Comm comm)
+static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
 {
     int ncid, var_id, rw_flag;
     dtf_var_t *var = NULL;
@@ -914,7 +913,7 @@ void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
     dtf_free((*ioreq), sizeof(io_req_t));
 }
 
-void send_ioreqs_ver2(file_buffer_t *fbuf)
+void send_ioreqs(file_buffer_t *fbuf)
 {
     dtf_var_t *var = NULL;
     io_req_t *ioreq;
@@ -1001,7 +1000,7 @@ void send_ioreqs_ver2(file_buffer_t *fbuf)
         assert(offt[mst] == bufsz[mst]);
 
         if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->masters[mst] == gl_my_rank)){
-                parse_ioreqs_ver2(sbuf[mst], (int)offt[mst], gl_my_rank, gl_comps[gl_my_comp_id].comm);
+                parse_ioreqs(sbuf[mst], (int)offt[mst], gl_my_rank, gl_comps[gl_my_comp_id].comm);
         } else {
             MPI_Request req;
             int errno;
@@ -1098,7 +1097,7 @@ void match_ioreqs_all(int rw_flag)
             ioreq = ioreq->next;
         }
         /*Send ioreqs to master(s)*/
-        send_ioreqs_ver2(fbuf);
+        send_ioreqs(fbuf);
 
         /*set/reset flags*/
         fbuf->done_matching_flag = 0;
@@ -1134,7 +1133,7 @@ void match_ioreqs_all(int rw_flag)
             progress_io_matching();
 
             if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->is_master_flag)  ){
-            do_matching_ver2(fbuf, 0);
+            do_matching(fbuf, 0);
             }
 
             fbuf = fbuf->next;
@@ -1188,7 +1187,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
         }
     } else{
         DTF_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs to match", fbuf->rreq_cnt, fbuf->wreq_cnt);
-        send_ioreqs_ver2(fbuf);
+        send_ioreqs(fbuf);
     }
     //set
     fbuf->done_matching_flag = 0;
@@ -1219,7 +1218,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 
                 if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag  ){
                     t_match_start = MPI_Wtime();
-                    do_matching_ver2(fbuf, intracomp_io_flag);
+                    do_matching(fbuf, intracomp_io_flag);
                     t_match += MPI_Wtime() - t_match_start;
                 }
             }
@@ -1235,36 +1234,6 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
 
     reset_fbuf_match(fbuf);
-
-//    //reset
-//    if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag ){
-//        if(fbuf->mst_info->nrranks_completed != 0){
-//            assert(fbuf->mst_info->nrranks_completed == fbuf->mst_info->nrranks_opened);
-//            fbuf->mst_info->nrranks_completed = 0;
-//        }
-//        if(fbuf->mst_info->nwranks_completed != 0){
-//            DTF_DBG(VERBOSE_DBG_LEVEL, "compl %d, open %d",fbuf->mst_info->nwranks_completed, fbuf->mst_info->nwranks_opened );
-//            assert(fbuf->mst_info->nwranks_completed == fbuf->mst_info->nwranks_opened);
-//            fbuf->mst_info->nwranks_completed = 0;
-//        }
-//        //fbuf->done_matching_flag = 0;
-//    }
-//    fbuf->is_matching_flag = 0;
-
-    /*Make readers synch before they complete. Otherwise it may happen
-      that if readers call match_ioreqs multiple times, the ioreqs
-      from two different match processes may mix up on the writer's side.
-      It may lead to a dead lock situation.*/
-      //if(fbuf->reader_id == gl_my_comp_id){
-      //DTF_DBG(VERBOSE_DBG_LEVEL, "Barrier before completing matching for %s", fbuf->file_path);
-      //TODO uncomment the barrier?
-//      MPI_Barrier(fbuf->comm);
-      //}
-
-//     if ((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag)
-//        /*Reset flag for future matchings*/
-//        fbuf->mst_info->iodb->updated_flag = 1;
-
     return 0;
 }
 
@@ -1305,7 +1274,7 @@ static void recur_get_put_data(dtf_var_t *var,
 }
 
 /*writer->reader*/
-static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
+static void send_data_wrt2rdr(void* buf, int bufsz)
 {
     int ncid, var_id, rdr_rank, errno, i;
     io_req_t *ioreq = NULL;
@@ -1377,21 +1346,26 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
         nelems = count[0];
         for(i = 1; i < var->ndims; i++)
             nelems *= count[i];
+
         {
+            int min_subbl_ndims;
+            size_t min_block_sz;
+            size_t left_sbufsz;
+
             tmp = realloc(cur_coord, var->ndims*sizeof(MPI_Offset));  assert(tmp != NULL); cur_coord = tmp;
 
             /*For subblock that will fit in the buffer.*/
-            fit_nelems = 0;
             tmp = realloc(new_count, var->ndims*sizeof(MPI_Offset)); assert(tmp != NULL);new_count = tmp;
             tmp = realloc(new_start, var->ndims*sizeof(MPI_Offset)); assert(tmp != NULL);new_start = tmp;
-            memcpy(new_start, start, var->ndims*sizeof(MPI_Offset));
+            for(i = 0; i < var->ndims; i++)
+                new_start[i] = start[i];
 
             /*Define the biggest full subblock that we can fit
               if the buffer was empty*/
-            int min_subbl_ndims = var->ndims;
             size_t max_mem = sbufsz - /*ncid*/sizeof(MPI_Offset) - var->ndims*sizeof(MPI_Offset)*2 - sizeof(MPI_Offset);
             int max_nels;
 
+            min_subbl_ndims = var->ndims;
             while(min_subbl_ndims > 0){
                 max_nels = 1;
                 for(i = var->ndims - min_subbl_ndims; i < var->ndims; i++)
@@ -1401,43 +1375,35 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                 else
                     min_subbl_ndims--;
             }
-            size_t min_block_sz = max_nels*def_el_sz;
+            min_block_sz = max_nels*def_el_sz;
             DTF_DBG(VERBOSE_DBG_LEVEL, "Will fit data in min blocks of sz %ld ndims %d out of %d dims", min_block_sz, min_subbl_ndims, var->ndims);
             assert(min_subbl_ndims>0);
 
+
+            fit_nelems = 0;
             while(nelems > 0){
 
                 if(sofft == 0){
                     *(MPI_Offset*)sbuf = (MPI_Offset)ncid;
                     sofft = sizeof(MPI_Offset);
                 }
-                /*How many elements can we fit right now?*/
-                size_t left_sbufsz = sbufsz - sofft - var->ndims*sizeof(MPI_Offset)*2 - sizeof(MPI_Offset);
-                if( min_block_sz > left_sbufsz)
+                /*How much data can we fit right now?*/
+                left_sbufsz = sbufsz - sofft - var->ndims*sizeof(MPI_Offset)*2 - sizeof(MPI_Offset);
+
+                if( left_sbufsz < min_block_sz)
                     fit_nelems = 0;
                 else {
-
-                    fit_nelems = 0;
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "Need to fit %lld nelems (sz %lld), have sz %lu", nelems, nelems*def_el_sz, left_sbufsz);
-
-                    if(min_subbl_ndims == var->ndims){
-                        //now can fit whole block
-                        for(i = 0; i < var->ndims; i++)
+                    //adjust new_count
+                    for(i = 0; i < var->ndims; i++)
+                        if(i < var->ndims - min_subbl_ndims)
+                            new_count[i] = 1;
+                        else
                             new_count[i] = count[i];
-                        fit_nelems = nelems;
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Can fit whole block");
-                    } else {
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Will fit in subblocks");
-                        /*set to minimum block size*/
-                        for(i = 0; i < var->ndims; i++)
-                            if(i < var->ndims - min_subbl_ndims)
-                                new_count[i] = 1;
-                            else
-                                new_count[i] = count[i];
 
-                        find_fit_block(var->ndims, var->ndims - min_subbl_ndims - 1, start, count,
-                                       new_start, new_count, left_sbufsz, def_el_sz, &fit_nelems, nelems);
-                    }
+                    fit_nelems = max_nels;
+
+                    if( (int)(left_sbufsz / max_nels*def_el_sz) > 1)
+                        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: copying only one min subblock but can actually fit more: %d", (int)(left_sbufsz / max_nels*def_el_sz));
                 }
 
                 if(fit_nelems == 0){
@@ -1450,17 +1416,12 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Send msg to %d, size %d at %.3f", rdr_rank,(int)sofft, MPI_Wtime() - gl_stats.walltime);
                         /*Send this message*/
                         MPI_Request req;
-                        /* First send the size of the data, then the data itself*/
                         int dsz = (int)sofft;
                         double t_start_comm = MPI_Wtime();
                         if(intracomp_flag){
-                            errno = MPI_Send((void*)&dsz,1, MPI_INT, rdr_rank, IO_REQ_RECV_DATA, gl_comps[gl_my_comp_id].comm);
-                            CHECK_MPI(errno);
                             errno = MPI_Isend((void*)sbuf, dsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[gl_my_comp_id].comm, &req);
                             CHECK_MPI(errno);
                         } else {
-                            errno = MPI_Send((void*)&dsz,1, MPI_INT, rdr_rank, IO_REQ_RECV_DATA, gl_comps[fbuf->reader_id].comm);
-                            CHECK_MPI(errno);
                             errno = MPI_Isend((void*)sbuf, dsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[fbuf->reader_id].comm, &req);
                             CHECK_MPI(errno);
                         }
@@ -1502,8 +1463,7 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                     }
                     assert(ioreq != NULL);
 
-                    {
-                        /*copy the subblock to the sbuf*/
+                    { /*copy the subblock to the sbuf*/
                         /*save var_id, start[], count[]*/
                         t_recur = MPI_Wtime();
                         *(MPI_Offset*)(sbuf+sofft) = (MPI_Offset)var_id;
@@ -1516,16 +1476,10 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                         nblocks_written++;
 
                         /*Copy data*/
-                        MPI_Offset new_nelems = 1;
-                        //normalize start
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Getput (strt->cnt):");
                         for(i = 0; i < var->ndims; i++){
-                            new_nelems *= new_count[i];
                             cur_coord[i] = new_start[i];
                         }
-                        assert(new_nelems == fit_nelems);
-
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "total data to getput %lld (of nelems %lld)", new_nelems, nelems);
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "total data to getput %lld (of nelems %lld)", fit_nelems, nelems);
 
                         t_recur = MPI_Wtime();
                         /*read from user buffer to send buffer*/
@@ -1534,8 +1488,8 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
                                            cur_coord, sbuf+sofft, DTF_READ);
 
                         t_recur_accum += MPI_Wtime() - t_recur;
-                        sofft += new_nelems*def_el_sz+/*padding*/(new_nelems*def_el_sz)%sizeof(MPI_Offset);
-                        nelems -= new_nelems;
+                        sofft += fit_nelems*def_el_sz+/*padding*/(fit_nelems*def_el_sz)%sizeof(MPI_Offset);
+                        nelems -= fit_nelems;
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Left to get put %lld", nelems);
                         assert(nelems >= 0);
                     }
@@ -1606,13 +1560,9 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
         int dsz = (int)sofft;
         double t_start_comm = MPI_Wtime();
         if(intracomp_flag){
-            errno = MPI_Send((void*)&dsz,1, MPI_INT, rdr_rank, IO_REQ_RECV_DATA, gl_comps[gl_my_comp_id].comm);
-            CHECK_MPI(errno);
             errno = MPI_Isend((void*)sbuf, dsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[gl_my_comp_id].comm, &req);
             CHECK_MPI(errno);
         } else {
-            errno = MPI_Send((void*)&dsz,1, MPI_INT, rdr_rank, IO_REQ_RECV_DATA, gl_comps[fbuf->reader_id].comm);
-            CHECK_MPI(errno);
             errno = MPI_Isend((void*)sbuf, dsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[fbuf->reader_id].comm, &req);
             CHECK_MPI(errno);
         }
@@ -1634,7 +1584,7 @@ static void send_data_wrt2rdr_ver2(void* buf, int bufsz)
 }
 
 /*writer->reader*/
-static void recv_data_rdr_ver2(void* buf, int bufsz)
+static void recv_data_rdr(void* buf, int bufsz)
 {
     int ncid, var_id, i;
     int def_el_sz, req_el_sz;
@@ -1709,7 +1659,6 @@ static void recv_data_rdr_ver2(void* buf, int bufsz)
             }
             DTF_DBG(VERBOSE_DBG_LEVEL, "Will get %d elems for var %d", nelems, var->id);
             /*Copy from rbuf to user buffer*/
-            //recur_get_put_data(var, var->dtype, ioreq->user_buf, ioreq->count, nrml_start, count, 0, cur_coord, data, DTF_WRITE);
             recur_get_put_data(var, def_el_sz, ioreq->user_buf, ioreq->start,
                                ioreq->count, start, count, 0, cur_coord, data, DTF_WRITE);
             dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
@@ -1722,7 +1671,6 @@ static void recv_data_rdr_ver2(void* buf, int bufsz)
         if(ioreq->get_sz == ioreq->user_buf_sz){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Complete req %d (left %d)", ioreq->id, fbuf->rreq_cnt-1);
             //delete this ioreq
-
             delete_ioreq(fbuf, &ioreq);
 
             if(fbuf->rreq_cnt == 0){
@@ -1910,7 +1858,7 @@ void progress_io_matching()
                     errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_REQS_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(errno);
                     gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
-                    parse_ioreqs_ver2(rbuf, bufsz, src, gl_comps[comp].comm);
+                    parse_ioreqs(rbuf, bufsz, src, gl_comps[comp].comm);
                     dtf_free(rbuf, bufsz);
                     break;
                 case IO_DATA_REQ_TAG:
@@ -1923,27 +1871,23 @@ void progress_io_matching()
                     errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_DATA_REQ_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(errno);
                     gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
-                    send_data_wrt2rdr_ver2(rbuf, bufsz);
+                    send_data_wrt2rdr(rbuf, bufsz);
                     dtf_free(rbuf, bufsz);
                     break;
-                case IO_REQ_RECV_DATA:
+
                 case IO_DATA_TAG:
-                    //DTF_DBG(VERBOSE_DBG_LEVEL, "Recved data from %d", src);
-                    //MPI_Get_count(&status, MPI_BYTE, &bufsz);
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Recved data from %d", src);
+                    MPI_Get_count(&status, MPI_BYTE, &bufsz);
                     t_start_comm = MPI_Wtime();
-                    errno = MPI_Recv(&bufsz, 1, MPI_INT, src, IO_REQ_RECV_DATA, gl_comps[comp].comm, &status);
-                    CHECK_MPI(errno);
                     assert(bufsz>0);
                     assert(gl_msg_buf != NULL);
                     rbuf = gl_msg_buf; //dtf_malloc(bufsz);
                     assert(rbuf != NULL);
-                    //errno = MPI_Send(&ncid, 1, MPI_INT, src, READY_RECV_DATA, gl_comps[comp].comm);
-                    //CHECK_MPI(errno);
                     errno = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_DATA_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(errno);
                     gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
                     DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: recv data from %d", src);
-                    recv_data_rdr_ver2(rbuf, bufsz);
+                    recv_data_rdr(rbuf, bufsz);
                    // dtf_free(rbuf, bufsz);
                     break;
                 case READ_DONE_TAG:

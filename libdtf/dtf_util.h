@@ -14,7 +14,7 @@
 
 #define FILE_READY_TAG      0       /*writer rank -> reader rank*/
 #define IO_DATA_REQ_TAG     1       /*master -> writer*/
-#define IO_REQ_RECV_DATA    2
+//#define IO_REQ_RECV_DATA    2
 #define IO_DATA_TAG         3       /*writer -> reader*/
 #define READ_DONE_TAG       4       /*reader->master*/
 #define IO_CLOSE_FILE_TAG   5      /*reader->master, master->writers*/
