@@ -534,7 +534,16 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     if(!lib_initialized) return 0;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
-    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) {
+        int i;
+        /*Adding temporary printing out of write or read request*/
+        DTF_DBG(VERBOSE_DBG_LEVEL, "IO call for var %d, rw flag %d, start->count:", varid, rw_flag);
+        dtf_var_t *var = find_var(fbuf, varid);
+        assert(var != NULL);
+        for(i = 0; i < var->ndims; i++)
+            DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t %lld", start[i], count[i]);
+        return 0;
+    }
     if(boundary_check(fbuf, varid, start, count ))
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     if( rw_flag != DTF_READ && rw_flag != DTF_WRITE){

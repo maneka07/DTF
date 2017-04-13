@@ -25,7 +25,8 @@ typedef struct io_req{
     MPI_Offset              user_buf_sz;
     MPI_Offset              *start;
     MPI_Offset              *count;
-    MPI_Offset              get_sz;     /*size of data received from writer ranks*/
+    MPI_Offset              get_sz;         /*size of data received from writer ranks*/
+    unsigned                is_buffered;    /*1 if the data is buffered. 0 otherwise*/
     struct io_req           *next;
     struct io_req           *prev;
 }io_req_t;

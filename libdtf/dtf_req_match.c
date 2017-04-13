@@ -863,7 +863,6 @@ io_req_t *new_ioreq(int id,
             ioreq->user_buf_sz *= count[i];
         ioreq->user_buf_sz *= el_sz;
 
-//        ioreq->user_buf_sz = el_sz * (last_1d_index(ndims, count) + 1);
         ioreq->start = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
         assert(ioreq->start != NULL);
         memcpy((void*)ioreq->start, (void*)start, sizeof(MPI_Offset)*ndims);
@@ -876,7 +875,14 @@ io_req_t *new_ioreq(int id,
         ioreq->user_buf_sz = el_sz;
     }
     DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, user bufsz %d", id, var_id, (int)ioreq->user_buf_sz);
-    ioreq->user_buf = buf;
+    ioreq->is_buffered = buffered;
+    if(buffered){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Buffering the data");
+        ioreq->user_buf = dtf_malloc((size_t)ioreq->user_buf_sz);
+        assert(ioreq->user_buf != NULL);
+        memcpy(ioreq->user_buf, buf, (size_t)ioreq->user_buf_sz);
+    } else
+        ioreq->user_buf = buf;
     ioreq->next = NULL;
     ioreq->sent_flag = 0;
     ioreq->id = id;
@@ -893,6 +899,9 @@ void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
 {
     dtf_var_t *var = find_var(fbuf, (*ioreq)->var_id);
     assert(var != NULL);
+
+    if( (*ioreq)->is_buffered)
+        dtf_free((*ioreq)->user_buf, (size_t) (*ioreq)->user_buf_sz);
 
     if(*ioreq == fbuf->ioreqs)
         fbuf->ioreqs = fbuf->ioreqs->next;
@@ -1195,16 +1204,6 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     /*Have to check for both things otherwise writers sometime hang
     (maybe they receive IO_CLOSE_FILE_TAG before READ_DONE_TAG by mistake?)*/
 
-    //NOTE: put this only for s3d benchmark!!!!!
-//    if((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag ){
-//        //sleep(1);
-//        while(fbuf->mst_info->nrranks_opened == 0)
-//            progress_io_matching();
-//
-//        while(fbuf->mst_info->iodb->nritems != fbuf->mst_info->nrranks_opened)
-//            progress_io_matching();
-//    }
-
     int counter = 0;
     double t_prog_start, t_match_start, t_prog = 0, t_match=0;
     while(!fbuf->done_matching_flag){
@@ -1237,41 +1236,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     return 0;
 }
 
-static void recur_get_put_data(dtf_var_t *var,
-                          int type_sz,
-                          unsigned char *block_data,
-                          const MPI_Offset *block_start,
-                          const MPI_Offset *block_count,
-                          MPI_Offset subbl_start[],
-                          MPI_Offset subbl_count[],
-                          int dim,
-                          MPI_Offset coord[],
-                          unsigned char *subbl_data,
-                          int get_put_flag)
-{
-    int i;
-    if(dim == var->ndims - 1){
-        MPI_Offset block_offt = to_1d_index(var->ndims, block_start, block_count, coord)*type_sz;
-        MPI_Offset subbl_offt = to_1d_index(var->ndims, subbl_start, subbl_count, coord)*type_sz;
-        MPI_Offset data_sz = subbl_count[var->ndims-1]*type_sz;    //data_sz
 
-        if(get_put_flag == DTF_READ){
-            /*copy data block -> subblock*/
-            memcpy(subbl_data+subbl_offt, block_data+block_offt, data_sz);
-        } else { /*DTF_WRITE*/
-            /*copy data subblock -> block*/
-            memcpy(block_data+block_offt, subbl_data+subbl_offt, data_sz);
-        }
-        return;
-    }
-
-    for(i = 0; i < subbl_count[dim]; i++){
-        coord[dim] = subbl_start[dim] + i;
-        recur_get_put_data(var, type_sz, block_data, block_start, block_count,
-                           subbl_start, subbl_count, dim+1, coord, subbl_data,
-                           get_put_flag);
-    }
-}
 
 /*writer->reader*/
 static void send_data_wrt2rdr(void* buf, int bufsz)
@@ -1402,8 +1367,8 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
 
                     fit_nelems = max_nels;
 
-                    if( (int)(left_sbufsz / max_nels*def_el_sz) > 1)
-                        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: copying only one min subblock but can actually fit more: %d", (int)(left_sbufsz / max_nels*def_el_sz));
+//                    if( (int)(left_sbufsz / max_nels*def_el_sz) > 1)
+//                        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: copying only one min subblock but can actually fit more: %d", (int)(left_sbufsz / max_nels*def_el_sz));
                 }
 
                 if(fit_nelems == 0){
@@ -1440,15 +1405,20 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                         DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld \t orig: \t %lld\t --> %lld)", new_start[i], new_count[i], start[i], count[i]);
 
                    /*Find the ioreq that has info about this block*/
+                    int full_match;
                     ioreq = fbuf->ioreqs;
                     while(ioreq != NULL){
                         if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_WRITE)){
                             int match = 0;
+                            full_match = 0;
                             for(i = 0; i < var->ndims; i++)
-                                if( (new_start[i] >= ioreq->start[i]) && (new_start[i] < ioreq->start[i]+ioreq->count[i]))
+                                if( (new_start[i] >= ioreq->start[i]) && (new_start[i] < ioreq->start[i]+ioreq->count[i])){
                                     match++;
+                                    if( (new_start[i] == ioreq->start[i]) && (new_count[i] == ioreq->count[i]) )
+                                        full_match++;
+                                }
                             if(match == var->ndims){
-                                DTF_DBG(VERBOSE_DBG_LEVEL, "Matched ioreq (strt->cnt):");
+                                DTF_DBG(VERBOSE_DBG_LEVEL, "Matched ioreq with userbuf %p (strt->cnt): ", ioreq->user_buf);
                                 for(i = 0; i < var->ndims; i++){
                                     DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld", ioreq->start[i], ioreq->count[i]);
                                     assert(new_start[i]+new_count[i] <= ioreq->start[i]+ioreq->count[i]);
@@ -1463,7 +1433,16 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                     }
                     assert(ioreq != NULL);
 
-                    { /*copy the subblock to the sbuf*/
+                    {
+                        int type_mismatch = 0;
+                        if(var->dtype != ioreq->dtype){
+                            /*Will only support conversion from MPI_DOUBLE to MPI_FLOAT*/
+                            assert(var->dtype == MPI_FLOAT);
+                            assert(ioreq->dtype == MPI_DOUBLE);
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "Will convert data from double to float");
+                            type_mismatch = 1;
+                        }
+                      /*copy the subblock to the sbuf*/
                         /*save var_id, start[], count[]*/
                         t_recur = MPI_Wtime();
                         *(MPI_Offset*)(sbuf+sofft) = (MPI_Offset)var_id;
@@ -1482,10 +1461,32 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                         DTF_DBG(VERBOSE_DBG_LEVEL, "total data to getput %lld (of nelems %lld)", fit_nelems, nelems);
 
                         t_recur = MPI_Wtime();
-                        /*read from user buffer to send buffer*/
-                        recur_get_put_data(var, def_el_sz, ioreq->user_buf, ioreq->start,
-                                           ioreq->count, new_start, new_count, 0,
-                                           cur_coord, sbuf+sofft, DTF_READ);
+                        if(full_match == var->ndims){
+
+                            if(type_mismatch){
+                                int req_el_type;
+                                MPI_Type_size(ioreq->dtype, &req_el_type);
+                                assert(fit_nelems == (int)(ioreq->user_buf_sz / req_el_type));
+                                for(i = 0; i < (int)fit_nelems; i++){
+                                    ((float*)(sbuf+sofft))[i] = (float)(((double*)ioreq->user_buf)[i]);
+                                }
+                                //TODO continue from here
+                                sofft += fit_nelems*sizeof(float);
+                            } else {
+                                assert(ioreq->user_buf_sz == fit_nelems*def_el_sz);
+                                memcpy(sbuf+sofft, ioreq->user_buf, ioreq->user_buf_sz);
+                            }
+
+                        } else{
+                            int req_el_sz;
+                            MPI_Type_size(ioreq->dtype, &req_el_sz);
+
+                            /*read from user buffer to send buffer*/
+                            recur_get_put_data(var, req_el_sz, ioreq->user_buf, ioreq->start,
+                                               ioreq->count, new_start, new_count, 0,
+                                               cur_coord, sbuf+sofft, DTF_READ, type_mismatch);
+                        }
+
 
                         t_recur_accum += MPI_Wtime() - t_recur;
                         sofft += fit_nelems*def_el_sz+/*padding*/(fit_nelems*def_el_sz)%sizeof(MPI_Offset);
@@ -1496,41 +1497,30 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
 
                     if(var->ndims > 0){
                         /*Shift the start position*/
-//                         if(fit_nelems == 1){ //special case
-//                          new_start[var->ndims-1]++;
-//                          int j = var->ndims-1;
-//                          while(j > 0){
-//                            if(new_start[j] == count[j]){
-//                                  new_start[j] = start[j];
-//                                  new_start[j-1]++;
-//                            } else
-//                                  break;
-//                            j--;
-//                          }
-//                          assert(0); //not sure this block is correct
-//                        } else {
-
+                        if(fit_nelems == 1){ //special case
+                          new_start[var->ndims-1]++;
+                        } else {
                             for(i = 0; i < var->ndims; i++)
-                                if(new_count[i] > 1){
+                                if(new_count[i] > 1)
                                       new_start[i] += new_count[i];
+                        }
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "New start before adjustment:");
+                        for(i = 0; i < var->ndims; i++)
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
+
+                        for(i = var->ndims - 1; i > 0; i--)
+                            if(new_start[i] == start[i] + count[i]){
+                                new_start[i] = start[i];
+                                if( (new_start[i-1] != start[i-1] + count[i-1]) && (new_count[i-1] == 1)){
+                                    new_start[i-1]++;
                                 }
-                            DTF_DBG(VERBOSE_DBG_LEVEL, "New start before adjustment:");
-                            for(i = 0; i < var->ndims; i++)
-                                DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
 
-                            for(i = var->ndims - 1; i > 0; i--)
-                                if(new_start[i] == start[i] + count[i]){
-                                    new_start[i] = start[i];
-                                    if( (new_start[i-1] != start[i-1] + count[i-1]) && (new_count[i-1] == 1)){
-                                        new_start[i-1]++;
-                                    }
+                            } else
+                                break;
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "New start after adjustment:");
+                        for(i = 0; i < var->ndims; i++)
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
 
-                                } else
-                                    break;
-                            DTF_DBG(VERBOSE_DBG_LEVEL, "New start after adjustment:");
-                            for(i = 0; i < var->ndims; i++)
-                                DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", new_start[i]);
-                        //}
 
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Copied subblock. Shift start:");
                         for(i = 0; i < var->ndims; i++)
@@ -1642,10 +1632,11 @@ static void recv_data_rdr(void* buf, int bufsz)
         MPI_Type_size(ioreq->dtype, &req_el_sz);
         MPI_Type_size(var->dtype, &def_el_sz);
 
-//        assert(req_el_sz == def_el_sz);
+        assert(req_el_sz == def_el_sz);
 
         {   /*Copy data*/
             int nelems;
+            int full_match = 0;
             MPI_Offset *cur_coord = (MPI_Offset*)dtf_malloc(var->ndims*sizeof(MPI_Offset));
 
             nelems = 1;
@@ -1653,14 +1644,20 @@ static void recv_data_rdr(void* buf, int bufsz)
             for(i = 0; i < var->ndims; i++){
                 nelems *= count[i];
                 cur_coord[i] = start[i];
+                if( (ioreq->start[i] == start[i]) && (ioreq->count[i] == count[i]))
+                    full_match++;
             }
-            if(req_el_sz != def_el_sz){
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Dtype mismatch: def %d, req %d. Total getput datasz %d", def_el_sz, req_el_sz, def_el_sz*nelems);
-            }
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Will get %d elems for var %d", nelems, var->id);
-            /*Copy from rbuf to user buffer*/
-            recur_get_put_data(var, def_el_sz, ioreq->user_buf, ioreq->start,
-                               ioreq->count, start, count, 0, cur_coord, data, DTF_WRITE);
+//            if(req_el_sz != def_el_sz){
+//                DTF_DBG(VERBOSE_DBG_LEVEL, "Dtype mismatch: def %d, req %d. Total getput datasz %d", def_el_sz, req_el_sz, def_el_sz*nelems);
+//            }
+           DTF_DBG(VERBOSE_DBG_LEVEL, "Will get %d elems for var %d", nelems, var->id);
+           if(full_match == var->ndims){
+                assert(ioreq->user_buf_sz == nelems*def_el_sz);
+                memcpy(ioreq->user_buf, data, ioreq->user_buf_sz);
+            } else
+                /*Copy from rbuf to user buffer*/
+                recur_get_put_data(var, def_el_sz, ioreq->user_buf, ioreq->start,
+                                   ioreq->count, start, count, 0, cur_coord, data, DTF_WRITE, 0);
             dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
             offt += nelems*def_el_sz;
             ioreq->get_sz += (MPI_Offset)(nelems*def_el_sz);
@@ -1670,6 +1667,12 @@ static void recv_data_rdr(void* buf, int bufsz)
         assert(ioreq->get_sz<=ioreq->user_buf_sz);
         if(ioreq->get_sz == ioreq->user_buf_sz){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Complete req %d (left %d)", ioreq->id, fbuf->rreq_cnt-1);
+            if(var->ndims == 1){
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Var data: ");
+                for(i = 0; i < ioreq->count[0]; i++)
+                    printf("%.3f ", ((double*)(ioreq->user_buf))[i]);
+                printf("\n");
+            }
             //delete this ioreq
             delete_ioreq(fbuf, &ioreq);
 

@@ -367,6 +367,53 @@ void find_fit_block(int ndims,
   }
 }
 
+/*For only only support conversion double->float*/
+void recur_get_put_data(dtf_var_t *var,
+                          int block_type_sz,
+                          unsigned char *block_data,
+                          const MPI_Offset *block_start,
+                          const MPI_Offset *block_count,
+                          const MPI_Offset subbl_start[],
+                          const MPI_Offset subbl_count[],
+                          int dim,
+                          MPI_Offset coord[],
+                          unsigned char *subbl_data,
+                          int get_put_flag,
+                          int convert_flag)
+{
+    int i;
+    if(dim == var->ndims - 1){
+        int subbl_type_sz;
+        MPI_Type_size(var->dtype, &subbl_type_sz);
+        MPI_Offset block_offt = to_1d_index(var->ndims, block_start, block_count, coord)*block_type_sz;
+        MPI_Offset subbl_offt = to_1d_index(var->ndims, subbl_start, subbl_count, coord)*subbl_type_sz;
+        MPI_Offset data_sz = subbl_count[var->ndims-1]*subbl_type_sz;    //data_sz
+
+        if(get_put_flag == DTF_READ){
+            if(convert_flag){
+                assert(block_type_sz == sizeof(double));
+                assert(subbl_type_sz == sizeof(float));
+                for(i = 0; i < subbl_count[var->ndims-1]; i++)
+                    ((float*)(subbl_data+subbl_offt))[i] = (float)((double*)(block_data+block_offt))[i];
+            } else
+                /*copy data block -> subblock*/
+                memcpy(subbl_data+subbl_offt, block_data+block_offt, data_sz);
+        } else { /*DTF_WRITE*/
+            assert(convert_flag == 0);
+            /*copy data subblock -> block*/
+            memcpy(block_data+block_offt, subbl_data+subbl_offt, data_sz);
+        }
+        return;
+    }
+
+    for(i = 0; i < subbl_count[dim]; i++){
+        coord[dim] = subbl_start[dim] + i;
+        recur_get_put_data(var, block_type_sz, block_data, block_start, block_count,
+                           subbl_start, subbl_count, dim+1, coord, subbl_data,
+                           get_put_flag, convert_flag);
+    }
+}
+
 int mpitype2int(MPI_Datatype dtype)
 {
 

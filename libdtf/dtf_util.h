@@ -26,7 +26,6 @@
 
 #define DISTR_MODE_REQ_MATCH    1
 
-//TODO: remove all asserts in the code and replace with proper error handling
 typedef struct component{
     unsigned int    id;
     char            name[MAX_COMP_NAME];
@@ -86,4 +85,17 @@ void find_fit_block(int ndims,
 		    const size_t el_sz,
 		    MPI_Offset *cur_nelems,
 		    MPI_Offset tot_nelems);
+
+void recur_get_put_data(dtf_var_t *var,
+                          int type_sz,
+                          unsigned char *block_data,
+                          const MPI_Offset *block_start,
+                          const MPI_Offset *block_count,
+                          const MPI_Offset subbl_start[],
+                          const MPI_Offset subbl_count[],
+                          int dim,
+                          MPI_Offset coord[],
+                          unsigned char *subbl_data,
+                          int get_put_flag,
+                          int convert_flag);
 #endif
