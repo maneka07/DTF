@@ -22,6 +22,8 @@ void *gl_msg_buf = NULL;
 
 extern file_info_req_q_t *gl_finfo_req_q;
 
+/*TODO DIFFERENT FILENAMES SAME NCID!!!*/
+
 /**
   @brief	Function to initialize the library. Should be called from inside
             the application before any other call to the library. Should be called
@@ -331,8 +333,10 @@ _EXTERN_C_ void dtf_open(const char *filename, MPI_Comm comm)
         CHECK_MPI(err);
         DTF_DBG(VERBOSE_DBG_LEVEL, "Created a dummy alias file");
     }
-    assert(fbuf->comm == MPI_COMM_NULL);
-    fbuf->comm = comm;
+    if(fbuf->comm == MPI_COMM_NULL)
+        fbuf->comm = comm;
+    else
+        assert(fbuf->comm == comm);
     MPI_Comm_size(comm, &nranks);
     if(comm == gl_comps[gl_my_comp_id].comm)
         DTF_DBG(VERBOSE_DBG_LEVEL, "File opened in component's communicator (%d nprocs)", nranks);
@@ -414,6 +418,7 @@ _EXTERN_C_ int dtf_match_ioreqs(const char* filename)
     return ret;
 }
 
+
 /*called by user to do explicit matching*/
 /*
     User must specify either filename or ncid.
@@ -442,8 +447,6 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
             else
                 DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
             return 0;
-        } else {
-            DTF_DBG(VERBOSE_DBG_LEVEL, "file %s, ncid %d, io flag %d", fbuf->file_path, ncid, intracomp_io_flag);
         }
         if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
         if(!fbuf->explicit_match){
@@ -465,6 +468,62 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
   // }
     return 0;
 }
+
+/*Supposed to be called by the writer process.
+  Used to match against several dtf_match_io functions on the reader side*/
+_EXTERN_C_ void dtf_match_multiple(int ncid)
+{
+    if(!lib_initialized) return;
+    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
+    if(fbuf == NULL){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: ncid %d is not treated by DTF( \
+                not in configuration file). Explicit matching ignored.", ncid);
+        return;
+    }
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+    if(!fbuf->explicit_match){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_multiple but explicit match for file \
+                %s not enabled. Ignored.", fbuf->file_path);
+        return;
+    }
+
+    if( gl_my_comp_id != fbuf->writer_id){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_multiple can only be called by writer component. Ignoring.");
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    if(fbuf->is_matching_flag){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching multiple");
+    fbuf->done_match_multiple_flag = 0;
+    while(!fbuf->done_match_multiple_flag)
+        match_ioreqs(fbuf, 0);
+    //reset
+    fbuf->done_match_multiple_flag = 0;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Finish matching multiple");
+    return;
+}
+
+/*Used by reader to notify writer that it can complete dtf_match_multiple*/
+_EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
+{
+    if(!lib_initialized) return;
+    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
+    if(fbuf == NULL){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
+        return;
+    }
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+    if(fbuf->reader_id != gl_my_comp_id){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: dtf_complete_multiple can only be called by reader");
+        return;
+    }
+    notify_complete_multiple(fbuf);
+}
+
 /* The user has to state whether the process needs to match all read or write requests.
    Because the process of matching for a reader and writer is not the same. */
 _EXTERN_C_ void dtf_match_io_all(int rw_flag)
@@ -505,6 +564,11 @@ _EXTERN_C_ int dtf_write_flag(const char* filename)
     return (fbuf->writer_id == gl_my_comp_id) ? 1 : 0;
 }
 
+_EXTERN_C_ void dtf_print(const char *str)
+{
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "%s", str);
+}
+
 /**
     @brief  Check if the file intended to be read by this component
     @param  filename    name of the file
@@ -534,16 +598,9 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     if(!lib_initialized) return 0;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
-    if(fbuf->iomode != DTF_IO_MODE_MEMORY) {
-        int i;
-        /*Adding temporary printing out of write or read request*/
-        DTF_DBG(VERBOSE_DBG_LEVEL, "IO call for var %d, rw flag %d, start->count:", varid, rw_flag);
-        dtf_var_t *var = find_var(fbuf, varid);
-        assert(var != NULL);
-        for(i = 0; i < var->ndims; i++)
-            DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t %lld", start[i], count[i]);
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY)
         return 0;
-    }
+
     if(boundary_check(fbuf, varid, start, count ))
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     if( rw_flag != DTF_READ && rw_flag != DTF_WRITE){
@@ -592,8 +649,6 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 
-    for(i = 0; i < ndims; i++)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d size %llu", varid, i, shape[i]);
     /*For now, can only support unlimited dimension if it's the fasted changing dimension array*/
     if( (ndims > 0) && (shape[ndims - 1] == DTF_UNLIMITED))
         DTF_DBG(VERBOSE_DBG_LEVEL, "var has unlimited dimension");
@@ -646,4 +701,19 @@ void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int 
 void dtf_match_io_all_(int *rw_flag)
 {
     dtf_match_io_all(*rw_flag);
+}
+
+void dtf_print_(const char *str)
+{
+    dtf_print(str);
+}
+
+void dtf_match_multiple_(int *ncid)
+{
+    dtf_match_multiple(*ncid);
+}
+
+void dtf_complete_multiple_(const char *filename, int *ncid)
+{
+    dtf_complete_multiple(filename, *ncid);
 }

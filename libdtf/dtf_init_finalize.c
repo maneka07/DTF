@@ -611,7 +611,6 @@ void finalize_files()
     /*First, writers compute number of files
       they wrote*/
     while(fbuf != NULL){
-
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, close_flag %d, notif_flag %d", fbuf->file_path, fbuf->rdr_closed_flag, fbuf->fready_notify_flag);
         if(fbuf->fready_notify_flag != DTF_UNDEFINED && fbuf->root_writer == gl_my_rank){
             assert(fbuf->writer_id == gl_my_comp_id);

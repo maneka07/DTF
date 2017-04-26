@@ -20,7 +20,9 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     int el_sz;
     io_req_t *req;
     int i;
-    int def_el_sz;
+    int def_el_sz, req_el_sz;
+    int type_mismatch = 0;
+    MPI_Offset nelems;
 
     if(rw_flag == DTF_READ){
         if(fbuf->reader_id==gl_my_comp_id){
@@ -50,25 +52,29 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     }
     DTF_DBG(VERBOSE_DBG_LEVEL, "rw call %d for %s (ncid %d) var %d", rw_flag,fbuf->file_path, fbuf->ncid, var->id);
     /*check number of elements to read*/
-    if(count != NULL){
-        MPI_Offset nelems;
-        int i;
-        nelems = count[0];
-        for(i = 1; i < var->ndims; i++)
-            nelems *= count[i];
+    nelems = 0;
+    if(var->ndims == 0)
+        nelems = 1;
+    else
+        if(count != NULL){
+            int i;
+            nelems = count[0];
+            for(i = 1; i < var->ndims; i++)
+                nelems *= count[i];
 
-        if(nelems == 0){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Nothing to read or write");
-            return 0;
+            if(nelems == 0){
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Nothing to read or write");
+                return 0;
+            }
         }
+    assert(nelems != 0);
 
-    }
     MPI_Type_size(var->dtype, &def_el_sz);
+    MPI_Type_size(dtype, &req_el_sz);
 
-    if(var->dtype != dtype){
-        int el_sz2;
-        MPI_Type_size(dtype, &el_sz2);
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Warning: var %d el_sz mismatch (def %d-bit, access %d).", var->id, def_el_sz, el_sz2);
+    if(def_el_sz != req_el_sz){
+        type_mismatch = 1;
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Warning: var %d el_sz mismatch (def %d-bit, access %d).", var->id, def_el_sz, req_el_sz);
     }
     //assert(var->dtype == dtype);
 
@@ -80,53 +86,82 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     copy the data and do not create an I/O request.*/
     int create_ioreq = 1;
 
-//    if((rw_flag == DTF_READ) && (fbuf->writer_id == gl_my_comp_id)){
-//        int match;
-//
-//        io_req_t *tmp = fbuf->ioreqs;
-//        while(tmp != NULL){
-//            if( (tmp->var_id == varid) && (tmp->rw_flag == DTF_WRITE) ){
-//                if(var->ndims == 0){ //scalar var
-//                    assert(tmp->user_buf_sz == (MPI_Offset)def_el_sz);
-//                    memcpy(buf, tmp->user_buf, (size_t)def_el_sz);
-//                    break;
-//               } else {
-//                    match = 0;
-//                    for(i = 0; i < var->ndims; i++)
-//                        if( (start[i] >= tmp->start[i]) && (start[i] + count[i] <= tmp->start[i] + tmp->count[i]))
-//                            match++;
-//                        else
-//                            break;
-//
-//                    if(match == var->ndims)
-//                        break;
-//                }
-//            }
-//            tmp = tmp->next;
-//        }
-//        if( (tmp != NULL) && (match == var->ndims) && (var->ndims > 0)){
-//                int full_match = 0;
-//                for(i = 0; i < var->ndims; i++)
-//                    if( (start[i] == tmp->start[i]) && (count[i] == tmp->count[i]))
-//                        full_match++;
-//                    else
-//                        break;
-//
-//                if(full_match == var->ndims)
-//                    memcpy(buf, tmp->user_buf, (size_t)tmp->user_buf_sz);
-//                else{
-//                    MPI_Offset *coord = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-//                    assert(coord != NULL);
-//                    for(i = 0; i < var->ndims; i++)
-//                        coord[i] = start[i];
-//                    recur_get_put_data(var, def_el_sz, tmp->user_buf, tmp->start, tmp->count, start, count, 0, coord, buf, DTF_READ);
-//                    dtf_free(coord, var->ndims*sizeof(MPI_Offset));
-//                }
-//
-//            DTF_DBG(VERBOSE_DBG_LEVEL, "Read data for var %d, no rreq created", varid);
-//            create_ioreq = 0;
-//        }
-//    }
+    if((rw_flag == DTF_READ) && (fbuf->writer_id == gl_my_comp_id)){
+        if(var->ndims > 0){
+            int match;
+            MPI_Offset matched_els;
+            MPI_Offset *_start, *_count;
+            _start = dtf_malloc(sizeof(MPI_Offset)*var->ndims);
+            assert(_start != NULL);
+            _count = dtf_malloc(sizeof(MPI_Offset)*var->ndims);
+            assert(_count != NULL);
+            memcpy(_start, start, sizeof(MPI_Offset)*var->ndims);
+            memcpy(_count, count, sizeof(MPI_Offset)*var->ndims);
+
+            matched_els = 0;
+            while(nelems > 0){
+                io_req_t *tmp = fbuf->ioreqs;
+                while(tmp != NULL){
+                    if( (tmp->var_id == varid) && (tmp->rw_flag == DTF_WRITE) ){
+                        match = 0;
+                        for(i = 0; i < var->ndims; i++)
+                            if( (_start[i] >= tmp->start[i]) && (_start[i] < tmp->start[i] + tmp->count[i]))
+                                match++;
+                            else
+                                break;
+
+                        if(match == var->ndims)
+                            break;
+                    }
+                    tmp = tmp->next;
+                }
+                if((tmp != NULL) && (match == var->ndims)){
+                    MPI_Offset *coord = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+                    assert(coord != NULL);
+                    matched_els = 1;
+                    for(i = 0; i < var->ndims; i++){
+                        coord[i] = _start[i];
+                        if(_start[i] + _count[i] > tmp->start[i] + tmp->count[i])
+                            _count[i] = tmp->start[i] + tmp->count[i] - _start[i];
+                        matched_els *= _count[i];
+                    }
+                    recur_get_put_data(var, tmp->dtype, tmp->user_buf, tmp->start, tmp->count, start, count, 0, coord, buf, DTF_READ, type_mismatch);
+                    dtf_free(coord, var->ndims*sizeof(MPI_Offset));
+
+                    nelems -= matched_els;
+                    /*adjust start coord*/
+                    shift_coord(var->ndims, start, count, _start, _count, matched_els);
+                } else
+                    break;
+            } /*while*/
+            dtf_free(_start, sizeof(MPI_Offset)*var->ndims);
+            dtf_free(_count, sizeof(MPI_Offset)*var->ndims);
+
+        } else {
+            io_req_t *tmp = fbuf->ioreqs;
+            while(tmp != NULL){
+                if( (tmp->var_id == varid) && (tmp->rw_flag == DTF_WRITE) ){
+
+                        assert(tmp->user_buf_sz == (MPI_Offset)def_el_sz);
+                        memcpy(buf, tmp->user_buf, (size_t)def_el_sz);
+                        nelems--;
+                        break;
+                }
+            }
+        }
+        if(nelems == 0){
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Have read data for var %d, no rreq created", varid);
+            create_ioreq = 0;
+
+            if(var->ndims == 1){
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Var data: ");
+                for(i = 0; i < count[0]; i++)
+                    printf("%.3f ", ((double*)(buf))[i]);
+                printf("\n");
+            }
+        } else
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Have not read all data for var %d, rreq created", varid);
+    }
 
     if(create_ioreq){
         /*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
@@ -135,7 +170,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         int buffered = 0;
         if( (var->ndims <= 1) && (rw_flag == DTF_WRITE))
             buffered = 1;
-        req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, var->dtype, start, count, buf, rw_flag, buffered);
+        req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, buffered);
 
         if(request != NULL)
             *request = req->id;

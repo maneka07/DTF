@@ -118,7 +118,7 @@ io_req_t *new_ioreq(int id,
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
 void delete_ioreqs(file_buffer_t *fbuf);
 void progress_io_matching();
-void send_ioreqs(file_buffer_t *fbuf);
+void send_ioreqs(file_buffer_t *fbuf, int intracomp_match);
 void clean_iodb(ioreq_db_t *iodb);
 int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
 void match_ioreqs_all(int rw_flag);
@@ -126,4 +126,5 @@ int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);
 void init_iodb(file_buffer_t *fbuf);
 void unpack_file_info(MPI_Offset bufsz, void *buf);
 void send_file_info(file_buffer_t *fbuf, int reader_root);
+void notify_complete_multiple(file_buffer_t *fbuf);
 #endif // dtf_REQ_MATCH_H_INCLUDED

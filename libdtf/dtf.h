@@ -27,6 +27,10 @@ _EXTERN_C_ int dtf_finalize();
 _EXTERN_C_ int dtf_set_distr_count(const char* filename, int varid, int count[]);
 _EXTERN_C_ int dtf_wait_all(const char* filename);
 _EXTERN_C_ int dtf_wait(const char* filename, int request);
+_EXTERN_C_ void dtf_print(const char *str);
+_EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid);
+_EXTERN_C_ void dtf_match_multiple(int ncid);
+
 /*Interfaces to be used by a File I/O library*/
 _EXTERN_C_ int dtf_write_flag(const char* filename);
 _EXTERN_C_ int dtf_read_flag(const char* filename);
@@ -52,11 +56,14 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
 _EXTERN_C_ void dtf_match_io_all(int rw_flag);
 _EXTERN_C_ void dtf_enddef(const char *filename);
 
+
 /*     Fortran interfaces    */
 void dtf_init_(const char *filename, char *module_name, int* ierr);
 void dtf_finalize_(int* ierr);
 void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int *ierr);
 void dtf_match_io_all_(int *rw_flag);
-
+void dtf_print_(const char *str);
+void dtf_complete_multiple_(const char *filename, int *ncid);
+void dtf_match_multiple_(int *ncid);
 
 #endif // DTF_H_INCLUDED

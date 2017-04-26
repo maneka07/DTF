@@ -14,7 +14,7 @@
 
 #define FILE_READY_TAG      0       /*writer rank -> reader rank*/
 #define IO_DATA_REQ_TAG     1       /*master -> writer*/
-//#define IO_REQ_RECV_DATA    2
+#define DONE_MULTIPLE_FLAG  2
 #define IO_DATA_TAG         3       /*writer -> reader*/
 #define READ_DONE_TAG       4       /*reader->master*/
 #define IO_CLOSE_FILE_TAG   5      /*reader->master, master->writers*/
@@ -87,7 +87,7 @@ void find_fit_block(int ndims,
 		    MPI_Offset tot_nelems);
 
 void recur_get_put_data(dtf_var_t *var,
-                          int type_sz,
+                          MPI_Datatype dtype,
                           unsigned char *block_data,
                           const MPI_Offset *block_start,
                           const MPI_Offset *block_count,
@@ -98,4 +98,9 @@ void recur_get_put_data(dtf_var_t *var,
                           unsigned char *subbl_data,
                           int get_put_flag,
                           int convert_flag);
+void shift_coord(int ndims, const MPI_Offset *bl_start,
+                 const MPI_Offset *bl_count, MPI_Offset *subbl_start,
+                 MPI_Offset *subbl_count, MPI_Offset fit_nelems);
+void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstbuf, int nelems);
+
 #endif

@@ -9,7 +9,10 @@
 
 * for scalar var no need to do request matching? Everyone should have the data?
 
-GIT commit note: 
 
-bugfix in send_ioreqs
+
+Git commit note(21.04):
+
+bugfix in nbuf_read_write_var()
+added dtype conversion when sending and receiving 
 

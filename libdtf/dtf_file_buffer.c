@@ -104,9 +104,12 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
         clean_iodb(fbuf->mst_info->iodb);
         dtf_free(fbuf->mst_info->iodb, sizeof(ioreq_db_t));
     }
+    if(fbuf->mst_info != NULL){
+        if(fbuf->mst_info->masters != NULL)
+            dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
+         dtf_free(fbuf->mst_info, sizeof(master_info_t));
+    }
 
-    dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
-    dtf_free(fbuf->mst_info, sizeof(master_info_t));
     dtf_free(fbuf, sizeof(file_buffer_t));
 }
 
