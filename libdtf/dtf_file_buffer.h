@@ -1,7 +1,7 @@
 #ifndef FILE_BUFFER_H_INCLUDED
 #define FILE_BUFFER_H_INCLUDED
 
-#include "dtf_buffer_node.h"
+#include <mpi.h>
 #include "rb_red_black_tree.h"
 //#include "dtf_req_match.h"
 
@@ -18,16 +18,10 @@
 
 typedef struct dtf_var{
     int                     id;         /* varid assigned by pnetcdf*/
-    //MPI_Offset              el_sz;      /* byte size of 1 array element */
     MPI_Datatype            dtype;      /*Datatype of the variable*/
     MPI_Offset              *shape;     /* dim->size of each dim */
     int                     ndims;      /* number of dimensions */
-    buffer_node_t           *nodes;     /*head buffer node that stores the data*/
-    MPI_Offset              node_cnt;   /*number of allocated buffer nodes*/
-    MPI_Offset *first_coord;            /*Coordinate of the first element in this node. Needed for scatter distribution. Needed only by writer.*/
-/*Static data distribution related stuff*/
-    MPI_Offset *distr_count;                 /*Number of elements in each dimension to distribute*/
-}dtf_var_t;
+ }dtf_var_t;
 
 
 struct master_db;
@@ -43,8 +37,6 @@ typedef struct file_buffer{
   MPI_Offset                hdr_sz;             /*size of the netcdf header*/
   rb_red_blk_tree           *vars;              /*Variables in the file*/
   int                       var_cnt;            /*Number of defined variables*/
-  int                       version;            /*To keep track in case the component generates
-                                    several output files with the same name pattern*/
   int                       writer_id;
   int                       reader_id;
   int                       is_ready;           /*Used to let the reader know that the file is either
@@ -52,13 +44,6 @@ typedef struct file_buffer{
                                       - finished being written (mode = DTF_IO_MODE_FILE)
                                     */
   int                       iomode;               /*Do normal File I/O or direct data transfer?*/
-//  /*Static data distribution related stuff*/
-//  int                       distr_rule;                   /*Rule for distribution from writer to readers(range or list of ranks)*/
-//  int                       distr_pattern;                /*Scatter portions of data or send all data*/
-//  int                       distr_range;                  /*Range for distribution*/
-//  int                       distr_nranks;                 /*writer: how many ranks I distribute to; reader: how many ranks I receive from*/
-//  int                       *distr_ranks;                 /*writer: ranks I distribute to; reader: ranks I receive from*/
-//  int                       distr_ndone;                  /*number of completed distributions*/
   /*Data distribution through request matching*/
   int                       root_writer;           /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
   int                       root_reader;
@@ -67,7 +52,6 @@ typedef struct file_buffer{
   struct io_req             *ioreqs;           /*Read or write I/O requests*/
   int                       explicit_match;   /*0 - request matching is initiated from inside of pnetcdf;
                                                 1 - request matching is initiated by the user*/
-  //int                       ioreq_cnt;         /*Request counter, will be used to assign a unique id to io requests.*/
   unsigned int              rreq_cnt;
   unsigned int              wreq_cnt;
   int                       done_match_multiple_flag;     /*Set to 1 when reader notifies writer*/

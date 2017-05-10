@@ -85,8 +85,8 @@ static void print_config(){
     }
 
     while(fb != NULL){
-        DTF_DBG(VERBOSE_DBG_LEVEL,   "File %s, version %d, writer %s, reader %s ",
-                fb->file_path, fb->version, gl_comps[fb->writer_id].name, gl_comps[fb->reader_id].name);
+        DTF_DBG(VERBOSE_DBG_LEVEL,   "File %s, writer %s, reader %s ",
+                fb->file_path, gl_comps[fb->writer_id].name, gl_comps[fb->reader_id].name);
         switch(fb->iomode){
             case DTF_IO_MODE_UNDEFINED:
                 DTF_DBG(VERBOSE_DBG_LEVEL,   "I/O mode: undefined ");
@@ -456,10 +456,6 @@ int load_config(const char *ini_name, const char *comp_name){
             assert(strlen(value) <= MAX_FILE_NAME);
             strcpy(cur_fb->alias_name, value);
 
-        } else if(strcmp(param, "version") == 0){
-            assert(cur_fb != NULL);
-            cur_fb->version = atoi(value);
-
         } else if(strcmp(param, "writer") == 0){
             assert(cur_fb != NULL);
             assert(gl_ncomp != 0);
@@ -475,7 +471,7 @@ int load_config(const char *ini_name, const char *comp_name){
             assert(gl_ncomp != 0);
 
             if(cur_fb->reader_id != -1){
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "File %s cannot have multiple readers", cur_fb->file_path);
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "File %s cannot have multiple readers (%d)", cur_fb->file_path, cur_fb->reader_id);
                 goto panic_exit;
             }
             for(i = 0; i < gl_ncomp; i++){

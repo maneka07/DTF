@@ -9,19 +9,8 @@
 /*API for handling rb_tree in write_db_item*/
 void var_destroy(void* _var)
 {
-   dtf_var_t *var = (dtf_var_t*)_var;
-   buffer_node_t *node = var->nodes;
-   while(node != NULL){
-        dtf_free(node->data, node->data_sz);
-        var->nodes = var->nodes->next;
-        dtf_free(node, sizeof(buffer_node_t));
-        node = var->nodes;
-    }
+    dtf_var_t *var = (dtf_var_t*)_var;
     dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
-    if(var->distr_count != NULL)
-        dtf_free(var->distr_count, var->ndims*sizeof(MPI_Offset));
-    if(var->first_coord != NULL)
-        dtf_free(var->first_coord, var->ndims*sizeof(MPI_Offset));
     dtf_free(_var, sizeof(dtf_var_t));
 }
 
@@ -107,7 +96,7 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
     if(fbuf->mst_info != NULL){
         if(fbuf->mst_info->masters != NULL)
             dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
-        if(fbuf->mst_info->my_wg != NULL);
+        if(fbuf->mst_info->my_wg != NULL)
             dtf_free(fbuf->mst_info->my_wg,(fbuf->mst_info->my_wg_sz - 1)*sizeof(int));
         dtf_free(fbuf->mst_info, sizeof(master_info_t));
     }
@@ -125,7 +114,6 @@ file_buffer_t* new_file_buffer()
     buf->alias_name[0]='\0';
     buf->next = NULL;
     buf->reader_id = -1;
-    buf->version = 0;
     buf->writer_id=-1;
     buf->is_ready = 0;
     buf->vars = RBTreeCreate(var_cmp, var_destroy, NullFunction, var_print, NullFunction);
@@ -133,7 +121,6 @@ file_buffer_t* new_file_buffer()
     buf->header = NULL;
     buf->hdr_sz = 0;
     buf->iomode = DTF_UNDEFINED;
-    //buf->ioreq_cnt = 0;
     buf->rreq_cnt = 0;
     buf->wreq_cnt = 0;
     buf->ioreqs = NULL;
@@ -154,7 +141,6 @@ file_buffer_t* new_file_buffer()
     buf->mst_info->my_wg = NULL;
     buf->mst_info->nmasters = 0;
     buf->mst_info->iodb = NULL;
-//    buf->mst_info->nrranks_completed = 0;
     buf->mst_info->nwranks_completed = 0;
     buf->mst_info->nwranks_opened = 0;
     buf->is_matching_flag = 0;
@@ -179,8 +165,6 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
     assert(var!=NULL);
 
     /*Initialize whatever we can initialize at this stage*/
-    var->nodes = NULL;
-    var->node_cnt=0;
     var->id = varid;
     if(ndims > 0){ //non scalar
         var->shape = (MPI_Offset*)dtf_malloc(ndims*sizeof(MPI_Offset));
@@ -189,9 +173,7 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
     }
     else
         var->shape = NULL;
-    var->first_coord = NULL;
     var->ndims = ndims;
-    var->distr_count = NULL;
     var->dtype = dtype;
     return var;
 }

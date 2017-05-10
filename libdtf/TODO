@@ -10,9 +10,9 @@
 * for scalar var no need to do request matching? Everyone should have the data?
 
 
+commit notes (may 10)
 
-Git commit note(21.04):
+bugfix in dtf_file_buffer.c (delete_file_buffer())
+bugfix in dtf_req_match.c (send_ioreqs, pack_file_info,)
 
-bugfix in nbuf_read_write_var()
-added dtype conversion when sending and receiving 
 

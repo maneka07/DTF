@@ -176,23 +176,23 @@ _EXTERN_C_ int dtf_finalize()
     DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalize");
 
     if(gl_my_rank == 0){
-        gl_stats.walltime = MPI_Wtime() - gl_stats.walltime;
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: walltime %.3f", gl_stats.walltime);
-        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
-                 gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
+        double walltime = MPI_Wtime() - gl_stats.walltime;
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: walltime %.3f", walltime);
+//        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
+//                 gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
 
         if(gl_stats.accum_db_match_time > 0)
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: match_ioreqs %.4f (%.4f%%), do_matching %.4f(%.4f%%), times do_matching %u",
-                     gl_stats.accum_match_time, (gl_stats.accum_match_time/gl_stats.walltime)*100,
-                     gl_stats.accum_db_match_time, (gl_stats.accum_db_match_time/gl_stats.walltime)*100,
+                     gl_stats.accum_match_time, (gl_stats.accum_match_time/walltime)*100,
+                     gl_stats.accum_db_match_time, (gl_stats.accum_db_match_time/walltime)*100,
                      gl_stats.ndb_match );
         if(gl_stats.accum_comm_time > 0)
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: time spent in comm %.4f(%.4f%%)",
-                    gl_stats.accum_comm_time, (gl_stats.accum_comm_time/gl_stats.walltime)*100);
-        if(gl_stats.t_progress > 0){
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: time spent in progress %.4f(%.4f%%)",
-                    gl_stats.t_progress, (gl_stats.t_progress/gl_stats.walltime)*100);
-        }
+                    gl_stats.accum_comm_time, (gl_stats.accum_comm_time/walltime)*100);
+//        if(gl_stats.t_progress > 0){
+//            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: time spent in progress %.4f(%.4f%%)",
+//                    gl_stats.t_progress, (gl_stats.t_progress/walltime)*100);
+//        }
         if(gl_stats.nprogress_call > 0){
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
         }
@@ -205,14 +205,13 @@ _EXTERN_C_ int dtf_finalize()
     if(gl_msg_buf != NULL)
         dtf_free(gl_msg_buf, gl_conf.data_msg_size_limit);
 
-    if(gl_stats.malloc_size - MAX_COMP_NAME > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size);// - MAX_COMP_NAME);
+    if(gl_stats.malloc_size != MAX_COMP_NAME )
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
 
 
-    if(gl_stats.num_tsrch > 0){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: searched tree %u times ( %.4f%% of runtime)", gl_stats.num_tsrch, (gl_stats.t_treesrch/gl_stats.walltime)*100);
-    }
-
+//    if(gl_stats.num_tsrch > 0){
+//        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: searched tree %u times ( %.4f%% of runtime)", gl_stats.num_tsrch, (gl_stats.t_treesrch/gl_stats.walltime)*100);
+//    }
 
 
     dtf_free(gl_my_comp_name, MAX_COMP_NAME);
@@ -674,15 +673,6 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
 
     return ret;
 }
-
-//_EXTERN_C_ int dtf_set_distr_count(const char* filename, int varid, int count[])
-//{
-//    if(!lib_initialized) return 0;
-//    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//    if(fbuf == NULL) return 0;
-//    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-//    return set_distr_count(fbuf, varid, count);
-//}
 
 /*  Fortran Interfaces  */
 

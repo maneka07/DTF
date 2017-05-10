@@ -24,7 +24,6 @@
 /*Interfaces used by an application*/
 _EXTERN_C_ int dtf_init(const char *filename, char *module_name);
 _EXTERN_C_ int dtf_finalize();
-_EXTERN_C_ int dtf_set_distr_count(const char* filename, int varid, int count[]);
 _EXTERN_C_ int dtf_wait_all(const char* filename);
 _EXTERN_C_ int dtf_wait(const char* filename, int request);
 _EXTERN_C_ void dtf_print(const char *str);

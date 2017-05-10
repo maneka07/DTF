@@ -101,7 +101,7 @@ static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     if(fbuf->mst_info->nmasters){
         DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->mst_info->nmasters);
         /*list of masters*/
-        memcpy(chbuf+offt, fbuf->mst_info->masters, fbuf->mst_info->nmasters+sizeof(int));
+        memcpy(chbuf+offt, fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
         offt += fbuf->mst_info->nmasters*sizeof(MPI_Offset); //sizeof(int) + padding for MPI_Offset
     }
 
@@ -928,7 +928,9 @@ void send_ioreqs(file_buffer_t *fbuf, int intracomp_match)
     int n_intra_reqs = 0;
     unsigned char **sbuf;
     size_t *bufsz, *offt;
-    int nmasters = 1;
+    int data_to_send = 0;
+    int nmasters = fbuf->mst_info->nmasters;
+
     if(fbuf->ioreqs == NULL)
         return;
     sbuf = (unsigned char**)dtf_malloc(nmasters*sizeof(unsigned char*));
@@ -941,9 +943,10 @@ void send_ioreqs(file_buffer_t *fbuf, int intracomp_match)
     /*Distribute ioreqs between the masters based on var id*/
 
     //alloc mem
-    for(mst = 0; mst < fbuf->mst_info->nmasters; mst++)
+    for(mst = 0; mst < fbuf->mst_info->nmasters; mst++){
         bufsz[mst] = 0;
-    int data_to_send = 0;
+        sbuf[mst] = NULL;
+    }
 
     ioreq = fbuf->ioreqs;
     while(ioreq != NULL){
@@ -971,6 +974,8 @@ void send_ioreqs(file_buffer_t *fbuf, int intracomp_match)
     if(!data_to_send)
         goto fn_exit;   //nothing to send
 
+
+    DTF_DBG(VERBOSE_DBG_LEVEL, "nmasters %d", fbuf->mst_info->nmasters);
 
     for(mst = 0; mst < fbuf->mst_info->nmasters; mst++){
         if(bufsz[mst] == 0)
@@ -1245,8 +1250,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "tot prog %.3f, tot match %.3f", t_prog, t_match);
 
-    gl_stats.accum_match_time += MPI_Wtime() - t_start;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time for matching %.4f", MPI_Wtime() - t_start);
+
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
 
@@ -1261,15 +1265,14 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
             }
         }
     }
-
+    gl_stats.accum_match_time += MPI_Wtime() - t_start;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time for matching %.4f", MPI_Wtime() - t_start);
     reset_fbuf_match(fbuf);
     return 0;
 }
 
 
-
-
-/*writer->reader*/
+/*writer->reader || writer->writer*/
 static void send_data_wrt2rdr(void* buf, int bufsz)
 {
     int ncid, var_id, rdr_rank, errno, i;
@@ -2161,18 +2164,24 @@ int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     if(mst_info->is_master_flag){
         DTF_DBG(VERBOSE_DBG_LEVEL, "My wg size %d", mst_info->my_wg_sz);
         //Translate my workgroup ranks
-        nranks = mst_info->my_wg_sz - 1;
-        mst_info->my_wg = dtf_malloc(nranks*sizeof(int));
-        assert(mst_info->my_wg != NULL);
-        ranks = dtf_malloc(nranks*sizeof(int));
-        assert(ranks != NULL);
+        if(mst_info->my_wg_sz == 1){
+            //master is the only rank in the wg
+            mst_info->my_wg = NULL;
+        } else {
+            nranks = mst_info->my_wg_sz - 1;
+            mst_info->my_wg = dtf_malloc(nranks*sizeof(int));
+            assert(mst_info->my_wg != NULL);
+            ranks = dtf_malloc(nranks*sizeof(int));
+            assert(ranks != NULL);
 
-        for(i = 0; i < nranks; i++)
-            ranks[i] = myrank + i + 1;
+            for(i = 0; i < nranks; i++)
+                ranks[i] = myrank + i + 1;
 
-        errno = MPI_Group_translate_ranks(file_group, nranks, ranks, glob_group, mst_info->my_wg);
-        CHECK_MPI(errno);
-        dtf_free(ranks, nranks*sizeof(int));
+            errno = MPI_Group_translate_ranks(file_group, nranks, ranks, glob_group, mst_info->my_wg);
+            CHECK_MPI(errno);
+            dtf_free(ranks, nranks*sizeof(int));
+        }
+
     } else {
         mst_info->my_wg = NULL;
     }

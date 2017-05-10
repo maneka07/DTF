@@ -544,6 +544,8 @@ void* dtf_malloc(size_t size)
 
 void dtf_free(void *ptr, size_t size)
 {
+    if(size > gl_stats.malloc_size)
+        assert(0);
     gl_stats.malloc_size -= size;
     free(ptr);
     return;
