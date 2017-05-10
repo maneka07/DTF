@@ -206,7 +206,7 @@ _EXTERN_C_ int dtf_finalize()
         dtf_free(gl_msg_buf, gl_conf.data_msg_size_limit);
 
     if(gl_stats.malloc_size - MAX_COMP_NAME > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size);// - MAX_COMP_NAME);
 
 
     if(gl_stats.num_tsrch > 0){
@@ -285,10 +285,11 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
         CHECK_MPI(errno);
     }
 
-   if( (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH) && (fbuf->iomode == DTF_IO_MODE_MEMORY)){
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Init masters");
-        init_req_match_masters(comm, fbuf->mst_info);
 
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Init masters");
+    init_req_match_masters(comm, fbuf->mst_info);
+
+    if( (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH) && (fbuf->iomode == DTF_IO_MODE_MEMORY)){
         if(fbuf->mst_info->is_master_flag){
             int nranks;
             MPI_Comm_size(comm, &nranks);
@@ -385,8 +386,12 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
 _EXTERN_C_ void dtf_close(const char* filename)
 {
     if(!lib_initialized) return;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Closing file %s", filename);
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL) return;
+    if(fbuf == NULL){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "File not treated by dtf");
+        return;
+    }
 //    if(fbuf->reader_id == gl_my_comp_id)
 
     MPI_Barrier(fbuf->comm);
@@ -443,7 +448,7 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
         if(fbuf == NULL){
 
             if( (filename != NULL) && (strlen(filename) == 0) )
-                DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file with ncid %d is not treated by DTF (not in configuration file). Explicit matching ignored.", ncid);
+                DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file (%s) with ncid %d is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
             else
                 DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
             return 0;
@@ -462,9 +467,9 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
             MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
         }
-        fbuf->is_matching_flag = 1;
+
         match_ioreqs(fbuf, intracomp_io_flag);
-        fbuf->is_matching_flag = 0;
+
   // }
     return 0;
 }
@@ -492,10 +497,7 @@ _EXTERN_C_ void dtf_match_multiple(int ncid)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_multiple can only be called by writer component. Ignoring.");
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
-    if(fbuf->is_matching_flag){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
-        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-    }
+
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching multiple");
     fbuf->done_match_multiple_flag = 0;
     while(!fbuf->done_match_multiple_flag)
@@ -521,6 +523,7 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
         DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: dtf_complete_multiple can only be called by reader");
         return;
     }
+    MPI_Barrier(fbuf->comm);
     notify_complete_multiple(fbuf);
 }
 
@@ -636,8 +639,10 @@ _EXTERN_C_ int dtf_io_mode(const char* filename)
 {
     if(!lib_initialized) return 0;
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL)
+    if(fbuf == NULL){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "File %s not found in file list", filename);
         return DTF_IO_MODE_UNDEFINED;
+    }
     return fbuf->iomode;
 }
 

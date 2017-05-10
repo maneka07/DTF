@@ -107,7 +107,9 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
     if(fbuf->mst_info != NULL){
         if(fbuf->mst_info->masters != NULL)
             dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
-         dtf_free(fbuf->mst_info, sizeof(master_info_t));
+        if(fbuf->mst_info->my_wg != NULL);
+            dtf_free(fbuf->mst_info->my_wg,(fbuf->mst_info->my_wg_sz - 1)*sizeof(int));
+        dtf_free(fbuf->mst_info, sizeof(master_info_t));
     }
 
     dtf_free(fbuf, sizeof(file_buffer_t));
@@ -148,10 +150,11 @@ file_buffer_t* new_file_buffer()
     assert(buf->mst_info != NULL);
     buf->mst_info->masters = NULL;
     buf->mst_info->is_master_flag = 0;
-    buf->mst_info->my_workgroup_sz = 0;
+    buf->mst_info->my_wg_sz = 0;
+    buf->mst_info->my_wg = NULL;
     buf->mst_info->nmasters = 0;
     buf->mst_info->iodb = NULL;
-    buf->mst_info->nrranks_completed = 0;
+//    buf->mst_info->nrranks_completed = 0;
     buf->mst_info->nwranks_completed = 0;
     buf->mst_info->nrranks_opened = 0;
     buf->mst_info->nwranks_opened = 0;

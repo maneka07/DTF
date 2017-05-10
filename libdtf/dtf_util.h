@@ -18,11 +18,12 @@
 #define IO_DATA_TAG         3       /*writer -> reader*/
 #define READ_DONE_TAG       4       /*reader->master*/
 #define IO_CLOSE_FILE_TAG   5      /*reader->master, master->writers*/
-#define FILE_INFO_TAG       6
-#define FILE_INFO_REQ_TAG   7
-#define ROOT_MST_TAG        8
-#define MATCH_DONE_TAG      9
-#define IO_REQS_TAG         10
+#define IO_OPEN_FILE_FLAG   6
+#define FILE_INFO_TAG       7
+#define FILE_INFO_REQ_TAG   8
+#define ROOT_MST_TAG        9
+#define MATCH_DONE_TAG      10
+#define IO_REQS_TAG         11
 
 #define DISTR_MODE_REQ_MATCH    1
 

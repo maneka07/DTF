@@ -1053,20 +1053,19 @@ static void reset_fbuf_match(file_buffer_t *fbuf)
         fbuf->mst_info->iodb->updated_flag = 1;
 
     fbuf->is_matching_flag = 0;
-    fbuf->mst_info->nrranks_completed = 0;
+//    fbuf->mst_info->nrranks_completed = 0;
     fbuf->mst_info->nwranks_completed = 0;
 }
 
 
 void notify_complete_multiple(file_buffer_t *fbuf)
 {
+    /*Barrier on upper level*/
     int i;
-    MPI_Barrier(fbuf->comm);
     DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify writer masters that completed multiple for %s", fbuf->file_path);
     int rank;
-    //TODO init root-_reader for readers
-    MPI_Comm_rank(fbuf->comm, &rank);
-    if(rank == 0){
+
+    if(fbuf->root_reader == gl_my_rank){
         for(i = 0; i < fbuf->mst_info->nmasters; i++){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Notify mst %d", fbuf->mst_info->masters[i]);
             int errno = MPI_Send(&fbuf->ncid, 1, MPI_INT, fbuf->mst_info->masters[i], DONE_MULTIPLE_FLAG, gl_comps[fbuf->writer_id].comm);
@@ -1180,14 +1179,16 @@ void match_ioreqs_all(int rw_flag)
 int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 {
     double t_start;
-
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %d, intracomp %d", fbuf->ncid, intracomp_io_flag);
+    int i;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %s (ncid %d), intracomp %d", fbuf->file_path, fbuf->ncid, intracomp_io_flag);
 
     if(fbuf->mst_info->is_master_flag){
         //there should be no unfinished matches
-        assert(fbuf->mst_info->nrranks_completed == 0);
         assert(fbuf->mst_info->nwranks_completed == 0);
     }
+    assert(!fbuf->is_matching_flag);
+
+//TODO what if reader has no read reqs
     t_start = MPI_Wtime();
     /*If a writer process doesn't have any io requests, it still has to
       wait for the master process to let it complete.
@@ -1196,20 +1197,29 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     if(fbuf->wreq_cnt == 0 && fbuf->rreq_cnt == 0){
         DTF_DBG(VERBOSE_DBG_LEVEL, "dtf Warning: ps has no requests for file %d", fbuf->ncid);
         if(fbuf->reader_id == gl_my_comp_id){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Completed all rreqs. Notify master.");
-            /*Notify master 0 that all my read io
-            requests for this file have been completed*/
+//            DTF_DBG(VERBOSE_DBG_LEVEL, "Completed all rreqs. Notify master.");
+//            /*Notify master 0 that all my read io
+//            requests for this file have been completed*/
+//            int errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm);
+//            CHECK_MPI(errno);
+//            gl_stats.nmsg_sent++;
+            //return 0;
+             //set
+            fbuf->done_matching_flag = 1;
+        } else if(intracomp_io_flag){
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Notify root writer I have nothing to read");
             int errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm);
             CHECK_MPI(errno);
-            gl_stats.nmsg_sent++;
-            return 0;
+            fbuf->done_matching_flag = 0;
         }
     } else{
         DTF_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs to match", fbuf->rreq_cnt, fbuf->wreq_cnt);
         send_ioreqs(fbuf, intracomp_io_flag);
+         //set
+        fbuf->done_matching_flag = 0;
     }
-    //set
-    fbuf->done_matching_flag = 0;
+
+    //TODO is this flag still needed?
     fbuf->is_matching_flag = 1;
     /*Have to check for both things otherwise writers sometime hang
     (maybe they receive IO_CLOSE_FILE_TAG before READ_DONE_TAG by mistake?)*/
@@ -1241,6 +1251,18 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time for matching %.4f", MPI_Wtime() - t_start);
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
+
+    if(gl_my_comp_id == fbuf->reader_id){
+        MPI_Barrier(fbuf->comm);
+        if(fbuf->root_reader == gl_my_rank){
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer masters reader completed matching");
+            for(i = 0; i < fbuf->mst_info->nmasters; i++){
+                int errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->mst_info->masters[i], READ_DONE_TAG, gl_comps[fbuf->writer_id].comm);
+                CHECK_MPI(errno);
+                gl_stats.nmsg_sent++;
+            }
+        }
+    }
 
     reset_fbuf_match(fbuf);
     return 0;
@@ -1683,12 +1705,18 @@ static void recv_data_rdr(void* buf, int bufsz)
             delete_ioreq(fbuf, &ioreq);
 
             if(fbuf->rreq_cnt == 0){
-                DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE:Completed all rreqs");
-                /*Notify my master writer rank that all my read io
-                requests for this file have been completed*/
-                int errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm);
-                CHECK_MPI(errno);
-                gl_stats.nmsg_sent++;
+                DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE:Completed all rreqs for file %s", fbuf->file_path);
+
+                //Only when it's intra comp reading all writer processes have
+                //to notify root writer that they finished. For reader component,
+                //root reader will notify all master writers later.
+                if(fbuf->writer_id == gl_my_comp_id){
+                    /*Notify my master writer rank that all my read io
+                    requests for this file have been completed*/
+                    int errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm);
+                    CHECK_MPI(errno);
+                    gl_stats.nmsg_sent++;
+                }
 
                 /*Process of the reader component can set this flag now.
                   Writer component will set this flag only when the master
@@ -1722,46 +1750,63 @@ void send_file_info(file_buffer_t *fbuf, int reader_root)
     dtf_free(sbuf, sbuf_sz);
 }
 
+
+static void notify_masters(file_buffer_t *fbuf, int msgtag)
+{
+    int i, errno;
+    assert(fbuf->mst_info != NULL);
+    assert(gl_my_rank == fbuf->root_writer);
+    for(i = 0; i < fbuf->mst_info->nmasters; i++) {
+        if(fbuf->mst_info->masters[i] == gl_my_rank)
+            continue;
+        errno = MPI_Send(&fbuf->ncid, 1, MPI_INT, fbuf->mst_info->masters[i], msgtag, gl_comps[gl_my_comp_id].comm);
+        CHECK_MPI(errno);
+    }
+}
+
 /*Function executed by master writers to notify other writers
   about something defined by mpitag (match completion or file close)*/
 static void notify_workgroup(file_buffer_t *fbuf, int msgtag)
 {
-    MPI_Group glob_group, file_group;
-    int nranks;
-    int *ranks, *glob_ranks;
     int i, errno;
-    int rank;
-
     DTF_DBG(VERBOSE_DBG_LEVEL, "Mst %d will notify workgroup (msgtag %d) for %s", gl_my_rank, msgtag, fbuf->file_path);
-    /*First, translate the ranks in the communicator which
-    was used to open the file to global ranks*/
-    MPI_Comm_group(gl_comps[gl_my_comp_id].comm, &glob_group);
-    MPI_Comm_group(fbuf->comm, &file_group);
+    assert(fbuf->mst_info->is_master_flag);
 
-    nranks = fbuf->mst_info->my_workgroup_sz - 1;
-    ranks = dtf_malloc(nranks*sizeof(int));
-    assert(ranks != NULL);
-    glob_ranks = dtf_malloc(nranks*sizeof(int));
-    assert(glob_ranks != NULL);
-
-    MPI_Comm_rank(fbuf->comm, &rank);
-
-    for(i = 0; i < nranks; i++)
-        ranks[i] = rank + i + 1;
-
-    errno = MPI_Group_translate_ranks(file_group, nranks, ranks, glob_group, glob_ranks);
-    CHECK_MPI(errno);
-
-    for(i = 0; i < nranks; i++){
-        errno = MPI_Send(&fbuf->ncid, 1, MPI_INT, glob_ranks[i], msgtag, gl_comps[gl_my_comp_id].comm);
+    for(i = 0; i < fbuf->mst_info->my_wg_sz - 1; i++){
+        errno = MPI_Send(&fbuf->ncid, 1, MPI_INT, fbuf->mst_info->my_wg[i], msgtag, gl_comps[gl_my_comp_id].comm);
         CHECK_MPI(errno);
         gl_stats.nmsg_sent++;
     }
 
-    MPI_Group_free(&file_group);
-    MPI_Group_free(&glob_group);
-    dtf_free(ranks, nranks*sizeof(int));
-    dtf_free(glob_ranks, nranks*sizeof(int));
+//    /*First, translate the ranks in the communicator which
+//    was used to open the file to global ranks*/
+//    MPI_Comm_group(gl_comps[gl_my_comp_id].comm, &glob_group);
+//    MPI_Comm_group(fbuf->comm, &file_group);
+//
+//    nranks = fbuf->mst_info->my_workgroup_sz - 1;
+//    ranks = dtf_malloc(nranks*sizeof(int));
+//    assert(ranks != NULL);
+//    glob_ranks = dtf_malloc(nranks*sizeof(int));
+//    assert(glob_ranks != NULL);
+//
+//    MPI_Comm_rank(fbuf->comm, &rank);
+//
+//    for(i = 0; i < nranks; i++)
+//        ranks[i] = rank + i + 1;
+//
+//    errno = MPI_Group_translate_ranks(file_group, nranks, ranks, glob_group, glob_ranks);
+//    CHECK_MPI(errno);
+//
+//    for(i = 0; i < nranks; i++){
+//        errno = MPI_Send(&fbuf->ncid, 1, MPI_INT, glob_ranks[i], msgtag, gl_comps[gl_my_comp_id].comm);
+//        CHECK_MPI(errno);
+//        gl_stats.nmsg_sent++;
+//    }
+//
+//    MPI_Group_free(&file_group);
+//    MPI_Group_free(&glob_group);
+//    dtf_free(ranks, nranks*sizeof(int));
+//    dtf_free(glob_ranks, nranks*sizeof(int));
 }
 
 void progress_io_matching()
@@ -1773,7 +1818,7 @@ void progress_io_matching()
     int bufsz;
     void *rbuf;
     char filename[MAX_FILE_NAME];
-    int i, ncid;
+    int ncid;
     double t_start = MPI_Wtime();
     double t_start_comm;
     gl_stats.nprogress_call++;
@@ -1906,56 +1951,29 @@ void progress_io_matching()
                     CHECK_MPI(errno);
                     fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
                     assert(fbuf != NULL);
-                    assert(fbuf->root_writer == gl_my_rank);
 
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Recv read done for file %s", fbuf->file_path);
                     if(comp == gl_my_comp_id){
+                        assert(fbuf->root_writer == gl_my_rank);
                         fbuf->mst_info->nwranks_completed++;
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Recv read_done from writer %d (tot %d)", src, fbuf->mst_info->nwranks_completed);
-                        /*shouldn't have matching going on for readers and writers at the same time*/
-                        assert(fbuf->mst_info->nrranks_completed == 0);
+                        DTF_DBG(VERBOSE_DBG_LEVEL, " -> from writer %d (tot %d)", src, fbuf->mst_info->nwranks_completed);
+                        if((fbuf->mst_info->nwranks_opened > 0) && (fbuf->mst_info->nwranks_completed == fbuf->mst_info->nwranks_opened)){
+
+                            assert(gl_my_rank == fbuf->root_writer);
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "Notify masters & workgroup that intracomp matching is finished");
+                            notify_masters(fbuf, MATCH_DONE_TAG);
+                            notify_workgroup(fbuf, MATCH_DONE_TAG);
+                            fbuf->done_matching_flag = 1;
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE, Done matching at %.3f", MPI_Wtime()-gl_stats.walltime);
+                        }
                     } else {
                         assert(comp == fbuf->reader_id);
-                        fbuf->mst_info->nrranks_completed++;
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: Recv read_done from reader %d (tot %d) at %.3f",
-                                src, fbuf->mst_info->nrranks_completed, MPI_Wtime() - gl_stats.walltime);
+                        //fbuf->mst_info->nrranks_completed++;
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "->from reader root. Match complete. Notify my group.");
                         assert(fbuf->mst_info->nwranks_completed == 0);
-                    }
-
-                    if( ((fbuf->mst_info->nrranks_opened > 0) && (fbuf->mst_info->nrranks_completed == fbuf->mst_info->nrranks_opened)) ||
-                        ((fbuf->mst_info->nwranks_opened > 0) && (fbuf->mst_info->nwranks_completed == fbuf->mst_info->nwranks_opened)) ){
-
-                            DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: Notify masters that matching for %s is finished",fbuf->file_path);
-                            for(i = 0; i < fbuf->mst_info->nmasters; i++){
-                                    if(fbuf->mst_info->masters[i] == gl_my_rank)
-                                        continue;
-                                    DTF_DBG(VERBOSE_DBG_LEVEL, "Notify mst %d", fbuf->mst_info->masters[i]);
-                                    errno = MPI_Send(&ncid, 1, MPI_INT, fbuf->mst_info->masters[i], MATCH_DONE_TAG, gl_comps[gl_my_comp_id].comm);
-                                    CHECK_MPI(errno);
-                                    gl_stats.nmsg_sent++;
-                            }
-
-                            if(fbuf->mst_info->is_master_flag){
-                                DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that req matching for %s completed", fbuf->file_path);
-                                /*Tell other writer ranks that they can complete matching*/
-                                notify_workgroup(fbuf, MATCH_DONE_TAG);
-                                DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
-                                fbuf->done_matching_flag = 1;
-                                DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE, Done matching at %.3f", MPI_Wtime()-gl_stats.walltime);
-//                                if(fbuf->rdr_closed_flag){
-//                                    //DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up all reqs and dbs");
-//                                    assert(fbuf->rreq_cnt == 0);
-////                                    /*Complete my own write requests
-////                                      NOTE: do not delete reqs for SCALE-LETKF*/
-////                                    //delete_ioreqs(fbuf);
-////
-////                                    if(fbuf->mst_info->is_master_flag){
-////                                        /*Check that I don't have any read reqs incompleted*/
-////                                        assert(fbuf->mst_info->iodb->nritems == 0);
-////                                        /*Clean my iodb*/
-////                                        clean_iodb(fbuf->mst_info->iodb);
-////                                    }
-//                                }
-                            }
+                        //notify_masters(fbuf, MATCH_DONE_TAG);
+                        notify_workgroup(fbuf, MATCH_DONE_TAG);
+                        fbuf->done_matching_flag = 1;
                     }
                     break;
                 case MATCH_DONE_TAG:
@@ -1994,13 +2012,7 @@ void progress_io_matching()
 
                     if(gl_my_rank == fbuf->root_writer){
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Notify other masters that readers are closing the file");
-                        for(i = 0; i < fbuf->mst_info->nmasters; i++){
-                            if(fbuf->mst_info->masters[i] == gl_my_rank)
-                                continue;
-                            errno = MPI_Send(&ncid, 1, MPI_INT, fbuf->mst_info->masters[i], IO_CLOSE_FILE_TAG, gl_comps[gl_my_comp_id].comm);
-                            CHECK_MPI(errno);
-                            gl_stats.nmsg_sent++;
-                        }
+                        notify_masters(fbuf, IO_CLOSE_FILE_TAG);
                     }
                     if(fbuf->mst_info->is_master_flag){
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that they can close the file %s", fbuf->file_path);
@@ -2047,6 +2059,7 @@ void progress_io_matching()
                     fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
                     assert(fbuf != NULL);
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Recv done multiple tag for %s from %d", fbuf->file_path, src);
+                    //
                     if(fbuf->mst_info->is_master_flag){
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that multiple matching for %s completed", fbuf->file_path);
                         /*Tell other writer ranks that they can complete matching*/
@@ -2054,6 +2067,22 @@ void progress_io_matching()
                     }
                     fbuf->done_matching_flag = 1;
                     fbuf->done_match_multiple_flag = 1;
+                    break;
+                case IO_OPEN_FILE_FLAG:
+                    errno = MPI_Recv(&ncid, 1, MPI_INT, src, IO_OPEN_FILE_FLAG, gl_comps[comp].comm, &status);
+                    CHECK_MPI(errno);
+                    fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
+                    assert(fbuf != NULL);
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Recv open file tag for %s from %d", fbuf->file_path, src);
+                    if(fbuf->mst_info->is_master_flag){
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "Notify workgroup");
+                        /*Tell other writer ranks that they can complete matching*/
+                        notify_workgroup(fbuf, IO_OPEN_FILE_FLAG);
+                        fbuf->rdr_closed_flag = 0;
+                    }
+                    if(fbuf->iomode == DTF_IO_MODE_FILE){
+                        fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+                    }
                     break;
                 default:
                     DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown tag %d", status.MPI_TAG);
@@ -2069,12 +2098,11 @@ void progress_io_matching()
 /*function called by the writer processes*/
 int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
 {
-
     int wg, nranks, myrank, i, errno;
     char* s = getenv("MAX_WORKGROUP_SIZE");
     MPI_Group glob_group, file_group;
     int my_master, my_master_glob;
-    int *masters;
+    int *masters, *ranks;
 
     if(s == NULL)
         wg = MAX_WORKGROUP_SIZE;
@@ -2092,21 +2120,26 @@ int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
 
     if(nranks <= wg){
         my_master = 0;
-        mst_info->my_workgroup_sz = nranks;
+        mst_info->my_wg_sz = nranks;
         mst_info->nmasters = 1;
     } else {
         my_master = (int)(myrank/wg) * wg;
-        mst_info->my_workgroup_sz = wg;
+        mst_info->my_wg_sz = wg;
         mst_info->nmasters = (int)(nranks/wg);
         if(nranks % wg > 0){
             mst_info->nmasters++;
             if(myrank >= (mst_info->nmasters-1)*wg)
-                mst_info->my_workgroup_sz = nranks % wg;
+                mst_info->my_wg_sz = nranks % wg;
         }
     }
 
     if(myrank == 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Nmasters %d", mst_info->nmasters);
+
+    /*Translate the rank of my master*/
+    errno = MPI_Group_translate_ranks(file_group, 1, &my_master, glob_group, &my_master_glob);
+    CHECK_MPI(errno);
+    mst_info->is_master_flag = (gl_my_rank == my_master_glob) ? 1 : 0;
 
     mst_info->masters = (int*)dtf_malloc(mst_info->nmasters * sizeof(int));
     assert(mst_info->masters != NULL);
@@ -2121,23 +2154,36 @@ int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     errno = MPI_Group_translate_ranks(file_group, mst_info->nmasters, masters, glob_group, mst_info->masters);
     CHECK_MPI(errno);
 
-    /*Translate the rank of my master*/
-    errno = MPI_Group_translate_ranks(file_group, 1, &my_master, glob_group, &my_master_glob);
-    CHECK_MPI(errno);
-    mst_info->is_master_flag = (gl_my_rank == my_master_glob) ? 1 : 0;
-
     if(myrank == 0){
         for(i = 0; i < mst_info->nmasters; i++)
             DTF_DBG(VERBOSE_DBG_LEVEL, "Rank %d is a master", mst_info->masters[i]);
     }
-    if(mst_info->is_master_flag)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "My wg size %d", mst_info->my_workgroup_sz);
-    dtf_free(masters, mst_info->nmasters * sizeof(int));
-    MPI_Group_free(&glob_group);
-    MPI_Group_free(&file_group);
 
-    mst_info->nrranks_completed = 0;
+    dtf_free(masters, mst_info->nmasters * sizeof(int));
+
+    if(mst_info->is_master_flag){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "My wg size %d", mst_info->my_wg_sz);
+        //Translate my workgroup ranks
+        nranks = mst_info->my_wg_sz - 1;
+        mst_info->my_wg = dtf_malloc(nranks*sizeof(int));
+        assert(mst_info->my_wg != NULL);
+        ranks = dtf_malloc(nranks*sizeof(int));
+        assert(ranks != NULL);
+
+        for(i = 0; i < nranks; i++)
+            ranks[i] = myrank + i + 1;
+
+        errno = MPI_Group_translate_ranks(file_group, nranks, ranks, glob_group, mst_info->my_wg);
+        CHECK_MPI(errno);
+        dtf_free(ranks, nranks*sizeof(int));
+    } else {
+        mst_info->my_wg = NULL;
+    }
+    MPI_Group_free(&file_group);
+    MPI_Group_free(&glob_group);
+
     mst_info->nwranks_completed = 0;
+    mst_info->iodb = NULL;
     return 0;
 }
 

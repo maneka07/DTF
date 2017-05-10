@@ -121,7 +121,7 @@ void notify_file_ready(file_buffer_t *fbuf)
 void close_file(file_buffer_t *fbuf)
 {
     /*Note: there was a barrier in the upper function*/
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Closing file %s", fbuf->file_path);
+
 
     if(fbuf->writer_id == gl_my_comp_id){
 
@@ -129,6 +129,7 @@ void close_file(file_buffer_t *fbuf)
             assert(fbuf->comm != MPI_COMM_NULL);
             if(gl_my_rank == fbuf->root_writer)
                 notify_file_ready(fbuf);
+
         } else if((fbuf->iomode == DTF_IO_MODE_MEMORY) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH)){
             /* cannot close file untill the reader closed it as well.
              then we can clean up all the requests etc. */
@@ -142,6 +143,9 @@ void close_file(file_buffer_t *fbuf)
                 dtf_free(fbuf->mst_info->iodb, sizeof(ioreq_db_t));
                 fbuf->mst_info->iodb = NULL;
             }
+            //reset flags
+            fbuf->rdr_closed_flag = 0;
+
             /*File is opened and closed multiple times in SCALE-LETKF
               but it's the same set of processes, hence, don't delete the data.
             */
@@ -152,15 +156,19 @@ void close_file(file_buffer_t *fbuf)
             fbuf->root_writer = -1;*/
         }
     } else if (fbuf->reader_id == gl_my_comp_id){
-        if((fbuf->iomode == DTF_IO_MODE_MEMORY) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH)){
-            int rank;
+        //if((fbuf->iomode == DTF_IO_MODE_MEMORY) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH)){
+
             assert(fbuf->rreq_cnt == 0);
             assert(fbuf->wreq_cnt == 0);
-            MPI_Comm_rank(fbuf->comm, &rank);
-            if(rank == 0){
-                /*Notify the root writer I am closing the file*/
-                errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->root_writer, IO_CLOSE_FILE_TAG, gl_comps[fbuf->writer_id].comm);
-                CHECK_MPI(errno);
+
+            if(fbuf->root_reader == gl_my_rank){
+                int i;
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer masters readers have closed the file");
+                for(i = 0; i < fbuf->mst_info->nmasters; i++){
+                    /*Notify the root writer I am closing the file*/
+                    errno = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->mst_info->masters[i], IO_CLOSE_FILE_TAG, gl_comps[fbuf->writer_id].comm);
+                    CHECK_MPI(errno);
+                }
             }
             /*dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
             dtf_free(fbuf->mst_info, sizeof(master_info_t));
@@ -170,7 +178,7 @@ void close_file(file_buffer_t *fbuf)
 //            /*Reader never needs these flags but set them just in case*/
 //            fbuf->fclosed_flag = 1;
 //            fbuf->fclose_notify_flag = 1;
-        }
+        //}
     }
 }
 
@@ -182,9 +190,13 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
     int rank;
 
     if(fbuf->reader_id == gl_my_comp_id){
-        if(fbuf->iomode == DTF_IO_MODE_FILE){
+        MPI_Comm_rank(comm, &rank);
+        if(rank == 0)
+            fbuf->root_reader = gl_my_rank;
+        errno = MPI_Bcast(&fbuf->root_reader, 1, MPI_INT, 0, comm);
+        CHECK_MPI(errno);
 
-            MPI_Comm_rank(comm, &rank);
+        if(fbuf->iomode == DTF_IO_MODE_FILE){
             if(fbuf->root_writer == -1){
                 if(rank == 0){
                     int ncid;
@@ -240,7 +252,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
                 if(fbuf->root_writer != -1)
                     goto fn_exit;   //already got all info from previous iteration
-                MPI_Comm_rank(comm, &rank);
+
                 /*Zero rank will inquire the pnetcdf header/dtf vars info/masters info
                 from writer's global zero rank and then broadcast this info to other
                 readers that opened the file*/
@@ -282,6 +294,12 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                 dtf_free(buf, bufsz);
                 fbuf->is_ready = 1;
             }
+        }
+
+        //Notify writer
+        if(rank == 0){
+            errno = MPI_Send(&fbuf->ncid, 1, MPI_INT, fbuf->root_writer, IO_OPEN_FILE_FLAG, gl_comps[fbuf->writer_id].comm);
+            CHECK_MPI(errno);
         }
     } else if(fbuf->writer_id == gl_my_comp_id){
         //do we need it?

@@ -628,12 +628,15 @@ void finalize_files()
                 assert(fbuf->writer_id == gl_my_comp_id);
 
                 if(fbuf->iomode == DTF_IO_MODE_FILE){
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Finalizing file %s", fbuf->file_path);
                         if(fbuf->fready_notify_flag == RDR_NOTIFIED)
                             compl_cnt++;
                         else{
                             assert(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED);
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "Waiting to know root reader");
                             while(fbuf->root_reader == -1)
                                 progress_io_matching();
+                            DTF_DBG(VERBOSE_DBG_LEVEL, "Root reader is %d", fbuf->root_reader);
                             notify_file_ready(fbuf);
                         }
                 } else if(fbuf->iomode == DTF_IO_MODE_MEMORY && gl_conf.distr_mode == DISTR_MODE_REQ_MATCH){

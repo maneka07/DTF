@@ -80,16 +80,18 @@ typedef struct ioreq_db{
 }ioreq_db_t;
 
 typedef struct master_info{
-    unsigned int         nrranks_completed;  /*Number of reader ranks that completed their read request. Counted only by master 0.*/
+   // unsigned int         nrranks_completed;  /*Number of reader ranks that completed their read request. Counted only by master 0.*/
     unsigned int         nwranks_completed;  /*Number of writer ranks that completed their read requests
                                               (writer can also read the file). Counted only by master 0.*/
+    //TODO remove it
     unsigned int         nrranks_opened;     /*Number of reader ranks that opened the file*/
     unsigned int         nwranks_opened;     /*Number of writer ranks that opened the file*/
     struct ioreq_db      *iodb;
     int is_master_flag;  /*is this rank a master rank*/
     int nmasters;   /*Number of master nodes that hold data for request matching*/
     int *masters;   /*Ranks of master nodes on the writer's side*/
-    unsigned int my_workgroup_sz;
+    unsigned int my_wg_sz;
+    int *my_wg;
 } master_info_t;
 
 typedef struct file_info_req_q{
