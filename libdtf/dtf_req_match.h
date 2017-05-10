@@ -80,11 +80,8 @@ typedef struct ioreq_db{
 }ioreq_db_t;
 
 typedef struct master_info{
-   // unsigned int         nrranks_completed;  /*Number of reader ranks that completed their read request. Counted only by master 0.*/
     unsigned int         nwranks_completed;  /*Number of writer ranks that completed their read requests
                                               (writer can also read the file). Counted only by master 0.*/
-    //TODO remove it
-    unsigned int         nrranks_opened;     /*Number of reader ranks that opened the file*/
     unsigned int         nwranks_opened;     /*Number of writer ranks that opened the file*/
     struct ioreq_db      *iodb;
     int is_master_flag;  /*is this rank a master rank*/
@@ -123,7 +120,7 @@ void progress_io_matching();
 void send_ioreqs(file_buffer_t *fbuf, int intracomp_match);
 void clean_iodb(ioreq_db_t *iodb);
 int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
-void match_ioreqs_all(int rw_flag);
+//void match_ioreqs_all(int rw_flag);
 int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);
 void init_iodb(file_buffer_t *fbuf);
 void unpack_file_info(MPI_Offset bufsz, void *buf);

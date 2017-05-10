@@ -53,7 +53,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
                                           int *request);
 _EXTERN_C_ int dtf_match_ioreqs(const char* filename);
 _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag);
-_EXTERN_C_ void dtf_match_io_all(int rw_flag);
+//_EXTERN_C_ void dtf_match_io_all(int rw_flag);
 _EXTERN_C_ void dtf_enddef(const char *filename);
 
 
@@ -61,7 +61,7 @@ _EXTERN_C_ void dtf_enddef(const char *filename);
 void dtf_init_(const char *filename, char *module_name, int* ierr);
 void dtf_finalize_(int* ierr);
 void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int *ierr);
-void dtf_match_io_all_(int *rw_flag);
+//void dtf_match_io_all_(int *rw_flag);
 void dtf_print_(const char *str);
 void dtf_complete_multiple_(const char *filename, int *ncid);
 void dtf_match_multiple_(int *ncid);

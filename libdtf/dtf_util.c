@@ -40,7 +40,6 @@ void process_file_info_req_queue()
             memcpy(&fbuf->root_reader, (unsigned char*)(req->buf)+MAX_FILE_NAME, sizeof(int));
 
             if(fbuf->iomode == DTF_IO_MODE_MEMORY && gl_conf.distr_mode == DISTR_MODE_REQ_MATCH){
-                memcpy(&(fbuf->mst_info->nrranks_opened), (unsigned char*)(req->buf)+MAX_FILE_NAME+sizeof(int), sizeof(int));
                 send_file_info(fbuf, fbuf->root_reader);
             } else if(fbuf->iomode == DTF_IO_MODE_FILE){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request");
@@ -51,7 +50,7 @@ void process_file_info_req_queue()
             int errno;
             DTF_DBG(VERBOSE_DBG_LEVEL, "Forward the request to root writer %d", fbuf->root_writer);
             /*Forward this request to the root master*/
-            errno = MPI_Send(req->buf, (int)(MAX_FILE_NAME+2*sizeof(int)), MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm);
+            errno = MPI_Send(req->buf, (int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm);
             CHECK_MPI(errno);
         }
 
@@ -64,7 +63,7 @@ void process_file_info_req_queue()
             if(req->next != NULL)
                 req->next->prev = req->prev;
         }
-        dtf_free(req->buf, MAX_FILE_NAME+sizeof(int)*2);
+        dtf_free(req->buf, MAX_FILE_NAME+sizeof(int));
         dtf_free(req, sizeof(file_info_req_q_t));
         req = tmp;
         DTF_DBG(VERBOSE_ALL_LEVEL, "Freed request");
@@ -203,12 +202,12 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                     MPI_Request req;
                     /*First, find out who is the root master.
                       In this case, only need to copy the file name and root reader rank*/
-                    void *buf = dtf_malloc(MAX_FILE_NAME+2*sizeof(int));
+                    void *buf = dtf_malloc(MAX_FILE_NAME+sizeof(int));
                     assert(buf != NULL);
                     memcpy(buf, fbuf->file_path, MAX_FILE_NAME);
                     memcpy((unsigned char*)buf+MAX_FILE_NAME, &gl_my_rank, sizeof(int));
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Asking writer who is the root of file %s", fbuf->file_path);
-                    errno = MPI_Isend(buf, (int)(MAX_FILE_NAME+2*sizeof(int)), MPI_BYTE, 0, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm, &req);
+                    errno = MPI_Isend(buf, (int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, 0, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm, &req);
                     CHECK_MPI(errno);
                     errno = MPI_Wait(&req, MPI_STATUS_IGNORE);
                     CHECK_MPI(errno);
@@ -264,9 +263,9 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                     MPI_Comm_size(comm, &nranks);
                     memcpy((unsigned char*)buf+MAX_FILE_NAME+sizeof(int), &nranks, sizeof(int));
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Asking writer who is the root of file %s", fbuf->file_path);
-                    errno = MPI_Send(buf, (int)(MAX_FILE_NAME+sizeof(int)*2), MPI_BYTE, 0, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm);
+                    errno = MPI_Send(buf, (int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, 0, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm);
                     CHECK_MPI(errno);
-                    dtf_free(buf, MAX_FILE_NAME+2*sizeof(int));
+                    dtf_free(buf, MAX_FILE_NAME+sizeof(int));
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Starting to wait for file info for %s", fbuf->file_path);
                     errno = MPI_Probe(MPI_ANY_SOURCE, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
                     CHECK_MPI(errno);

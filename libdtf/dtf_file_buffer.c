@@ -156,7 +156,6 @@ file_buffer_t* new_file_buffer()
     buf->mst_info->iodb = NULL;
 //    buf->mst_info->nrranks_completed = 0;
     buf->mst_info->nwranks_completed = 0;
-    buf->mst_info->nrranks_opened = 0;
     buf->mst_info->nwranks_opened = 0;
     buf->is_matching_flag = 0;
     return buf;

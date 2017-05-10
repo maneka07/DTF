@@ -527,32 +527,32 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
     notify_complete_multiple(fbuf);
 }
 
-/* The user has to state whether the process needs to match all read or write requests.
-   Because the process of matching for a reader and writer is not the same. */
-_EXTERN_C_ void dtf_match_io_all(int rw_flag)
-{
-    file_buffer_t *fbuf = gl_filebuf_list;
-
-    if(!lib_initialized) return;
-    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
-
-    if(rw_flag == DTF_READ){
-        DTF_DBG(VERBOSE_WARNING_LEVEL, "dtf_match_io_all() cannot be used in reader component. Ignoring.");
-        return;
-    }
-    /*First check that no matching is already happening*/
-    while(fbuf != NULL){
-        if(fbuf->is_matching_flag){
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io_all is called, but a matching process has already started before.");
-            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-        }
-        fbuf = fbuf->next;
-    }
-
-    match_ioreqs_all(rw_flag);
-
-    return;
-}
+///* The user has to state whether the process needs to match all read or write requests.
+//   Because the process of matching for a reader and writer is not the same. */
+//_EXTERN_C_ void dtf_match_io_all(int rw_flag)
+//{
+//    file_buffer_t *fbuf = gl_filebuf_list;
+//
+//    if(!lib_initialized) return;
+//    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
+//
+//    if(rw_flag == DTF_READ){
+//        DTF_DBG(VERBOSE_WARNING_LEVEL, "dtf_match_io_all() cannot be used in reader component. Ignoring.");
+//        return;
+//    }
+//    /*First check that no matching is already happening*/
+//    while(fbuf != NULL){
+//        if(fbuf->is_matching_flag){
+//            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io_all is called, but a matching process has already started before.");
+//            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+//        }
+//        fbuf = fbuf->next;
+//    }
+//
+//    match_ioreqs_all(rw_flag);
+//
+//    return;
+//}
 
 /**
     @brief  Check if the file is intended to be written by this component
@@ -703,10 +703,10 @@ void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int 
     *ierr = dtf_match_io(filename, *ncid, *intracomp_io_flag);
 }
 
-void dtf_match_io_all_(int *rw_flag)
-{
-    dtf_match_io_all(*rw_flag);
-}
+//void dtf_match_io_all_(int *rw_flag)
+//{
+//    dtf_match_io_all(*rw_flag);
+//}
 
 void dtf_print_(const char *str)
 {
