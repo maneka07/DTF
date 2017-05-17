@@ -553,6 +553,28 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
 //    return;
 //}
 
+
+_EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data)
+{
+    int i, nelems=1, max_print;
+    if(count == NULL)
+        return;
+    for(i = 0; i < ndims; i++)
+        nelems*=count[i];
+
+    if(nelems < 20)
+        max_print = nelems;
+    else
+        max_print = 20;
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "Data for var %d:", varid);
+    for(i = 0; i < max_print; i++)
+        if(dtype == 0)
+            printf("%.3f\t", ((float*)data)[i]);
+        else if(dtype == 1)
+            printf("%.3f\t", ((double*)data)[i]);
+    printf("\n");
+}
+
 /**
     @brief  Check if the file is intended to be written by this component
     @param  filename    name of the file
@@ -711,4 +733,9 @@ void dtf_match_multiple_(int *ncid)
 void dtf_complete_multiple_(const char *filename, int *ncid)
 {
     dtf_complete_multiple(filename, *ncid);
+}
+
+void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void* data)
+{
+    dtf_print_data(*varid, *dtype, *ndims, count, data);
 }
