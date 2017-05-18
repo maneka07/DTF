@@ -1898,7 +1898,7 @@ void progress_io_matching()
                         double t_start = MPI_Wtime();
                         errno = MPI_Send(rbuf,(int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm);
                         CHECK_MPI(errno);
-
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "Finished forwarding");
                         gl_stats.accum_comm_time += MPI_Wtime() - t_start;
                         gl_stats.nmatching_msg_sent++;
                         gl_stats.accum_msg_sz += (size_t)(MAX_FILE_NAME+sizeof(int));

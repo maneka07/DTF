@@ -545,7 +545,7 @@ void* dtf_malloc(size_t size)
 void dtf_free(void *ptr, size_t size)
 {
     if(size > gl_stats.malloc_size)
-        assert(0);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: mem stat negative (left %lu), will free %lu", gl_stats.malloc_size, size);
     gl_stats.malloc_size -= size;
     free(ptr);
     return;
