@@ -444,7 +444,33 @@ void shift_coord(int ndims, const MPI_Offset *bl_start,
 //        DTF_DBG(VERBOSE_DBG_LEVEL, "   %lld\t -->\t %lld", bl_start[i], subbl_start[i]);
 }
 
-/*For only only support conversion double->float*/
+
+/*only support conversion double<->float*/
+void get_put_data(dtf_var_t *var,
+                  MPI_Datatype dtype,
+                  unsigned char *block_data,
+                  const MPI_Offset *block_start,
+                  const MPI_Offset *block_count,
+                  const MPI_Offset subbl_start[],
+                  const MPI_Offset subbl_count[],
+                  unsigned char *subbl_data,
+                  int get_put_flag,
+                  int convert_flag)
+{
+    int i;
+    MPI_Offset *cur_coord = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+    for(i = 0; i < var->ndims; i++){
+        cur_coord[i] = subbl_start[i];
+    }
+    /*read from user buffer to send buffer*/
+    recur_get_put_data(var, dtype, block_data, block_start,
+                       block_count, subbl_start, subbl_count, 0,
+                       cur_coord, subbl_data, get_put_flag, convert_flag);
+    dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
+    gl_stats.ngetputcall++;
+}
+
+/*only support conversion double<->float*/
 void recur_get_put_data(dtf_var_t *var,
                           MPI_Datatype dtype,
                           unsigned char *block_data,

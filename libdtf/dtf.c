@@ -62,14 +62,11 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.malloc_size = 0;
     gl_conf.distr_mode = DISTR_MODE_REQ_MATCH;
 
-    gl_stats.nmsg_sent = 0;
     gl_stats.accum_msg_sz = 0;
     gl_stats.nmatching_msg_sent = 0;
     gl_stats.accum_match_time = 0;
     gl_stats.accum_db_match_time = 0;
     gl_stats.ndb_match = 0;
-    gl_stats.num_tsrch = 0;
-    gl_stats.t_treesrch = 0;
     gl_stats.walltime = MPI_Wtime();
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: started at %.3f", gl_stats.walltime);
@@ -77,6 +74,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.t_progress = 0;
     gl_stats.nprogress_call = 0;
     gl_stats.nioreqs = 0;
+    gl_stats.nbl = 0;
+    gl_stats.ngetputcall = 0;
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -102,7 +101,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 
     assert(gl_conf.io_db_type==DTF_DB_BLOCKS);
 
-    s = getenv("DFT_DATA_MSG_SIZE_LIMIT");
+    s = getenv("DTF_DATA_MSG_SIZE_LIMIT");
     if(s == NULL)
         gl_conf.data_msg_size_limit = DTF_DATA_MSG_SIZE_LIMIT;
     else
@@ -178,8 +177,6 @@ _EXTERN_C_ int dtf_finalize()
     if(gl_my_rank == 0){
         double walltime = MPI_Wtime() - gl_stats.walltime;
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: walltime %.3f", walltime);
-//        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: matching related messages sent %d, tot sz %lu, other msgs %d",
-//                 gl_stats.nmatching_msg_sent, gl_stats.accum_msg_sz, gl_stats.nmsg_sent);
 
         if(gl_stats.accum_db_match_time > 0)
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: match_ioreqs %.4f (%.4f%%), do_matching %.4f(%.4f%%), times do_matching %u",
@@ -202,17 +199,16 @@ _EXTERN_C_ int dtf_finalize()
 
     }
 
+    if(gl_stats.nbl > 0)
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Out of %u blocks handled %u noncontig blocks", gl_stats.nbl, gl_stats.ngetputcall);
+    if(gl_stats.nmatching_msg_sent > 0)
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Avg data msg sz %lu", (size_t)(gl_stats.accum_msg_sz/gl_stats.nmatching_msg_sent));
+
     if(gl_msg_buf != NULL)
         dtf_free(gl_msg_buf, gl_conf.data_msg_size_limit);
 
     if(gl_stats.malloc_size != MAX_COMP_NAME )
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
-
-
-//    if(gl_stats.num_tsrch > 0){
-//        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: searched tree %u times ( %.4f%% of runtime)", gl_stats.num_tsrch, (gl_stats.t_treesrch/gl_stats.walltime)*100);
-//    }
-
 
     dtf_free(gl_my_comp_name, MAX_COMP_NAME);
     lib_initialized = 0;

@@ -43,20 +43,19 @@ typedef struct dtf_config{
 }dtf_config_t;
 
 typedef struct stats{
-    int             nmsg_sent;
     int             nmatching_msg_sent;
     double          accum_comm_time;
     size_t          accum_msg_sz;      /*Accumulated size of messages */
     double          accum_match_time;  /*Total time spent in match_ioreqs*/
     double          accum_db_match_time; /*Time that master processes spend matching reqs from iodb*/
     int             ndb_match;       /*How many times I/O req matching was performed*/
-    unsigned int    num_tsrch;
-    double          t_treesrch;
     double          t_progress;
     double          walltime;
     size_t          malloc_size;
     unsigned long   nprogress_call;
     unsigned        nioreqs;
+    unsigned        nbl;    /*number of blocks transfered*/
+    unsigned        ngetputcall;  /*how many times had to use a subblock extraction function*/
 } stats_t;
 
 
@@ -85,6 +84,17 @@ void find_fit_block(int ndims,
 		    const size_t el_sz,
 		    MPI_Offset *cur_nelems,
 		    MPI_Offset tot_nelems);
+
+void get_put_data(dtf_var_t *var,
+                  MPI_Datatype dtype,
+                  unsigned char *block_data,
+                  const MPI_Offset *block_start,
+                  const MPI_Offset *block_count,
+                  const MPI_Offset subbl_start[],
+                  const MPI_Offset subbl_count[],
+                  unsigned char *subbl_data,
+                  int get_put_flag,
+                  int convert_flag);
 
 void recur_get_put_data(dtf_var_t *var,
                           MPI_Datatype dtype,
