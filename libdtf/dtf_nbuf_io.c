@@ -167,10 +167,16 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         /*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
         we ignore it. Start and count parameters are supposed to be with respect to
         element size for var->dtype*/
-        int buffered = 0;
-        if( (var->ndims <= 1) && (rw_flag == DTF_WRITE))
+        int buffered = gl_conf.buffered_req_match;
+
+        if(rw_flag == DTF_READ)
+            buffered = 0;
+        else if( (var->ndims <= 1) && (rw_flag == DTF_WRITE)) //This is specifically for SCALE-LETKF
             buffered = 1;
         req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, buffered);
+
+        if(gl_conf.do_checksum && (rw_flag == DTF_WRITE))
+            var->checksum += req->checksum;
 
         if(request != NULL)
             *request = req->id;

@@ -444,6 +444,36 @@ void shift_coord(int ndims, const MPI_Offset *bl_start,
 //        DTF_DBG(VERBOSE_DBG_LEVEL, "   %lld\t -->\t %lld", bl_start[i], subbl_start[i]);
 }
 
+double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype)
+{
+    double sum = 0;
+    unsigned nelems;
+    int i;
+
+    if(dtype != MPI_DOUBLE && dtype != MPI_FLOAT){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: checksum supported only for double or float data");
+        return 0;
+    }
+
+    if(ndims == 0){
+        if(dtype == MPI_DOUBLE)
+            sum = *(double*)arr;
+        else
+            sum = *(float*)arr;
+        return sum;
+    }
+
+    nelems = shape[0];
+    for(i = 1; i < ndims; i++)
+        nelems *= shape[i];
+
+    for(i = 0; i < nelems; i++)
+        if(dtype == MPI_DOUBLE)
+            sum += ((double*)arr)[i];
+        else
+            sum += ((float*)arr)[i];
+    return sum;
+}
 
 /*only support conversion double<->float*/
 void get_put_data(dtf_var_t *var,
@@ -462,6 +492,7 @@ void get_put_data(dtf_var_t *var,
     for(i = 0; i < var->ndims; i++){
         cur_coord[i] = subbl_start[i];
     }
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Call getput data");
     /*read from user buffer to send buffer*/
     recur_get_put_data(var, dtype, block_data, block_start,
                        block_count, subbl_start, subbl_count, 0,

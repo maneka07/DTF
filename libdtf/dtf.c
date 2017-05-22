@@ -61,7 +61,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     }
     gl_stats.malloc_size = 0;
     gl_conf.distr_mode = DISTR_MODE_REQ_MATCH;
-
     gl_stats.accum_msg_sz = 0;
     gl_stats.nmatching_msg_sent = 0;
     gl_stats.accum_match_time = 0;
@@ -86,6 +85,13 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_verbose = VERBOSE_DBG_LEVEL;
     else
         gl_verbose = atoi(s);
+
+    s = getenv("DTF_DO_CHECKSUM");
+    if(s == NULL)
+        gl_conf.do_checksum = 0;
+    else
+        gl_conf.do_checksum = atoi(s);
+    assert(gl_conf.do_checksum == 1 || gl_conf.do_checksum == 0);
 
     s = getenv("DTF_DETECT_OVERLAP");
     if(s == NULL)

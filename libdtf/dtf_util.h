@@ -40,6 +40,7 @@ typedef struct dtf_config{
     int         io_db_type;  /*data blocks(0)*/
     int         data_msg_size_limit;
     int         detect_overlap_flag;    /*should master process detect write overlap by different processes?*/
+    int         do_checksum;
 }dtf_config_t;
 
 typedef struct stats{
@@ -112,5 +113,5 @@ void shift_coord(int ndims, const MPI_Offset *bl_start,
                  const MPI_Offset *bl_count, MPI_Offset *subbl_start,
                  MPI_Offset *subbl_count, MPI_Offset fit_nelems);
 void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstbuf, int nelems);
-
+double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype);
 #endif

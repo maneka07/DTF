@@ -21,6 +21,7 @@ typedef struct dtf_var{
     MPI_Datatype            dtype;      /*Datatype of the variable*/
     MPI_Offset              *shape;     /* dim->size of each dim */
     int                     ndims;      /* number of dimensions */
+    double                  checksum;   /*to check if what was written to the var is what was read*/
  }dtf_var_t;
 
 

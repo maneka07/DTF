@@ -872,7 +872,7 @@ io_req_t *new_ioreq(int id,
     }
     DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, user bufsz %d", id, var_id, (int)ioreq->user_buf_sz);
     ioreq->is_buffered = buffered;
-    if(buffered){
+    if(buffered && (rw_flag == DTF_WRITE)){
         DTF_DBG(VERBOSE_DBG_LEVEL, "Buffering the data");
         ioreq->user_buf = dtf_malloc((size_t)ioreq->user_buf_sz);
         assert(ioreq->user_buf != NULL);
@@ -887,6 +887,13 @@ io_req_t *new_ioreq(int id,
     ioreq->prev = NULL;
     ioreq->dtype = dtype;
     ioreq->rw_flag = rw_flag;
+
+    if( (rw_flag == DTF_WRITE) && gl_conf.do_checksum && (dtype == MPI_DOUBLE || dtype == MPI_FLOAT))
+        ioreq->checksum = compute_checksum(buf, ndims, count, dtype);
+    else
+        ioreq->checksum = 0;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "checksum %.4f", ioreq->checksum);
+
     gl_stats.nioreqs++;
     return ioreq;
 }
@@ -1339,6 +1346,41 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
         for(i = 0; i < var->ndims; i++)
             DTF_DBG(VERBOSE_DBG_LEVEL, "       %lld --> %lld", start[i], count[i]);
 
+        /*Find the ioreq that has info about this block*/
+        ioreq = fbuf->ioreqs;
+        while(ioreq != NULL){
+            if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_WRITE)){
+                int match = 0;
+
+                for(i = 0; i < var->ndims; i++)
+                    if( (start[i] >= ioreq->start[i]) && (start[i] < ioreq->start[i]+ioreq->count[i]))
+                        match++;
+                    else
+                        break;
+
+                if(match == var->ndims){
+
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Matched ioreq with userbuf %p (strt->cnt): ", ioreq->user_buf);
+                    for(i = 0; i < var->ndims; i++){
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld", ioreq->start[i], ioreq->count[i]);
+                        assert(start[i] + count[i] <= ioreq->start[i] + ioreq->count[i]);
+
+                    }
+                    break;
+                }
+            }
+            ioreq = ioreq->next;
+        }
+        if(ioreq == NULL){
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Matching request not found.");
+        }
+        assert(ioreq != NULL);
+        if(gl_conf.do_checksum){
+            double chsum = compute_checksum(ioreq->user_buf, var->ndims, ioreq->count, ioreq->dtype);
+            if(chsum != ioreq->checksum)
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: ioreq checksum does not match with the old value: new %.4f, old %.4f", chsum, ioreq->checksum);
+
+        }
         //tmp = realloc(cur_coord, var->ndims*sizeof(MPI_Offset));  assert(tmp != NULL); cur_coord = tmp;
 
         /*For subblock that will fit in the buffer.*/
@@ -1434,44 +1476,9 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                 for(i=0; i < var->ndims; i++)
                     DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld \t orig: \t %lld\t --> %lld)", new_start[i], new_count[i], start[i], count[i]);
 
-               /*Find the ioreq that has info about this block*/
-                //TODO do not look fore new ioreq, check first if old ioreq is ok
-                int cnt_mismatch = 0;
-                ioreq = fbuf->ioreqs;
-                while(ioreq != NULL){
-                    if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_WRITE)){
-                        int match = 0;
-
-                        for(i = 0; i < var->ndims; i++)
-                            if( (new_start[i] >= ioreq->start[i]) && (new_start[i] < ioreq->start[i]+ioreq->count[i]))
-                                match++;
-                            else
-                                break;
-
-                        if(match == var->ndims){
-                            cnt_mismatch = 0;
-
-                            DTF_DBG(VERBOSE_DBG_LEVEL, "Matched ioreq with userbuf %p (strt->cnt): ", ioreq->user_buf);
-                            for(i = 0; i < var->ndims; i++){
-                                DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld", ioreq->start[i], ioreq->count[i]);
-
-                                assert(new_start[i] + new_count[i] <= ioreq->start[i] + ioreq->count[i]);
-
-                                if(new_count[i] != 1 && new_count[i] < ioreq->count[i])
-                                    cnt_mismatch++;
-                            }
-                            break;
-                        }
-                    }
-                    ioreq = ioreq->next;
-                }
-                if(ioreq == NULL){
-                    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Matching request not found.");
-                }
-                assert(ioreq != NULL);
-
                 /*Copy the block to send buffer*/
                 {
+                    int cnt_mismatch = 0;
                     int type_mismatch = 0;
                     if(var->dtype != ioreq->dtype){
                         /*Will only support conversion from MPI_DOUBLE to MPI_FLOAT*/
@@ -1499,6 +1506,9 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                     t_recur_accum += MPI_Wtime() - t_recur;
                     nblocks_written++;
 
+                    for(i = 0; i < var->ndims; i++)
+                        if(new_count[i] != 1 && new_count[i] < ioreq->count[i])
+                            cnt_mismatch++;
 
                     DTF_DBG(VERBOSE_DBG_LEVEL, "total data to getput %lld (of nelems %lld)", fit_nelems, nelems);
                     /*Copy data*/

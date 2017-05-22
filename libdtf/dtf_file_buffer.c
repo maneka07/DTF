@@ -175,6 +175,7 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
         var->shape = NULL;
     var->ndims = ndims;
     var->dtype = dtype;
+    var->checksum = 0;
     return var;
 }
 
