@@ -322,6 +322,7 @@ int load_config(const char *ini_name, const char *comp_name){
   }
 
   gl_conf.buffered_req_match = 0;
+  gl_conf.do_checksum = 0;
 
   while(!feof(in)){
 
@@ -433,7 +434,12 @@ int load_config(const char *ini_name, const char *comp_name){
                 DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Value for buffered_req_match should be 0 or 1.");
                 goto panic_exit;
             }
-        } else if(strcmp(param, "explicit_match") == 0){
+        } else if(strcmp(param, "do_checksum") == 0){
+
+            gl_conf.do_checksum = atoi(value);
+            assert((gl_conf.do_checksum == 0) || (gl_conf.do_checksum == 1));
+
+        }else if(strcmp(param, "explicit_match") == 0){
             assert(cur_fb != NULL);
             cur_fb->explicit_match = atoi(value);
 

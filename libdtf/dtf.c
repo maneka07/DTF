@@ -86,13 +86,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     else
         gl_verbose = atoi(s);
 
-    s = getenv("DTF_DO_CHECKSUM");
-    if(s == NULL)
-        gl_conf.do_checksum = 0;
-    else
-        gl_conf.do_checksum = atoi(s);
-    assert(gl_conf.do_checksum == 1 || gl_conf.do_checksum == 0);
-
     s = getenv("DTF_DETECT_OVERLAP");
     if(s == NULL)
         gl_conf.detect_overlap_flag = 0;
