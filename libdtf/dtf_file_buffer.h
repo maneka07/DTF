@@ -12,7 +12,8 @@
  1 - the ps writes to this file. The file is not ready yet.
  2 - The file is ready, reader has been notified
  */
- #define RDR_NOT_NOTIFIED   1
+ #define RDR_NOT_NOTIFIED   0
+ #define RDR_NOTIF_POSTED   1
  #define RDR_NOTIFIED       2
 
 

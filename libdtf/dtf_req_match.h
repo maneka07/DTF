@@ -14,6 +14,7 @@
 
 
 typedef struct io_req{
+//TODO add versions to track overwritten data, or keep iorews per var?
     unsigned int            id;
     int                     var_id;
     int                     sent_flag;  /*set to 1 if this req has already been forwarded to the master*/
@@ -97,7 +98,7 @@ typedef struct file_info_req_q{
     void *buf;  /*consists of
                   - filename [char[]]
                   - root reader rank to whom file info should be sent [int]
-                  - number of readers that opened the file [int]*/
+                 */
     struct file_info_req_q *next;
     struct file_info_req_q *prev;
 }file_info_req_q_t;

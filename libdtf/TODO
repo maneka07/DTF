@@ -10,9 +10,8 @@
 * for scalar var no need to do request matching? Everyone should have the data?
 
 
-commit notes (may 22)
+commit notes
 
-bugfix in new_ioreq, nbuf_read_write_var (buffering)
 
 
 

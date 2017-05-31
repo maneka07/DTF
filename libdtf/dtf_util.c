@@ -16,6 +16,7 @@
 #include "dtf_req_match.h"
 
 extern file_info_req_q_t *gl_finfo_req_q;
+extern dtf_msg_t *gl_msg_q;
 
 /*global rank 0 periodically checks if it can
   process a file info request from a reader*/
@@ -108,12 +109,15 @@ void notify_file_ready(file_buffer_t *fbuf)
         if(gl_my_rank == fbuf->root_writer){
 
             if(fbuf->root_reader != -1){
+                dtf_msg_t *msg = new_dtf_msg(fbuf->file_path, MAX_FILE_NAME, FILE_READY_TAG);
                 DTF_DBG(VERBOSE_DBG_LEVEL,   "Notify reader root rank %d that file %s is ready", fbuf->root_reader, fbuf->file_path);
-                errno = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_READY_TAG, gl_comps[fbuf->reader_id].comm);
+                errno = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_READY_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
                 CHECK_MPI(errno);
-                fbuf->fready_notify_flag = RDR_NOTIFIED;
+                ENQUEUE_ITEM(msg, gl_msg_q);
+                fbuf->fready_notify_flag = RDR_NOTIF_POSTED;
             }
-        }
+        } else
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Don't know yet whom to notify. Skip.");
     }
 }
 
@@ -186,7 +190,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
     DTF_DBG(VERBOSE_DBG_LEVEL,   "Enter dtf_open %s", fbuf->file_path);
 
     MPI_Status status;
-    int rank;
+    int rank, notif_open=1;
 
     if(fbuf->reader_id == gl_my_comp_id){
         MPI_Comm_rank(comm, &rank);
@@ -211,14 +215,14 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                     CHECK_MPI(errno);
                     errno = MPI_Wait(&req, MPI_STATUS_IGNORE);
                     CHECK_MPI(errno);
-                    dtf_free(buf, MAX_FILE_NAME+2*sizeof(int));
+                    dtf_free(buf, MAX_FILE_NAME+sizeof(int));
 
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Starting to wait for file info for %s", fbuf->file_path);
                     errno = MPI_Recv(&ncid, 1, MPI_INT, MPI_ANY_SOURCE, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
                     CHECK_MPI(errno);
                     fbuf->ncid = ncid;
                     fbuf->root_writer = status.MPI_SOURCE;
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "Root for file %s is %d", fbuf->file_path, fbuf->root_writer);
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Root for file %s is %d (ncid %d)", fbuf->file_path, fbuf->root_writer, fbuf->ncid);
                 }
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast root & ncid to other readers");
                 errno = MPI_Bcast(&fbuf->ncid, 1, MPI_INT, 0, comm);
@@ -226,19 +230,28 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                 errno = MPI_Bcast(&fbuf->root_writer, 1, MPI_INT, 0, comm);
                 CHECK_MPI(errno);
             }
+            //NOTE: uncomment this for multi-cycle version where we open/close file only once
+            //fbuf->is_ready = 0;
+            double t_start = MPI_Wtime();
+            if(fbuf->is_ready){
+                notif_open = 0; //already notified before
+                DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: file is already ready");
+            } else {
+                 if(rank == 0){
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Waiting for file to become ready");
+                    /*root reader rank will wait until writer finishes writing the file.
+                     then it will broadcast that the file is ready to everyone else*/
 
-            fbuf->is_ready = 0;
-            if(rank == 0){
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Waiting for file to become ready");
-                /*root reader rank will wait until writer finishes writing the file.
-                 then it will broadcast that the file is ready to everyone else*/
-                double t_start = MPI_Wtime();
-                while(!fbuf->is_ready)
-                    progress_io_matching();
-                DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: Waiting to open file %.3f", MPI_Wtime()-t_start);
+                    while(!fbuf->is_ready)
+                        progress_io_matching();
+
+                }
             }
 
+
+            MPI_Barrier(comm);
             errno = MPI_Bcast(&fbuf->is_ready, 1, MPI_INT, 0, comm);
+            DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: Waiting to open file %.3f", MPI_Wtime()-t_start);
             CHECK_MPI(errno);
             assert(fbuf->is_ready == 1);
 
@@ -296,7 +309,8 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
         }
 
         //Notify writer
-        if(rank == 0){
+
+        if( (rank == 0) && notif_open){
             errno = MPI_Send(&fbuf->ncid, 1, MPI_INT, fbuf->root_writer, IO_OPEN_FILE_FLAG, gl_comps[fbuf->writer_id].comm);
             CHECK_MPI(errno);
         }
@@ -620,4 +634,30 @@ void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstb
         for(i = 0; i < nelems; i++)
             ((float*)dstbuf)[i] = (float)(((double*)srcbuf)[i]);
     }
+}
+
+dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int tag)
+{
+    dtf_msg_t *msg = dtf_malloc(sizeof(struct dtf_msg));
+    assert(msg != NULL);
+    msg->req = MPI_REQUEST_NULL;
+    if(bufsz > 0){
+        msg->buf = dtf_malloc(bufsz);
+        assert(msg->buf != NULL);
+        memcpy(msg->buf, buf, bufsz);
+    } else
+        msg->buf = NULL;
+    msg->bufsz = bufsz;
+    msg->tag = tag;
+    msg->next = NULL;
+    msg->prev = NULL;
+
+    return msg;
+}
+
+void delete_dtf_msg(dtf_msg_t *msg)
+{
+    if(msg->bufsz > 0)
+        dtf_free(msg->buf, msg->bufsz);
+    dtf_free(msg, sizeof(msg));
 }

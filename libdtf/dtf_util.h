@@ -27,6 +27,30 @@
 
 #define DISTR_MODE_REQ_MATCH    1
 
+#define ENQUEUE_ITEM(item, queue) do{\
+    if(queue == NULL)   \
+        queue = item;    \
+    else{   \
+        item->next = queue;  \
+        queue->prev = item;  \
+        queue = item;    \
+    }   \
+    DTF_DBG(VERBOSE_DBG_LEVEL, "enq_item %p", (void*)item);    \
+} while(0)
+
+#define DEQUEUE_ITEM(item, queue) do{   \
+    if(item->prev != NULL)  \
+        item->prev->next = item->next;  \
+    if(item->next != NULL)  \
+        item->next->prev = item->prev;  \
+    if(queue == item){   \
+        queue = item->next; \
+        if(queue == NULL)   \
+            DTF_DBG(VERBOSE_DBG_LEVEL, "queue empty");  \
+    }   \
+    DTF_DBG(VERBOSE_DBG_LEVEL, "deq_item %p", (void*)item);    \
+} while(0)
+
 typedef struct component{
     unsigned int    id;
     char            name[MAX_COMP_NAME];
@@ -58,6 +82,15 @@ typedef struct stats{
     unsigned        nbl;    /*number of blocks transfered*/
     unsigned        ngetputcall;  /*how many times had to use a subblock extraction function*/
 } stats_t;
+
+typedef struct dtf_msg{
+    MPI_Request req;
+    void *buf;
+    int tag;
+    size_t bufsz;
+    struct dtf_msg *next;
+    struct dtf_msg *prev;
+}dtf_msg_t;
 
 
 struct file_buffer;
@@ -114,4 +147,7 @@ void shift_coord(int ndims, const MPI_Offset *bl_start,
                  MPI_Offset *subbl_count, MPI_Offset fit_nelems);
 void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstbuf, int nelems);
 double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype);
+
+dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int tag);
+void delete_dtf_msg(dtf_msg_t *msg);
 #endif

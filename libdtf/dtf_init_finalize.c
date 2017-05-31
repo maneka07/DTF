@@ -634,9 +634,8 @@ void finalize_files()
                         if(fbuf->fready_notify_flag == RDR_NOTIFIED)
                             compl_cnt++;
                         else{
-                            assert(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED);
                             //DTF_DBG(VERBOSE_DBG_LEVEL, "Waiting to know root reader");
-                            if(fbuf->root_reader != -1){
+                            if(fbuf->root_reader != -1 && fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
                                 //progress_io_matching();
                                 DTF_DBG(VERBOSE_DBG_LEVEL, "Root reader is %d", fbuf->root_reader);
                                 notify_file_ready(fbuf);

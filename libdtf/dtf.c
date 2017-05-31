@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stddef.h>
+#include <unistd.h>
 
 #include "dtf_common.h"
 #include "dtf.h"
@@ -21,6 +22,7 @@ int frt_indexing = 0;
 void *gl_msg_buf = NULL;
 
 extern file_info_req_q_t *gl_finfo_req_q;
+extern dtf_msg_t *gl_msg_q;
 
 /*TODO DIFFERENT FILENAMES SAME NCID!!!*/
 
@@ -275,10 +277,11 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
     if(gl_my_rank == fbuf->root_writer && gl_my_rank != 0){
         /*Notify global rank 0 that I am the root master for this file*/
         DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify global rank 0 that I am master");
-        errno = MPI_Send(fbuf->file_path, (int)(MAX_FILE_NAME), MPI_CHAR, 0, ROOT_MST_TAG, gl_comps[gl_my_comp_id].comm);
+        dtf_msg_t *msg = new_dtf_msg(NULL, 0, ROOT_MST_TAG);
+        errno = MPI_Isend(fbuf->file_path, (int)(MAX_FILE_NAME), MPI_CHAR, 0, ROOT_MST_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
         CHECK_MPI(errno);
+        ENQUEUE_ITEM(msg, gl_msg_q);
     }
-
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Init masters");
     init_req_match_masters(comm, fbuf->mst_info);
@@ -295,6 +298,17 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 
     } else if(fbuf->iomode == DTF_IO_MODE_FILE){
         fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+
+        /*Create symlink to this file (needed for SCALE-LETKF since
+          there is no way to execute the script to perform all the file
+          movement in the middle of the execution)*/
+        if(strlen(fbuf->alias_name)>0 && fbuf->root_writer==gl_my_rank){
+            int err;
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Creating symlink from %s to %s", fbuf->file_path, fbuf->alias_name);
+            err = symlink(fbuf->file_path, fbuf->alias_name);
+            if(err != 0)
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: error creating symlink from %s to %s", fbuf->file_path, fbuf->alias_name);
+        }
     }
     DTF_DBG(VERBOSE_DBG_LEVEL, "Exit create");
 }
@@ -429,6 +443,11 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
 {
     if(!lib_initialized) return 0;
     if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return 0;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s", filename);
+    if(intracomp_io_flag){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: scale-letkf hack: skip intracomp matching");
+        return 0;
+    }
 //    if(match_all){
 //        file_buffer_t *fbuf = gl_filebuf_list;
 //        while(fbuf != NULL){
@@ -551,6 +570,8 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
 
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data)
 {
+    return;
+
     int i, nelems=1, max_print;
     if(count == NULL)
         return;
@@ -656,7 +677,6 @@ _EXTERN_C_ int dtf_io_mode(const char* filename)
     if(!lib_initialized) return 0;
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
-        DTF_DBG(VERBOSE_DBG_LEVEL, "File %s not found in file list", filename);
         return DTF_IO_MODE_UNDEFINED;
     }
     return fbuf->iomode;

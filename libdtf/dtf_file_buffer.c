@@ -35,8 +35,8 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
        if((ncid != -1) && (ptr->ncid == ncid))
                 break;
        if( (file_path != NULL) &&
-           ( (strlen(file_path)!=0 && strstr(file_path, ptr->file_path)!=NULL) ||
-             (strlen(ptr->alias_name)!=0 && strstr(file_path, ptr->alias_name)!=NULL) ) )
+           (strlen(file_path)!=0 && ( (strstr(file_path, ptr->file_path)!=NULL || strstr(ptr->file_path, file_path)!=NULL)  ||
+             (strlen(ptr->alias_name)!=0 &&  (strstr(file_path, ptr->alias_name)!=NULL || strstr(ptr->alias_name, file_path)!=NULL) ) )) )
                 break;
 
         ptr = ptr->next;
