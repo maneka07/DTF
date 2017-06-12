@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <unistd.h>
 #include <errno.h>
+#include <unistd.h>
 
 #include "dtf_common.h"
 #include "dtf.h"
@@ -85,6 +86,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.accum_progr_time = 0;
     gl_stats.accum_do_matching_time = 0;
     gl_stats.nfiles = 0;
+    gl_stats.accum_send_ioreq_time = 0;
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
     strcpy(gl_my_comp_name, module_name);
@@ -212,6 +214,15 @@ _EXTERN_C_ int dtf_finalize()
             DTF_DBG(VERBOSE_DBG_LEVEL, "will zero lib time");
             gl_stats.timer_accum = 0;
             walltime = 0;
+            gl_stats.accum_match_time = 0;
+            gl_stats.accum_comm_data_time = 0;
+            gl_stats.accum_comm_time = 0;
+            gl_stats.accum_dbuff_sz = 0;
+            gl_stats.accum_dbuff_time = 0;
+            gl_stats.accum_progr_time = 0;
+            gl_stats.accum_rw_var = 0;
+
+            //actually they will all stay zero anyway
         }
     }
     if(gl_stats.timer_accum > 0)
@@ -228,6 +239,9 @@ _EXTERN_C_ int dtf_finalize()
     }
     if(gl_stats.accum_progr_time > 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: progr time: %.4f: %.4f", gl_stats.accum_progr_time, (gl_stats.accum_progr_time/gl_stats.timer_accum)*100);
+
+    if(gl_stats.accum_send_ioreq_time > 0)
+        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: send ioreqs time: %.4f: %.4f", gl_stats.accum_send_ioreq_time, (gl_stats.accum_send_ioreq_time/gl_stats.timer_accum)*100);
 
     if(gl_stats.accum_rw_var > 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: rw var time: %.4f: %.4f", gl_stats.accum_rw_var, (gl_stats.accum_rw_var/gl_stats.timer_accum)*100);
@@ -291,6 +305,12 @@ _EXTERN_C_ int dtf_finalize()
     CHECK_MPI(err);
     if(gl_my_rank == 0 && dblsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg tot match time: %.4f", dblsum/nranks);
+
+    err = MPI_Reduce(&(gl_stats.accum_send_ioreq_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg send ioreq time: %.4f", dblsum/nranks);
+
 
     err = MPI_Reduce(&(gl_stats.accum_do_matching_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
@@ -413,6 +433,8 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
 
 _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 {
+
+
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
@@ -458,10 +480,28 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
           movement in the middle of the execution)*/
         if(strlen(fbuf->slink_name)>0 && fbuf->root_writer==gl_my_rank){
             int err;
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Creating symlink from %s (%s) to %s", filename, fbuf->file_path, fbuf->slink_name);
-            err = symlink(filename, fbuf->slink_name);
+            size_t slen1, slen2;
+            char *dir = NULL;
+            char wdir[MAX_FILE_NAME]="\0";
+            char slink[MAX_FILE_NAME]="\0";
+            char origfile[MAX_FILE_NAME]="\0";
+
+            dir = getcwd(wdir, MAX_FILE_NAME);
+            assert(dir != NULL);
+            slen1 = strlen(wdir);
+            slen2 = strlen(fbuf->slink_name);
+            if(slen1+slen2+1 > MAX_FILE_NAME){
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: symlink name of length %ld exceeds max filename of %d",slen1+slen2+1, MAX_FILE_NAME);
+                MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+            }
+
+            sprintf(slink, "%s/%s", wdir, fbuf->slink_name);
+            sprintf(origfile, "%s/%s", wdir, fbuf->file_path);
+
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Creating symlink %s to %s (%s)", slink, origfile, fbuf->file_path);
+            err = symlink(origfile, slink);
             if(err != 0){
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: error creating symlink from %s to %s : %s", filename, fbuf->slink_name,  strerror(errno));
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: error creating symlink %s to %s : %s", slink, origfile,  strerror(errno));
 
             }
         }

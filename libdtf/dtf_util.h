@@ -79,6 +79,7 @@ typedef struct stats{
     double          accum_extract_data_time;
     double          accum_progr_time;
     double          accum_do_matching_time;
+    double          accum_send_ioreq_time;
     double          accum_rw_var;
     int             ndb_match;       /*How many times I/O req matching was performed*/
     double          walltime;

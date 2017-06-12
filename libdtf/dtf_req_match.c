@@ -1196,6 +1196,8 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
         fbuf->done_matching_flag = 0;
     }
 
+    gl_stats.accum_send_ioreq_time = MPI_Wtime() - t_start;
+
 //    t_part1 = MPI_Wtime() - t_part1;
 //    t_part2 = MPI_Wtime();
     //TODO is this flag still needed?
