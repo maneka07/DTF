@@ -12,9 +12,10 @@
  1 - the ps writes to this file. The file is not ready yet.
  2 - The file is ready, reader has been notified
  */
- #define RDR_NOT_NOTIFIED   0
- #define RDR_NOTIF_POSTED   1
- #define RDR_NOTIFIED       2
+#define RDR_HASNT_OPENED   0
+#define RDR_NOT_NOTIFIED   1
+#define RDR_NOTIF_POSTED   2
+#define RDR_NOTIFIED       3
 
 
 typedef struct dtf_var{
@@ -33,6 +34,7 @@ struct master_struc;
 typedef struct file_buffer{
   char                      file_path[MAX_FILE_NAME];    /* path of the file */
   char                      alias_name[MAX_FILE_NAME];	/* alias name for the file */
+  char                      slink_name[MAX_FILE_NAME];
   int                       ncid;                        /*handler that pnetcdf assigns to a file*/
   MPI_Comm                  comm;               /*MPI_Communicator used to open the file*/
   void                      *header;            /*buffer to store netcdf header*/

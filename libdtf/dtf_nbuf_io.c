@@ -23,6 +23,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     int def_el_sz, req_el_sz;
     int type_mismatch = 0;
     MPI_Offset nelems;
+    double t_start = MPI_Wtime();
 
     if(rw_flag == DTF_READ){
         if(fbuf->reader_id==gl_my_comp_id){
@@ -163,6 +164,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
             DTF_DBG(VERBOSE_DBG_LEVEL, "Have not read all data for var %d, rreq created", varid);
     }
 
+
     if(create_ioreq){
         /*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
         we ignore it. Start and count parameters are supposed to be with respect to
@@ -222,5 +224,6 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         ret *= count[i];
     ret *= el_sz;
 
+    gl_stats.accum_rw_var += MPI_Wtime() - t_start;
     return ret;
 }

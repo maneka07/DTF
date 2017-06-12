@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "dtf_common.h"
 #include "dtf.h"
@@ -17,10 +18,8 @@ int gl_verbose;
 int gl_my_rank;
 struct dtf_config gl_conf;
 struct stats gl_stats;
-int frt_indexing = 0;
 
 void *gl_msg_buf = NULL;
-
 extern file_info_req_q_t *gl_finfo_req_q;
 extern dtf_msg_t *gl_msg_q;
 
@@ -38,13 +37,12 @@ extern dtf_msg_t *gl_msg_q;
 _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 {
   //  char* conf_filepath;
-    int errno, mpi_initialized;
+    int err, mpi_initialized;
     char* s;
     int verbose;
 
     if(lib_initialized)
         return 0;
-
 
     MPI_Initialized(&mpi_initialized);
 
@@ -63,21 +61,30 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     }
     gl_stats.malloc_size = 0;
     gl_conf.distr_mode = DISTR_MODE_REQ_MATCH;
-    gl_stats.accum_msg_sz = 0;
-    gl_stats.nmatching_msg_sent = 0;
+    gl_stats.data_msg_sz = 0;
+    gl_stats.ndata_msg_sent = 0;
     gl_stats.accum_match_time = 0;
-    gl_stats.accum_db_match_time = 0;
     gl_stats.ndb_match = 0;
     gl_stats.walltime = MPI_Wtime();
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: started at %.3f", gl_stats.walltime);
     gl_stats.accum_comm_time = 0;
-    gl_stats.t_progress = 0;
     gl_stats.nprogress_call = 0;
     gl_stats.nioreqs = 0;
     gl_stats.nbl = 0;
     gl_stats.ngetputcall = 0;
-
+    gl_stats.timer2_accum = 0;
+    gl_stats.timer2_start = 0;
+    gl_stats.timer_accum = 0;
+    gl_stats.timer_start = 0;
+    gl_stats.accum_comm_data_time = 0;
+    gl_stats.accum_extract_data_time = 0;
+    gl_stats.accum_dbuff_sz = 0;
+    gl_stats.accum_dbuff_time = 0;
+    gl_stats.accum_rw_var = 0;
+    gl_stats.accum_progr_time = 0;
+    gl_stats.accum_do_matching_time = 0;
+    gl_stats.nfiles = 0;
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
     strcpy(gl_my_comp_name, module_name);
@@ -119,12 +126,12 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_verbose = VERBOSE_ERROR_LEVEL;
     }
     /*Parse ini file and initialize components*/
-    errno = load_config(filename, module_name);
-    if(errno) goto panic_exit;
+    err = load_config(filename, module_name);
+    if(err) goto panic_exit;
 
     /*Establish intercommunicators between components*/
-    errno = init_comp_comm();
-    if(errno) goto panic_exit;
+    err = init_comp_comm();
+    if(err) goto panic_exit;
 
     lib_initialized = 1;
 
@@ -152,6 +159,16 @@ panic_exit:
 _EXTERN_C_ int dtf_finalize()
 {
     int mpi_initialized;
+    int err, nranks;
+    int intsum;
+    char *s;
+    double dblsum = 0, walltime;
+    unsigned long data_sz, lngsum;
+    int sclltkf = 0;
+    struct{
+        double dbl;
+        int intg;
+    }dblint_in, dblint_out;
 
     if(!lib_initialized) return 0;
 
@@ -164,6 +181,9 @@ _EXTERN_C_ int dtf_finalize()
         exit(1);
     }
 
+//int MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype,
+//               MPI_Op op, int root, MPI_Comm comm)
+
     /*Send any unsent file notifications
       and delete buf files*/
     finalize_files();
@@ -174,42 +194,176 @@ _EXTERN_C_ int dtf_finalize()
     clean_config();
 
     DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalize");
+    walltime = MPI_Wtime() - gl_stats.walltime;
+    MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &nranks);
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: walltime %.3f", walltime);
 
-    if(gl_my_rank == 0){
-        double walltime = MPI_Wtime() - gl_stats.walltime;
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: walltime %.3f", walltime);
+    /*In scale-letkf the last ranks write mean files not treated by dtf, we don't need
+      stats for that*/
+    s = getenv("DTF_SCALE");
+    if(s != NULL)
+        sclltkf = atoi(s);
 
-        if(gl_stats.accum_db_match_time > 0)
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: match_ioreqs %.4f (%.4f%%), do_matching %.4f(%.4f%%), times do_matching %u",
-                     gl_stats.accum_match_time, (gl_stats.accum_match_time/walltime)*100,
-                     gl_stats.accum_db_match_time, (gl_stats.accum_db_match_time/walltime)*100,
-                     gl_stats.ndb_match );
-        if(gl_stats.accum_comm_time > 0)
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: time spent in comm %.4f(%.4f%%)",
-                    gl_stats.accum_comm_time, (gl_stats.accum_comm_time/walltime)*100);
-//        if(gl_stats.t_progress > 0){
-//            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: time spent in progress %.4f(%.4f%%)",
-//                    gl_stats.t_progress, (gl_stats.t_progress/walltime)*100);
-//        }
-        if(gl_stats.nprogress_call > 0){
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
+    if(sclltkf){
+        nranks = nranks - (int)(nranks % gl_stats.nfiles);
+        if(gl_my_rank == 0)
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF: for stats consider %d ranks", nranks);
+        if(gl_my_rank >= nranks){//TODO JUST FOR SCALE LETKF!!!!
+            DTF_DBG(VERBOSE_DBG_LEVEL, "will zero lib time");
+            gl_stats.timer_accum = 0;
+            walltime = 0;
         }
-
-        if(gl_stats.nioreqs > 0)
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: nreqs: %u", gl_stats.nioreqs);
-
     }
+    if(gl_stats.timer_accum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: library-measured I/O time: %.4f", gl_stats.timer_accum);
+    if(gl_stats.accum_comm_time > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: time spent in comm: %.5f: %.4f",
+                gl_stats.accum_comm_time, (gl_stats.accum_comm_time/gl_stats.timer_accum)*100);
 
+    if(gl_stats.accum_match_time > 0){
+         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: tot match time: %.5f: %.5f",
+                 gl_stats.accum_match_time, (gl_stats.accum_match_time/gl_stats.timer_accum)*100);
+         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: do match time: %.5f: %.5f",
+                 gl_stats.accum_do_matching_time, (gl_stats.accum_do_matching_time/gl_stats.timer_accum)*100);
+    }
+    if(gl_stats.accum_progr_time > 0)
+        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: progr time: %.4f: %.4f", gl_stats.accum_progr_time, (gl_stats.accum_progr_time/gl_stats.timer_accum)*100);
+
+    if(gl_stats.accum_rw_var > 0)
+        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: rw var time: %.4f: %.4f", gl_stats.accum_rw_var, (gl_stats.accum_rw_var/gl_stats.timer_accum)*100);
+
+//    if(gl_stats.accum_match_time > 0){
+//          DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: db match time: %.5f: %.5f",
+//                 gl_stats.accum_db_match_time, (gl_stats.accum_db_match_time/gl_stats.timer_accum)*100);
+//         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: db manage time: %.5f: %.5f",
+//                 gl_stats.accum_db_manage_time,  (gl_stats.accum_db_manage_time/gl_stats.timer_accum)*100);
+//
+//    }
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times matched: %u", gl_stats.ndb_match);
+    if(gl_stats.nprogress_call > 0)
+        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
+
+    if(gl_stats.nioreqs > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: nreqs: %u", gl_stats.nioreqs);
+
+
+//    if(gl_stats.timer2_accum > 0)
+//        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: user-program-measured I/O time: %.4f", gl_stats.timer2_accum);
     if(gl_stats.nbl > 0)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Out of %u blocks handled %u noncontig blocks", gl_stats.nbl, gl_stats.ngetputcall);
-    if(gl_stats.nmatching_msg_sent > 0)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Avg data msg sz %lu", (size_t)(gl_stats.accum_msg_sz/gl_stats.nmatching_msg_sent));
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: Out of %u blocks handled %u noncontig blocks", gl_stats.nbl, gl_stats.ngetputcall);
+    if(gl_stats.accum_dbuff_sz > 0){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering time: %.5f: %.4f", gl_stats.accum_dbuff_time,(gl_stats.accum_dbuff_time/gl_stats.timer_accum)*100);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering size: %lu",  gl_stats.accum_dbuff_sz);
+    }
+    if(gl_stats.ndata_msg_sent > 0){
+        data_sz = (unsigned long)(gl_stats.data_msg_sz/gl_stats.ndata_msg_sent);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: total sent %lu, avg data msg sz %lu (%d msgs)", gl_stats.data_msg_sz, data_sz, gl_stats.ndata_msg_sent);
+    } else
+        data_sz = 0;
+
+    /*AVERAGE STATS*/
+    dblint_in.dbl = walltime;
+    dblint_in.intg = gl_my_rank;
+    err = MPI_Reduce(&dblint_in, &dblint_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max walltime: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
+    dblint_in.dbl = gl_stats.timer_accum;
+    dblint_in.intg = gl_my_rank;
+    err = MPI_Reduce(&dblint_in, &dblint_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max libtime: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
+
+    err = MPI_Reduce(&walltime, &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg walltime: %.4f", dblsum/nranks);
+
+    err = MPI_Reduce(&(gl_stats.timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank==0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg library-measured I/O time: %.5f", dblsum/nranks);
+
+
+
+    err = MPI_Reduce(&(gl_stats.accum_match_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg tot match time: %.4f", dblsum/nranks);
+
+    err = MPI_Reduce(&(gl_stats.accum_do_matching_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg do match time: %.4f", dblsum/nranks);
+
+    err = MPI_Reduce(&(gl_stats.accum_progr_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg progr time: %.4f", dblsum/nranks);
+
+    err = MPI_Reduce(&(gl_stats.accum_rw_var), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: rw var time: %.4f", dblsum/nranks);
+
+//    err = MPI_Reduce(&(gl_stats.accum_db_match_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+//    CHECK_MPI(err);
+//    if(gl_my_rank == 0 && dblsum > 0)
+//        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg db match time: %.5f", dblsum/nranks);
+
+    err = MPI_Reduce(&(gl_stats.accum_comm_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum>0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg comm time: %.5f", dblsum/nranks);
+
+    err = MPI_Reduce(&(gl_stats.accum_extract_data_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank==0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg extract data time: %.3f", (double)(dblsum/nranks));
+
+   err = MPI_Reduce(&(gl_stats.accum_dbuff_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank==0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg buffering time: %.5f", (double)(dblsum/nranks));
+
+//    if(gl_my_rank >= nranks){//TODO JUST FOR SCALE LETKF!!!!
+//        DTF_DBG(VERBOSE_DBG_LEVEL, "will zero progr time");
+//        gl_stats.timer2_accum = 0;
+//    }
+//
+//    err = MPI_Reduce(&(gl_stats.timer2_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+//    CHECK_MPI(err);
+//    if(gl_my_rank==0 && dblsum > 0)
+//        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg user-program-measured I/O time: %.4f", dblsum/nranks);
+//
+    err = MPI_Reduce(&data_sz, &lngsum, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank==0 && lngsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg data msg sz acrosss ps: %d", (int)(lngsum/nranks));
+
+    data_sz = (unsigned long) gl_stats.data_msg_sz;
+    err = MPI_Reduce(&data_sz, &lngsum, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank==0 && lngsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg total data sent acrosss ps: %d", (int)(lngsum/nranks));
+    intsum = 0;
+    err = MPI_Reduce(&(gl_stats.ndata_msg_sent), &intsum, 1, MPI_INT, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank==0 && intsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg num data msg: %d", (int)(intsum/nranks));
+
+     err = MPI_Reduce(&(gl_stats.accum_dbuff_sz), &lngsum, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank==0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg buffering size: %lu", (size_t)(lngsum/nranks));
 
     if(gl_msg_buf != NULL)
         dtf_free(gl_msg_buf, gl_conf.data_msg_size_limit);
 
     if(gl_stats.malloc_size != MAX_COMP_NAME )
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
+
 
     dtf_free(gl_my_comp_name, MAX_COMP_NAME);
     lib_initialized = 0;
@@ -270,16 +424,16 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
     fbuf->ncid = ncid;
     fbuf->comm = comm;
     int root_mst = gl_my_rank;
-    int errno = MPI_Bcast(&root_mst, 1, MPI_INT, 0, comm);
-    CHECK_MPI(errno);
+    int err = MPI_Bcast(&root_mst, 1, MPI_INT, 0, comm);
+    CHECK_MPI(err);
     fbuf->root_writer = root_mst;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
     if(gl_my_rank == fbuf->root_writer && gl_my_rank != 0){
         /*Notify global rank 0 that I am the root master for this file*/
         DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify global rank 0 that I am master");
         dtf_msg_t *msg = new_dtf_msg(NULL, 0, ROOT_MST_TAG);
-        errno = MPI_Isend(fbuf->file_path, (int)(MAX_FILE_NAME), MPI_CHAR, 0, ROOT_MST_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
-        CHECK_MPI(errno);
+        err = MPI_Isend(fbuf->file_path, (int)(MAX_FILE_NAME), MPI_CHAR, 0, ROOT_MST_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
+        CHECK_MPI(err);
         ENQUEUE_ITEM(msg, gl_msg_q);
     }
 
@@ -297,17 +451,19 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
         }
 
     } else if(fbuf->iomode == DTF_IO_MODE_FILE){
-        fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+        fbuf->fready_notify_flag = RDR_HASNT_OPENED;
 
         /*Create symlink to this file (needed for SCALE-LETKF since
           there is no way to execute the script to perform all the file
           movement in the middle of the execution)*/
-        if(strlen(fbuf->alias_name)>0 && fbuf->root_writer==gl_my_rank){
+        if(strlen(fbuf->slink_name)>0 && fbuf->root_writer==gl_my_rank){
             int err;
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Creating symlink from %s to %s", fbuf->file_path, fbuf->alias_name);
-            err = symlink(fbuf->file_path, fbuf->alias_name);
-            if(err != 0)
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: error creating symlink from %s to %s", fbuf->file_path, fbuf->alias_name);
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Creating symlink from %s (%s) to %s", filename, fbuf->file_path, fbuf->slink_name);
+            err = symlink(filename, fbuf->slink_name);
+            if(err != 0){
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: error creating symlink from %s to %s : %s", filename, fbuf->slink_name,  strerror(errno));
+
+            }
         }
     }
     DTF_DBG(VERBOSE_DBG_LEVEL, "Exit create");
@@ -441,13 +597,35 @@ _EXTERN_C_ int dtf_match_ioreqs(const char* filename)
 */
 _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )//, int match_all)
 {
+    file_buffer_t *fbuf;
+    char *s;
+    int sclltkf = 0;
+
     if(!lib_initialized) return 0;
     if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return 0;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s", filename);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s (ncid %d), intra flag %d", filename, ncid, intracomp_io_flag);
     if(intracomp_io_flag){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: scale-letkf hack: skip intracomp matching");
         return 0;
     }
+
+    s = getenv("DTF_SCALE");
+    if(s != NULL)
+        sclltkf = atoi(s);
+
+    if(sclltkf){
+        int nranks;
+        MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &nranks);
+
+        nranks = nranks - (int)(nranks % gl_stats.nfiles);
+        if(gl_my_rank >= nranks){
+            DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: ps-ps don't participate in ensamble comp.No matching");
+            return 0;
+        }
+
+    }
+
+
 //    if(match_all){
 //        file_buffer_t *fbuf = gl_filebuf_list;
 //        while(fbuf != NULL){
@@ -457,7 +635,7 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
 //        }
 //
 //    } else{
-        file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
+        fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
         if(fbuf == NULL){
 
             if( (filename != NULL) && (strlen(filename) == 0) )
@@ -480,8 +658,9 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
             MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
         }
-
+        dtf_time_start();
         match_ioreqs(fbuf, intracomp_io_flag);
+        dtf_time_end();
 
   // }
     return 0;
@@ -510,13 +689,14 @@ _EXTERN_C_ void dtf_match_multiple(int ncid)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_multiple can only be called by writer component. Ignoring.");
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
-
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching multiple");
+    dtf_time_start();
     fbuf->done_match_multiple_flag = 0;
     while(!fbuf->done_match_multiple_flag)
         match_ioreqs(fbuf, 0);
     //reset
     fbuf->done_match_multiple_flag = 0;
+    dtf_time_end();
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finish matching multiple");
     return;
 }
@@ -524,6 +704,7 @@ _EXTERN_C_ void dtf_match_multiple(int ncid)
 /*Used by reader to notify writer that it can complete dtf_match_multiple*/
 _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
 {
+    double t_start;
     if(!lib_initialized) return;
     if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
@@ -531,13 +712,19 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
         DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
         return;
     }
+
+    t_start = MPI_Wtime();
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
     if(fbuf->reader_id != gl_my_comp_id){
         DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: dtf_complete_multiple can only be called by reader");
         return;
     }
+    dtf_time_start();
     MPI_Barrier(fbuf->comm);
     notify_complete_multiple(fbuf);
+    dtf_time_end();
+
+    gl_stats.accum_match_time += MPI_Wtime() - t_start;
 }
 
 ///* The user has to state whether the process needs to match all read or write requests.
@@ -571,24 +758,24 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data)
 {
     return;
-
-    int i, nelems=1, max_print;
-    if(count == NULL)
-        return;
-    for(i = 0; i < ndims; i++)
-        nelems*=count[i];
-
-    if(nelems < 20)
-        max_print = nelems;
-    else
-        max_print = 20;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "Data for var %d:", varid);
-    for(i = 0; i < max_print; i++)
-        if(dtype == 0)
-            printf("%.3f\t", ((float*)data)[i]);
-        else if(dtype == 1)
-            printf("%.3f\t", ((double*)data)[i]);
-    printf("\n");
+//
+//    int i, nelems=1, max_print;
+//    if(count == NULL)
+//        return;
+//    for(i = 0; i < ndims; i++)
+//        nelems*=count[i];
+//
+//    if(nelems < 20)
+//        max_print = nelems;
+//    else
+//        max_print = 20;
+//    DTF_DBG(VERBOSE_ERROR_LEVEL, "Data for var %d:", varid);
+//    for(i = 0; i < max_print; i++)
+//        if(dtype == 0)
+//            printf("%.3f\t", ((float*)data)[i]);
+//        else if(dtype == 1)
+//            printf("%.3f\t", ((double*)data)[i]);
+//    printf("\n");
 }
 
 /**
@@ -711,12 +898,51 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     return ret;
 }
 
-/*  Fortran Interfaces  */
+_EXTERN_C_ void dtf_time_start()
+{
+    if(gl_stats.timer_start != 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.", gl_stats.timer_start - gl_stats.walltime);
+
+    gl_stats.timer_start = MPI_Wtime();
+
+}
+_EXTERN_C_ void dtf_time_end()
+{
+    double tt = MPI_Wtime() - gl_stats.timer_start;
+    gl_stats.timer_accum += tt;
+    gl_stats.timer_start = 0;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: lib time %.4f", tt);
+}
+
+
+_EXTERN_C_ void dtf_tstart()
+{
+    if(gl_stats.timer2_start != 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.", gl_stats.timer2_start - gl_stats.walltime);
+
+    gl_stats.timer2_start = MPI_Wtime();
+}
+_EXTERN_C_ void dtf_tend()
+{
+    double tt = MPI_Wtime() - gl_stats.timer2_start;
+    gl_stats.timer2_accum += tt;
+    gl_stats.timer2_start = 0;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
+}
+
+/************************************************  Fortran Interfaces  *********************************************************/
+
+_EXTERN_C_ void dtf_tstart_()
+{
+    dtf_tstart();
+}
+_EXTERN_C_ void dtf_tend_()
+{
+    dtf_tend();
+}
 
 void dtf_init_(const char *filename, char *module_name, int* ierr)
 {
-    frt_indexing = 1;
-    DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: Dealing with fortran. Increment each dimension by 1");
     *ierr = dtf_init(filename, module_name);
 }
 

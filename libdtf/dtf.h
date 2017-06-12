@@ -29,8 +29,12 @@ _EXTERN_C_ int dtf_wait(const char* filename, int request);
 _EXTERN_C_ void dtf_print(const char *str);
 _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid);
 _EXTERN_C_ void dtf_match_multiple(int ncid);
+_EXTERN_C_ void dtf_tstart();
+_EXTERN_C_ void dtf_tend();
 
 /*Interfaces to be used by a File I/O library*/
+_EXTERN_C_ void dtf_time_start();
+_EXTERN_C_ void dtf_time_end();
 _EXTERN_C_ int dtf_write_flag(const char* filename);
 _EXTERN_C_ int dtf_read_flag(const char* filename);
 _EXTERN_C_ void dtf_open(const char* filename, MPI_Comm comm);
@@ -57,6 +61,8 @@ _EXTERN_C_ void dtf_enddef(const char *filename);
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data);
 
 /*     Fortran interfaces    */
+void dtf_tend_();
+void dtf_tstart_();
 void dtf_init_(const char *filename, char *module_name, int* ierr);
 void dtf_finalize_(int* ierr);
 void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int *ierr);

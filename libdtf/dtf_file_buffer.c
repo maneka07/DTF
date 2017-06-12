@@ -100,7 +100,6 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
             dtf_free(fbuf->mst_info->my_wg,(fbuf->mst_info->my_wg_sz - 1)*sizeof(int));
         dtf_free(fbuf->mst_info, sizeof(master_info_t));
     }
-
     dtf_free(fbuf, sizeof(file_buffer_t));
 }
 
@@ -112,6 +111,7 @@ file_buffer_t* new_file_buffer()
     assert( buf != NULL );
     buf->file_path[0]='\0';
     buf->alias_name[0]='\0';
+    buf->slink_name[0]='\0';
     buf->next = NULL;
     buf->reader_id = -1;
     buf->writer_id=-1;
@@ -144,6 +144,8 @@ file_buffer_t* new_file_buffer()
     buf->mst_info->nwranks_completed = 0;
     buf->mst_info->nwranks_opened = 0;
     buf->is_matching_flag = 0;
+
+    gl_stats.nfiles++;
     return buf;
 }
 

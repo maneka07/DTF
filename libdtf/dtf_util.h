@@ -68,19 +68,30 @@ typedef struct dtf_config{
 }dtf_config_t;
 
 typedef struct stats{
-    int             nmatching_msg_sent;
+    int             ndata_msg_sent;
+    double          accum_dbuff_time;
+    size_t          accum_dbuff_sz;
     double          accum_comm_time;
-    size_t          accum_msg_sz;      /*Accumulated size of messages */
+    size_t          data_msg_sz;      /*Accumulated size of messages */
     double          accum_match_time;  /*Total time spent in match_ioreqs*/
-    double          accum_db_match_time; /*Time that master processes spend matching reqs from iodb*/
+ //   double          accum_db_match_time; /*Time that master processes spend matching reqs from iodb*/
+    double          accum_comm_data_time;  /*time to send/recv data*/
+    double          accum_extract_data_time;
+    double          accum_progr_time;
+    double          accum_do_matching_time;
+    double          accum_rw_var;
     int             ndb_match;       /*How many times I/O req matching was performed*/
-    double          t_progress;
     double          walltime;
     size_t          malloc_size;
     unsigned long   nprogress_call;
     unsigned        nioreqs;
     unsigned        nbl;    /*number of blocks transfered*/
     unsigned        ngetputcall;  /*how many times had to use a subblock extraction function*/
+    double          timer_start;    /*measure I/O time from pnetcdf*/
+    double          timer_accum;
+    double          timer2_start;   /*measure I/O time from user program*/
+    double          timer2_accum;
+    int             nfiles;
 } stats_t;
 
 typedef struct dtf_msg{

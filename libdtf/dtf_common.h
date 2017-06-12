@@ -15,6 +15,7 @@ typedef unsigned char byte;
 #include <mpi.h>
 #include <assert.h>
 
+
 extern struct file_buffer* gl_filebuf_list;        /*List of all file buffers*/
 extern struct component *gl_comps;                 /*List of components*/
 extern int gl_my_comp_id;                          /*Id of this compoinent*/
@@ -22,7 +23,6 @@ extern int gl_ncomp;                               /*Number of components*/
 extern int gl_verbose;
 extern int gl_my_rank;                         /*For debug messages*/
 extern struct dtf_config gl_conf;                 /*Framework settings*/
-extern int frt_indexing;
 extern struct stats gl_stats;
 char _buff[1024];
 extern void* gl_msg_buf;

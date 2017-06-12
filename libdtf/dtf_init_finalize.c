@@ -130,7 +130,7 @@ static int create_intercomm(int comp_id, char* global_path){
     char portname[MPI_MAX_PORT_NAME];
     char service_name[MAX_COMP_NAME*2+1];
     FILE* portfile;
-    int errno, mode, myrank, l1, l2;
+    int err, mode, myrank, l1, l2;
     char portfile_name[MAX_FILE_NAME];
     int wait_timeout;
     int nranks1, nranks2;
@@ -214,17 +214,17 @@ static int create_intercomm(int comp_id, char* global_path){
             }
         }
 
-        errno = MPI_Bcast(portname, MPI_MAX_PORT_NAME, MPI_CHAR, 0, MPI_COMM_WORLD );
-        CHECK_MPI(errno);
+        err = MPI_Bcast(portname, MPI_MAX_PORT_NAME, MPI_CHAR, 0, MPI_COMM_WORLD );
+        CHECK_MPI(err);
         DTF_DBG(VERBOSE_DBG_LEVEL,   "%s will connect to service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
-        errno = MPI_Comm_connect(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].comm));
-        CHECK_MPI(errno);
+        err = MPI_Comm_connect(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].comm));
+        CHECK_MPI(err);
     } else if(mode == CONNECT_MODE_SERVER){
         DTF_DBG(VERBOSE_DBG_LEVEL,   "Creating connection for %s.", service_name);
 
-        errno = MPI_Open_port(MPI_INFO_NULL, portname);
-        CHECK_MPI(errno);
+        err = MPI_Open_port(MPI_INFO_NULL, portname);
+        CHECK_MPI(err);
 
         if(myrank == 0){
            DTF_DBG(VERBOSE_DBG_LEVEL, "Write port to file %s", portfile_name);
@@ -235,12 +235,12 @@ static int create_intercomm(int comp_id, char* global_path){
 
         DTF_DBG(VERBOSE_DBG_LEVEL,   "%s starts listening for service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
-        errno = MPI_Comm_accept(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].comm) );
-        CHECK_MPI(errno);
+        err = MPI_Comm_accept(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].comm) );
+        CHECK_MPI(err);
         DTF_DBG(VERBOSE_DBG_LEVEL,   "%s accepted connection on service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
-        errno = MPI_Close_port(portname);
-        CHECK_MPI(errno);
+        err = MPI_Close_port(portname);
+        CHECK_MPI(err);
     }
     MPI_Comm_set_errhandler(gl_comps[comp_id].comm, MPI_ERRORS_RETURN);
     /*Check that the number of ranks is the same in both communicators*/
@@ -461,6 +461,11 @@ int load_config(const char *ini_name, const char *comp_name){
             assert(cur_fb != NULL);
             assert(strlen(value) <= MAX_FILE_NAME);
             strcpy(cur_fb->alias_name, value);
+
+        } else if(strcmp(param, "slink") == 0){
+            assert(cur_fb != NULL);
+            assert(strlen(value) <= MAX_FILE_NAME);
+            strcpy(cur_fb->slink_name, value);
 
         } else if(strcmp(param, "writer") == 0){
             assert(cur_fb != NULL);
