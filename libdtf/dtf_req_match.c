@@ -978,6 +978,7 @@ void send_ioreqs(file_buffer_t *fbuf, int intracomp_match)
     reqs = dtf_malloc(fbuf->mst_info->nmasters*sizeof(MPI_Request));
     assert(reqs != NULL);
     idx = -1;
+    int flag;
     t_start_comm = MPI_Wtime();
 
     for(mst = 0; mst < fbuf->mst_info->nmasters; mst++){
@@ -996,9 +997,17 @@ void send_ioreqs(file_buffer_t *fbuf, int intracomp_match)
             CHECK_MPI(err);
         }
     }
-    err = MPI_Waitall(fbuf->mst_info->nmasters, reqs, MPI_STATUSES_IGNORE);
-    CHECK_MPI(err);
-    gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
+
+    //err = MPI_Waitall(fbuf->mst_info->nmasters, reqs, MPI_STATUSES_IGNORE);
+    flag = 0;
+    while(!flag){
+        err = MPI_Testall(fbuf->mst_info->nmasters, reqs, &flag, MPI_STATUSES_IGNORE);
+        CHECK_MPI(err);
+        progress_io_matching();
+    }
+    double ttmp = MPI_Wtime() - t_start_comm;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Finished sending ioreqs, took %.5f", ttmp);
+    //gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
 
     if(idx != -1)
         parse_ioreqs(sbuf[idx], (int)offt[idx], gl_my_rank, gl_comps[gl_my_comp_id].comm);
@@ -1155,7 +1164,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 //    double t_part2=MPI_Wtime();
 //    double t_part3=MPI_Wtime();
     double t_start;
-    int i;
+    int i, err;
     double t_st;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %s (ncid %d), intracomp %d", fbuf->file_path, fbuf->ncid, intracomp_io_flag);
@@ -1196,7 +1205,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
         fbuf->done_matching_flag = 0;
     }
 
-    gl_stats.accum_send_ioreq_time = MPI_Wtime() - t_start;
+    gl_stats.accum_send_ioreq_time += MPI_Wtime() - t_start;
 
 //    t_part1 = MPI_Wtime() - t_part1;
 //    t_part2 = MPI_Wtime();
