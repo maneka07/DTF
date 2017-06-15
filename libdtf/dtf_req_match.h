@@ -15,7 +15,7 @@
 
 typedef struct io_req{
 //TODO add versions to track overwritten data, or keep iorews per var?
-    unsigned int            id;
+    unsigned int            id; //TODO remove id
     int                     var_id;
     int                     sent_flag;  /*set to 1 if this req has already been forwarded to the master*/
     int                     rw_flag;

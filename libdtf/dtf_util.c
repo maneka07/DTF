@@ -21,6 +21,7 @@ extern dtf_msg_t *gl_msg_q;
 void process_file_info_req_queue()
 {
     int err;
+    double t_st;
     if(gl_finfo_req_q == NULL)
         return;
 
@@ -35,6 +36,7 @@ void process_file_info_req_queue()
             continue;
         }
 
+        t_st = MPI_Wtime();
         if(gl_my_rank == fbuf->root_writer){
             DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer 22, process the file info req for file %s", req->filename);
             memcpy(&fbuf->root_reader, (unsigned char*)(req->buf)+MAX_FILE_NAME, sizeof(int));
@@ -50,8 +52,11 @@ void process_file_info_req_queue()
 
             DTF_DBG(VERBOSE_DBG_LEVEL, "Forward the request to root writer %d", fbuf->root_writer);
             /*Forward this request to the root master*/
-            err = MPI_Send(req->buf, (int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm);
+            dtf_msg_t *msg = new_dtf_msg(req->buf, MAX_FILE_NAME+sizeof(int), FILE_INFO_REQ_TAG);
+            err = MPI_Isend(req->buf, (int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG,
+                            gl_comps[gl_my_comp_id].comm, &(msg->req));
             CHECK_MPI(err);
+            ENQUEUE_ITEM(msg, gl_msg_q);
         }
 
         tmp = req->next;
@@ -63,10 +68,10 @@ void process_file_info_req_queue()
             if(req->next != NULL)
                 req->next->prev = req->prev;
         }
-        dtf_free(req->buf, MAX_FILE_NAME+sizeof(int));
+        //dtf_free(req->buf, MAX_FILE_NAME+sizeof(int)); //will be freed when the send finishes
         dtf_free(req, sizeof(file_info_req_q_t));
         req = tmp;
-        DTF_DBG(VERBOSE_ALL_LEVEL, "Freed request");
+        gl_stats.progr_work_time += MPI_Wtime() - t_st;
     }
 }
 
