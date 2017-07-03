@@ -25,7 +25,8 @@
 #define MATCH_DONE_TAG      10
 #define IO_REQS_TAG         11
 
-#define DISTR_MODE_REQ_MATCH    1
+#define IODB_BUILD_VARID    0
+#define IODB_BUILD_RANGE 1
 
 #define ENQUEUE_ITEM(item, queue) do{\
     if(queue == NULL)   \
@@ -51,6 +52,41 @@
     DTF_DBG(VERBOSE_DBG_LEVEL, "deq_item %p", (void*)item);    \
 } while(0)
 
+typedef unsigned char byte;
+
+#define VERBOSE_ERROR_LEVEL   0
+#define VERBOSE_WARNING_LEVEL 1
+#define VERBOSE_DBG_LEVEL     2
+#define VERBOSE_ALL_LEVEL     3
+
+#define DTF_TIMEOUT       1200 /* it's long because letkf and obs are hanging for a long time before they get data from scale*/
+#define DTF_UNDEFINED      -1
+
+#include <string.h>
+#include <mpi.h>
+#include <assert.h>
+
+
+
+
+#define DTF_DBG(dbg_level, ...) do{  \
+    if(gl_verbose >= dbg_level){  \
+                memset(_buff,0,1024);                         \
+                snprintf(_buff,1024,__VA_ARGS__);             \
+                fprintf(stdout, "%s %d [%.3f]: %s\n", gl_my_comp_name, gl_my_rank, MPI_Wtime() - gl_stats.walltime, _buff);  \
+                fflush(stdout);   \
+    }           \
+}while(0)
+
+#define CHECK_MPI(errcode) do{   \
+        if (errcode != MPI_SUCCESS) {   \
+           int length_of_error_string;  \
+           MPI_Error_string(errcode, error_string, &length_of_error_string);  \
+           DTF_DBG(VERBOSE_DBG_LEVEL, "error is: %s", error_string);       \
+           MPI_Abort(MPI_COMM_WORLD, errcode);                              \
+        }                                                                   \
+} while(0)
+
 typedef struct component{
     unsigned int    id;
     char            name[MAX_COMP_NAME];
@@ -61,10 +97,11 @@ typedef struct component{
 typedef struct dtf_config{
     int         distr_mode;
     int         buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
-    int         io_db_type;  /*data blocks(0)*/
     int         data_msg_size_limit;
     int         detect_overlap_flag;    /*should master process detect write overlap by different processes?*/
     int         do_checksum;
+    MPI_Offset  block_sz_range;  /*the size of the data block in the first dimension*/
+    int         iodb_build_mode;      /*0 - based on var ids, 1 - based on data block range*/
 }dtf_config_t;
 
 typedef struct stats{
@@ -111,6 +148,23 @@ struct file_buffer;
 int mpitype2int(MPI_Datatype dtype);
 MPI_Datatype int2mpitype(int num);
 
+/*GLOBAL VARIABLES*/
+extern struct file_buffer* gl_filebuf_list;        /*List of all file buffers*/
+extern struct component *gl_comps;                 /*List of components*/
+extern int gl_my_comp_id;                          /*Id of this compoinent*/
+extern int gl_ncomp;                               /*Number of components*/
+extern int gl_verbose;
+extern int gl_my_rank;                         /*For debug messages*/
+extern struct dtf_config gl_conf;                 /*Framework settings*/
+extern struct stats gl_stats;
+char _buff[1024];
+extern void* gl_msg_buf;
+char *gl_my_comp_name;
+
+char error_string[1024];
+
+
+/*FUNCTIONS*/
 void notify_file_ready(file_buffer_t *fbuf);
 void close_file(file_buffer_t *fbuf);
 int file_buffer_ready(const char* filename);
@@ -161,7 +215,6 @@ void shift_coord(int ndims, const MPI_Offset *bl_start,
                  MPI_Offset *subbl_count, MPI_Offset fit_nelems);
 void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstbuf, int nelems);
 double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype);
-
 dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int tag);
 void delete_dtf_msg(dtf_msg_t *msg);
 #endif

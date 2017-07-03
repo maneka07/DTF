@@ -2,7 +2,6 @@
 #include "dtf_nbuf_io.h"
 #include "dtf_util.h"
 #include "dtf.h"
-#include "dtf_common.h"
 #include "dtf_req_match.h"
 
 MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
@@ -189,7 +188,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         else
             fbuf->wreq_cnt++;
 
-        /*Enqueue the request*/
+        /*Enqueue the request to the head*/
         if(fbuf->ioreqs == NULL)
             fbuf->ioreqs = req;
         else{

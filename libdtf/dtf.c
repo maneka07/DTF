@@ -6,8 +6,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <unistd.h>
+#include <math.h>
 
-#include "dtf_common.h"
 #include "dtf.h"
 #include "dtf_init_finalize.h"
 #include "dtf_util.h"
@@ -61,7 +61,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         exit(1);
     }
     gl_stats.malloc_size = 0;
-    gl_conf.distr_mode = DISTR_MODE_REQ_MATCH;
     gl_stats.data_msg_sz = 0;
     gl_stats.ndata_msg_sent = 0;
     gl_stats.accum_match_time = 0;
@@ -105,14 +104,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_conf.detect_overlap_flag = 0;
     else
         gl_conf.detect_overlap_flag = atoi(s);
-
-    s = getenv("DTF_IODB_TYPE");
-    if(s == NULL)
-        gl_conf.io_db_type = DTF_DB_BLOCKS;
-    else
-        gl_conf.io_db_type = atoi(s);
-
-    assert(gl_conf.io_db_type==DTF_DB_BLOCKS);
 
     s = getenv("DTF_DATA_MSG_SIZE_LIMIT");
     if(s == NULL)
@@ -190,6 +181,9 @@ _EXTERN_C_ int dtf_finalize()
 //int MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype,
 //               MPI_Op op, int root, MPI_Comm comm)
 
+    while(gl_msg_q != NULL)
+        progress_msg_queue();
+
     /*Send any unsent file notifications
       and delete buf files*/
     finalize_files();
@@ -264,12 +258,14 @@ _EXTERN_C_ int dtf_finalize()
     s = getenv("DTF_SCALE");
     if(s != NULL)
         sclltkf = atoi(s);
+    else
+        sclltkf = 0;
 
     if(sclltkf){
-        nranks = nranks - (int)(nranks % gl_stats.nfiles);
+        nranks = nranks - (int)(nranks % (gl_stats.nfiles/2));
         if(gl_my_rank == 0)
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF: for stats consider %d ranks", nranks);
-        if(gl_my_rank >= nranks){//TODO JUST FOR SCALE LETKF because the last set of processes work with mean files!!!!
+        if(gl_my_rank >= nranks){//TODO JUST FOR SCALE LETKF because the last set of processes work with mean files
             DTF_DBG(VERBOSE_DBG_LEVEL, "will zero lib time");
             gl_stats.timer_accum = 0;
             walltime = 0;
@@ -294,6 +290,7 @@ _EXTERN_C_ int dtf_finalize()
     CHECK_MPI(err);
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max walltime: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
+
     dblint_in.dbl = gl_stats.timer_accum;
     dblint_in.intg = gl_my_rank;
     err = MPI_Reduce(&dblint_in, &dblint_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
@@ -306,7 +303,7 @@ _EXTERN_C_ int dtf_finalize()
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg nioreqs: %u", (unsigned)(unsgn/nranks));
 
-    err = MPI_Reduce(&(gl_stats.nioreqs), &unsgn, 1, MPI_UNSIGNED, MPI_MAX, 0, gl_comps[gl_my_comp_id].comm);
+    err = MPI_Reduce(&gl_stats.nioreqs, &unsgn, 1, MPI_UNSIGNED, MPI_MAX, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max nioreqs: %u", unsgn);
@@ -316,10 +313,23 @@ _EXTERN_C_ int dtf_finalize()
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg walltime: %.4f", dblsum/nranks);
 
-    err = MPI_Reduce(&(gl_stats.timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    err = MPI_Allreduce(&(gl_stats.timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
-    if(gl_my_rank==0 && dblsum > 0)
+    if(gl_my_rank==0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg library-measured I/O time: %.5f", dblsum/nranks);
+
+    /*Standard deviation*/
+    {
+        double mydev2;
+        double mean = dblsum/nranks;
+        mydev2 = (gl_stats.timer_accum - mean)*(gl_stats.timer_accum - mean);
+
+        err = MPI_Reduce(&mydev2, &dblsum, 1, MPI_DOUBLE, MPI_SUM,0, gl_comps[gl_my_comp_id].comm);
+        CHECK_MPI(err);
+
+        if(gl_my_rank == 0)
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: standard deviation: %.7f", sqrt(dblsum/nranks));
+    }
 
     err = MPI_Reduce(&(gl_stats.accum_match_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
@@ -393,18 +403,18 @@ _EXTERN_C_ int dtf_finalize()
     if(gl_my_rank==0 && lngsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg data msg sz acrosss ps: %d", (int)(lngsum/nranks));
 
-    data_sz = (unsigned long) gl_stats.data_msg_sz;
-    err = MPI_Reduce(&data_sz, &lngsum, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
-    CHECK_MPI(err);
-    if(gl_my_rank==0 && lngsum > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg total data sent acrosss ps: %d", (int)(lngsum/nranks));
+//    data_sz = (unsigned long) gl_stats.data_msg_sz;
+//    err = MPI_Reduce(&data_sz, &lngsum, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+//    CHECK_MPI(err);
+//    if(gl_my_rank==0 && lngsum > 0)
+//        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg total data sent acrosss ps: %d", (int)(lngsum/nranks));
     intsum = 0;
     err = MPI_Reduce(&(gl_stats.ndata_msg_sent), &intsum, 1, MPI_INT, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank==0 && intsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg num data msg: %d", (int)(intsum/nranks));
 
-     err = MPI_Reduce(&(gl_stats.accum_dbuff_sz), &lngsum, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    err = MPI_Reduce(&(gl_stats.accum_dbuff_sz), &lngsum, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank==0 && dblsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg buffering size: %lu", (size_t)(lngsum/nranks));
@@ -414,7 +424,8 @@ _EXTERN_C_ int dtf_finalize()
 
     if(gl_stats.malloc_size != MAX_COMP_NAME )
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
-
+    assert(gl_finfo_req_q == NULL);
+    assert(gl_msg_q == NULL);
 
     dtf_free(gl_my_comp_name, MAX_COMP_NAME);
     lib_initialized = 0;
@@ -493,7 +504,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Init masters");
     init_req_match_masters(comm, fbuf->mst_info);
 
-    if( (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH) && (fbuf->iomode == DTF_IO_MODE_MEMORY)){
+    if(fbuf->iomode == DTF_IO_MODE_MEMORY){
         if(fbuf->mst_info->is_master_flag){
             int nranks;
             MPI_Comm_size(comm, &nranks);
@@ -642,8 +653,6 @@ _EXTERN_C_ int dtf_match_ioreqs(const char* filename)
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return 0;
-
     /*User will have to explicitly initiate matching*/
     if(fbuf->explicit_match) return 0;
 
@@ -669,71 +678,39 @@ _EXTERN_C_ int dtf_match_ioreqs(const char* filename)
 _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )//, int match_all)
 {
     file_buffer_t *fbuf;
-    char *s;
-    int sclltkf = 0;
-
     if(!lib_initialized) return 0;
-    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return 0;
     DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s (ncid %d), intra flag %d", filename, ncid, intracomp_io_flag);
     if(intracomp_io_flag){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: scale-letkf hack: skip intracomp matching");
         return 0;
     }
 
-    s = getenv("DTF_SCALE");
-    if(s != NULL)
-        sclltkf = atoi(s);
+    fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
+    if(fbuf == NULL){
 
-    if(sclltkf){
-        int nranks;
-        MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &nranks);
-
-        nranks = nranks - (int)(nranks % gl_stats.nfiles);
-        if(gl_my_rank >= nranks){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: ps-ps don't participate in ensamble comp.No matching");
-            return 0;
-        }
-
+        if( (filename != NULL) && (strlen(filename) == 0) )
+            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file (%s) with ncid %d is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
+        else
+            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
+        return 0;
+    }
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
+    if(!fbuf->explicit_match){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_io but explicit match for file %s not enabled. Ignored.", filename);
+        return 0;
     }
 
-
-//    if(match_all){
-//        file_buffer_t *fbuf = gl_filebuf_list;
-//        while(fbuf != NULL){
-//            if(fbuf->iomode == DTF_IO_MODE_MEMORY)
-//                match_ioreqs(fbuf);
-//            fbuf = fbuf->next;
-//        }
-//
-//    } else{
-        fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
-        if(fbuf == NULL){
-
-            if( (filename != NULL) && (strlen(filename) == 0) )
-                DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file (%s) with ncid %d is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
-            else
-                DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
-            return 0;
-        }
-        if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-        if(!fbuf->explicit_match){
-            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_io but explicit match for file %s not enabled. Ignored.", filename);
-            return 0;
-        }
-
-        if( intracomp_io_flag && (gl_my_comp_id != fbuf->writer_id) ){
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_io: intracomp_io_flag(%d) can only be set for the writer component", intracomp_io_flag);
-            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-        }
-        if(fbuf->is_matching_flag){
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
-            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-        }
-        dtf_time_start();
-        match_ioreqs(fbuf, intracomp_io_flag);
-        dtf_time_end();
-
-  // }
+    if( intracomp_io_flag && (gl_my_comp_id != fbuf->writer_id) ){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_io: intracomp_io_flag(%d) can only be set for the writer component", intracomp_io_flag);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    if(fbuf->is_matching_flag){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    dtf_time_start();
+    match_ioreqs(fbuf, intracomp_io_flag);
+    dtf_time_end();
     return 0;
 }
 
@@ -743,7 +720,7 @@ _EXTERN_C_ void dtf_match_multiple(int ncid)
 {
 
     if(!lib_initialized) return;
-    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
+
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
     if(fbuf == NULL){
         DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: ncid %d is not treated by DTF( \
@@ -778,7 +755,7 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
 {
     double t_start;
     if(!lib_initialized) return;
-    if(gl_conf.distr_mode != DISTR_MODE_REQ_MATCH) return;
+
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
     if(fbuf == NULL){
         DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
@@ -910,17 +887,12 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: reader component cannot write to the file %s", fbuf->file_path);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
-    switch(gl_conf.distr_mode){
-            case DISTR_MODE_REQ_MATCH:
-                if(request == NULL)
-                    ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, NULL);
-                else
-                    ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, request);
-                break;
-            default:
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: 2 unknown data distribution mode");
-                MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-        }
+
+     if(request == NULL)
+        ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, NULL);
+     else
+        ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, request);
+
     return ret;
 }
 

@@ -5,17 +5,15 @@
 #include "dtf_file_buffer.h"
 #include "rb_red_black_tree.h"
 
-#define UNLIM_NELEMS_RANGE 256
-
-#define DTF_DB_BLOCKS  0  /*Match based on multidimensional data blocks*/
-
+#define DEFAULT_BLOCK_SZ_RANGE 256
+#define AUTO_BLOCK_SZ_RANGE    0
 
 #define DTF_DATA_MSG_SIZE_LIMIT 256*1024*1024
 
 
 typedef struct io_req{
 //TODO add versions to track overwritten data, or keep iorews per var?
-    unsigned int            id; //TODO remove id
+    unsigned int            id;
     int                     var_id;
     int                     sent_flag;  /*set to 1 if this req has already been forwarded to the master*/
     int                     rw_flag;
@@ -115,7 +113,7 @@ io_req_t *new_ioreq(int id,
 
 
 
-
+void progress_msg_queue();
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
 void delete_ioreqs(file_buffer_t *fbuf);
 void progress_io_matching();

@@ -2,7 +2,6 @@
 #include <ctype.h>
 #include <unistd.h>
 #include "dtf_init_finalize.h"
-#include "dtf_common.h"
 #include "dtf_file_buffer.h"
 #include "dtf_util.h"
 #include "dtf_req_match.h"
@@ -323,6 +322,8 @@ int load_config(const char *ini_name, const char *comp_name){
 
   gl_conf.buffered_req_match = 0;
   gl_conf.do_checksum = 0;
+  gl_conf.block_sz_range = AUTO_BLOCK_SZ_RANGE; //DEFAULT_BLOCK_SZ_RANGE;
+  gl_conf.iodb_build_mode = IODB_BUILD_RANGE; // IODB_BUILD_VARID;
 
   while(!feof(in)){
 
@@ -414,15 +415,27 @@ int load_config(const char *ini_name, const char *comp_name){
                     break;
                 }
             }
-//        } else if(strcmp(param, "distr_mode") == 0){
-//            if(strcmp(value, "static") == 0)
-//                gl_conf.distr_mode = DISTR_MODE_STATIC;
-//            else if(strcmp(value, "req_match") == 0)
-//                gl_conf.distr_mode = DISTR_MODE_REQ_MATCH;
-//            else{
-//                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: 3 unknown data distribution mode");
-//                goto panic_exit;
-//            }
+        } else if(strcmp(param, "block_range") == 0){
+
+            if(strcmp(value, "auto") == 0)
+                gl_conf.block_sz_range = AUTO_BLOCK_SZ_RANGE;
+            else
+                gl_conf.block_sz_range = (MPI_Offset)(atoi(value));
+            if(gl_conf.block_sz_range < 0){
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: incorrect value for block range: %lld", gl_conf.block_sz_range);
+                MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+            }
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Block range set to %lld", gl_conf.block_sz_range);
+
+        } else if(strcmp(param, "iodb_build_mode") == 0){
+            if(strcmp(value, "varid") == 0)
+               gl_conf.iodb_build_mode = IODB_BUILD_VARID;
+            else if(strcmp(value, "range") == 0)
+                gl_conf.iodb_build_mode = IODB_BUILD_RANGE;
+            else {
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown iodb build moed (%s): should be 'varid' or 'range'", value);
+                MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+            }
         } else if(strcmp(param, "buffered_req_match") == 0){
 
             gl_conf.buffered_req_match = atoi(value);
@@ -498,11 +511,6 @@ int load_config(const char *ini_name, const char *comp_name){
             if(strcmp(value, "file") == 0)
                 cur_fb->iomode = DTF_IO_MODE_FILE;
             else if(strcmp(value, "memory") == 0){
-
-                if(gl_conf.distr_mode == DTF_UNDEFINED){
-                    DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: data distribution mode is not defined.");
-                    goto panic_exit;
-                }
 
                 cur_fb->iomode = DTF_IO_MODE_MEMORY;
 
@@ -647,7 +655,7 @@ void finalize_files()
                             } else
                                 progress_io_matching();
                         }
-                } else if(fbuf->iomode == DTF_IO_MODE_MEMORY && gl_conf.distr_mode == DISTR_MODE_REQ_MATCH){
+                } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
                         if(fbuf->rdr_closed_flag)
                             compl_cnt++;
                         else

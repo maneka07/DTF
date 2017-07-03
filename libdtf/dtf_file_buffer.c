@@ -4,7 +4,6 @@
 #include "dtf_req_match.h"
 #include "dtf_file_buffer.h"
 #include "dtf.h"
-#include "dtf_common.h"
 
 /*API for handling rb_tree in write_db_item*/
 void var_destroy(void* _var)
