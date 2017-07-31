@@ -31,7 +31,7 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
 
     while(ptr != NULL)
     {
-       if((ncid != -1) && (ptr->ncid == ncid))
+       if((ncid >= 0) && (ptr->ncid == ncid))
                 break;
        if( (file_path != NULL) &&
            (strlen(file_path)!=0 && ( (strstr(file_path, ptr->file_path)!=NULL || strstr(ptr->file_path, file_path)!=NULL)  ||

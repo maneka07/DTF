@@ -24,7 +24,6 @@ void *gl_msg_buf = NULL;
 extern file_info_req_q_t *gl_finfo_req_q;
 extern dtf_msg_t *gl_msg_q;
 
-/*TODO DIFFERENT FILENAMES SAME NCID!!!*/
 
 /**
   @brief	Function to initialize the library. Should be called from inside
@@ -265,7 +264,7 @@ _EXTERN_C_ int dtf_finalize()
         nranks = nranks - (int)(nranks % (gl_stats.nfiles/2));
         if(gl_my_rank == 0)
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF: for stats consider %d ranks", nranks);
-        if(gl_my_rank >= nranks){//TODO JUST FOR SCALE LETKF because the last set of processes work with mean files
+        if(gl_my_rank >= nranks){//Only for because the last set of processes work with mean files
             DTF_DBG(VERBOSE_DBG_LEVEL, "will zero lib time");
             gl_stats.timer_accum = 0;
             walltime = 0;
@@ -388,16 +387,6 @@ _EXTERN_C_ int dtf_finalize()
     if(gl_my_rank==0 && dblsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg buffering time: %.5f", (double)(dblsum/nranks));
 
-//    if(gl_my_rank >= nranks){//TODO JUST FOR SCALE LETKF!!!!
-//        DTF_DBG(VERBOSE_DBG_LEVEL, "will zero progr time");
-//        gl_stats.timer2_accum = 0;
-//    }
-//
-//    err = MPI_Reduce(&(gl_stats.timer2_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
-//    CHECK_MPI(err);
-//    if(gl_my_rank==0 && dblsum > 0)
-//        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg user-program-measured I/O time: %.4f", dblsum/nranks);
-//
     err = MPI_Reduce(&data_sz, &lngsum, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank==0 && lngsum > 0)
@@ -606,19 +595,19 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     //We don't know which reader rank needs the info, so file info will be sent when
     //corresponding reader requests it!!
 }
-///**
-//  @brief	Called before the corresponding file is opened. In case if components do normal File I/O
-//            we need to synchronize the writer and reader(s) of the file so that reader(s) doesn't try to
-//            open it before the writer finished writing.
-//
-//  @param	filename        file name for the memory buffer
-//  @return	void
-//
-// */
-//void dtf_sync(char* filename)
-//{
-//
-//}
+
+_EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
+{
+    if(!lib_initialized) return;
+
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is not treated by DTF. Will not set ncid", filename);
+        return;
+    }
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Set ncid of file %s to %d (previos value %d)", filename, ncid, fbuf->ncid);
+    fbuf->ncid = ncid;
+}
 
 /**
   @brief	Called when the corresponding file is closed. If the file is opened in write mode

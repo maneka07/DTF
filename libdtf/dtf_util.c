@@ -44,7 +44,7 @@ void process_file_info_req_queue()
                 send_file_info(fbuf, fbuf->root_reader);
             } else if(fbuf->iomode == DTF_IO_MODE_FILE){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request");
-                err = MPI_Send(&fbuf->ncid,1, MPI_INT, fbuf->root_reader, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm);
+                err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm);
                 CHECK_MPI(err);
             }
         } else {
@@ -175,7 +175,7 @@ void close_file(file_buffer_t *fbuf)
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer masters readers have closed the file");
                 for(i = 0; i < fbuf->mst_info->nmasters; i++){
                     /*Notify the root writer I am closing the file*/
-                    err = MPI_Send(&(fbuf->ncid), 1, MPI_INT, fbuf->mst_info->masters[i], IO_CLOSE_FILE_TAG, gl_comps[fbuf->writer_id].comm);
+                    err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->mst_info->masters[i], IO_CLOSE_FILE_TAG, gl_comps[fbuf->writer_id].comm);
                     CHECK_MPI(err);
                 }
             }
@@ -209,7 +209,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
         if(fbuf->iomode == DTF_IO_MODE_FILE){
             if(fbuf->root_writer == -1){
                 if(rank == 0){
-                    int ncid;
+                    char filename[MAX_FILE_NAME];
                     MPI_Request req;
                     /*First, find out who is the root master.
                       In this case, only need to copy the file name and root reader rank*/
@@ -225,15 +225,13 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                     dtf_free(buf, MAX_FILE_NAME+sizeof(int));
 
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Starting to wait for file info for %s", fbuf->file_path);
-                    err = MPI_Recv(&ncid, 1, MPI_INT, MPI_ANY_SOURCE, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
+                    err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, MPI_ANY_SOURCE, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
                     CHECK_MPI(err);
-                    fbuf->ncid = ncid;
+                    assert(strcmp(fbuf->file_path, filename) == 0);
                     fbuf->root_writer = status.MPI_SOURCE;
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "Root for file %s is %d (ncid %d)", fbuf->file_path, fbuf->root_writer, fbuf->ncid);
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Root for file %s is %d", fbuf->file_path, fbuf->root_writer);
                 }
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast root & ncid to other readers");
-                err = MPI_Bcast(&fbuf->ncid, 1, MPI_INT, 0, comm);
-                CHECK_MPI(err);
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast root to other readers");
                 err = MPI_Bcast(&fbuf->root_writer, 1, MPI_INT, 0, comm);
                 CHECK_MPI(err);
             }
@@ -318,7 +316,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
         //Notify writer
 
         if( (rank == 0) && fbuf->iomode == DTF_IO_MODE_MEMORY){
-            err = MPI_Send(&fbuf->ncid, 1, MPI_INT, fbuf->root_writer, IO_OPEN_FILE_FLAG, gl_comps[fbuf->writer_id].comm);
+            err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, IO_OPEN_FILE_FLAG, gl_comps[fbuf->writer_id].comm);
             CHECK_MPI(err);
         }
     } else if(fbuf->writer_id == gl_my_comp_id){
@@ -509,7 +507,32 @@ void get_put_data(dtf_var_t *var,
                   int convert_flag)
 {
     int i;
-    MPI_Offset *cur_coord = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+    MPI_Offset *cur_coord;
+    int nelems;
+
+    if(var->ndims == 0){
+        nelems = 1;
+        int el_sz;
+        MPI_Type_size(var->dtype, &el_sz);
+
+        if(get_put_flag == DTF_READ){
+            if(convert_flag)
+                convertcpy(dtype, var->dtype, (void*)block_data, (void*)subbl_data, nelems);
+            else
+                memcpy(subbl_data, block_data, el_sz);
+
+        } else { /*DTF_WRITE*/
+           /*copy data subblock -> block*/
+            if(convert_flag)
+                convertcpy(var->dtype, dtype, (void*)subbl_data,(void*)block_data, nelems);
+            else
+                memcpy(block_data, subbl_data, el_sz);
+        }
+        gl_stats.ngetputcall++;
+        return;
+    }
+
+    cur_coord = dtf_malloc(var->ndims*sizeof(MPI_Offset));
     for(i = 0; i < var->ndims; i++){
         cur_coord[i] = subbl_start[i];
     }

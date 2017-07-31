@@ -167,6 +167,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 
 
     if(create_ioreq){
+        int sclltkf;
         /*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
         we ignore it. Start and count parameters are supposed to be with respect to
         element size for var->dtype*/
@@ -174,8 +175,18 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 
         if(rw_flag == DTF_READ)
             buffered = 0;
-        else if( (var->ndims <= 1) && (rw_flag == DTF_WRITE)) //This is specifically for SCALE-LETKF
+
+        char *s = getenv("DTF_SCALE");
+        if(s != NULL)
+            sclltkf = atoi(s);
+        else
+            sclltkf = 0;
+
+        if( sclltkf && (var->ndims <= 1) && (rw_flag == DTF_WRITE))
+             /*This is specifically for SCALE-LETKF since they overwrite the
+              user buffer in every time frame iteration */
             buffered = 1;
+
         req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, buffered);
 
         if(gl_conf.do_checksum && (rw_flag == DTF_WRITE))

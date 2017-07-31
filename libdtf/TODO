@@ -10,7 +10,10 @@
 * for scalar var no need to do request matching? Everyone should have the data?
 
 
-commit notes
+commit notes (27.07)
+
+- added code for transfering scalar vars;
+- bugfix in using ncids, added dtf_set_ncid() API, removed any communication of ncid between components since ncid is a process-local var, not file var;
 
 
 

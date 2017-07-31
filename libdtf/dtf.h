@@ -59,6 +59,7 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
 //_EXTERN_C_ void dtf_match_io_all(int rw_flag);
 _EXTERN_C_ void dtf_enddef(const char *filename);
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data);
+_EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid);
 
 /*     Fortran interfaces    */
 void dtf_tend_();
