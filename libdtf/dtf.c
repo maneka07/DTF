@@ -24,13 +24,15 @@ void *gl_msg_buf = NULL;
 extern file_info_req_q_t *gl_finfo_req_q;
 extern dtf_msg_t *gl_msg_q;
 
-
+/*
+************************************User API**********************************************
+*/
 /**
   @brief	Function to initialize the library. Should be called from inside
             the application before any other call to the library. Should be called
             after the MPI is initialized.
   @param	filename        Name of the library configuration file.
-  @param    module_name     Name of the module.
+  @param    module_name     Name of the module calling the init function.
   @return	int             0 if OK, anything else otherwise
 
  */
@@ -72,8 +74,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.nioreqs = 0;
     gl_stats.nbl = 0;
     gl_stats.ngetputcall = 0;
-    gl_stats.timer2_accum = 0;
-    gl_stats.timer2_start = 0;
     gl_stats.timer_accum = 0;
     gl_stats.timer_start = 0;
     gl_stats.accum_comm_data_time = 0;
@@ -423,19 +423,115 @@ _EXTERN_C_ int dtf_finalize()
     return 0;
 }
 
+/*called by user to do explicit matching*/
+/*
+    User must specify either filename or ncid.
+    intracomp_io_flag - if set to 1, matching of intracomponent io requests will be
+    performed. This flag is intended for for situation when the writer component
+    tries to read something from the file it is writing.
+*/
+_EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )//, int match_all)
+{
+    file_buffer_t *fbuf;
+    if(!lib_initialized) return 0;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s (ncid %d), intra flag %d", filename, ncid, intracomp_io_flag);
+    if(intracomp_io_flag){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: scale-letkf hack: skip intracomp matching");
+        return 0;
+    }
 
-/*Interfaces to be used by a File I/O library*/
-/**
-  @brief	First checks if direct data transfer should be used for this file. If yes,
-            writes a portion of data to corresponding memory buffer. If no, returns.
-  @param	filename        file name for the memory buffer
-  @param    offset          where in the file should this data be written
-  @param    data_sz         size of the data to be written
-  @param    data            pointer to the data to be written
-  @return	number of bytes written
+    fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
+    if(fbuf == NULL){
 
- */
+        if( (filename != NULL) && (strlen(filename) == 0) )
+            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file (%s) with ncid %d is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
+        else
+            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
+        return 0;
+    }
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
+    if(!fbuf->explicit_match){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_io but explicit match for file %s not enabled. Ignored.", filename);
+        return 0;
+    }
 
+    if( intracomp_io_flag && (gl_my_comp_id != fbuf->writer_id) ){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_io: intracomp_io_flag(%d) can only be set for the writer component", intracomp_io_flag);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    if(fbuf->is_matching_flag){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    match_ioreqs(fbuf, intracomp_io_flag);
+    return 0;
+}
+
+/*Supposed to be called by the writer process.
+  Used to match against several dtf_match_io functions on the reader side*/
+_EXTERN_C_ void dtf_match_multiple(int ncid)
+{
+
+    if(!lib_initialized) return;
+
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
+    if(fbuf == NULL){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: ncid %d is not treated by DTF( \
+                not in configuration file). Explicit matching ignored.", ncid);
+        return;
+    }
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+    if(!fbuf->explicit_match){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_multiple but explicit match for file \
+                %s not enabled. Ignored.", fbuf->file_path);
+        return;
+    }
+
+    if( gl_my_comp_id != fbuf->writer_id){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_multiple can only be called by writer component. Ignoring.");
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching multiple");
+    dtf_tstart();
+    fbuf->done_match_multiple_flag = 0;
+    while(!fbuf->done_match_multiple_flag)
+        match_ioreqs(fbuf, 0);
+    //reset
+    fbuf->done_match_multiple_flag = 0;
+    dtf_tend();
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Finish matching multiple");
+    return;
+}
+
+/*Used by reader to notify writer that it can complete dtf_match_multiple*/
+_EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
+{
+    double t_start;
+    if(!lib_initialized) return;
+
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
+    if(fbuf == NULL){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
+        return;
+    }
+
+    t_start = MPI_Wtime();
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+    if(fbuf->reader_id != gl_my_comp_id){
+        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: dtf_complete_multiple can only be called by reader");
+        return;
+    }
+    dtf_tstart();
+    MPI_Barrier(fbuf->comm);
+    notify_complete_multiple(fbuf);
+    dtf_tend();
+
+    gl_stats.accum_match_time += MPI_Wtime() - t_start;
+}
+
+/*
+*******************************Interfaces to be used by PnetCDF***************************************************
+*/
 _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
 {
     if(!lib_initialized) return;
@@ -460,7 +556,6 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
     return read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
 }
-
 
 _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 {
@@ -657,113 +752,6 @@ _EXTERN_C_ int dtf_match_ioreqs(const char* filename)
 }
 
 
-/*called by user to do explicit matching*/
-/*
-    User must specify either filename or ncid.
-    intracomp_io_flag - if set to 1, matching of intracomponent io requests will be
-    performed. This flag is intended for for situation when the writer component
-    tries to read something from the file it is writing.
-*/
-_EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )//, int match_all)
-{
-    file_buffer_t *fbuf;
-    if(!lib_initialized) return 0;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s (ncid %d), intra flag %d", filename, ncid, intracomp_io_flag);
-    if(intracomp_io_flag){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: scale-letkf hack: skip intracomp matching");
-        return 0;
-    }
-
-    fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
-    if(fbuf == NULL){
-
-        if( (filename != NULL) && (strlen(filename) == 0) )
-            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file (%s) with ncid %d is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
-        else
-            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
-        return 0;
-    }
-    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-    if(!fbuf->explicit_match){
-        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_io but explicit match for file %s not enabled. Ignored.", filename);
-        return 0;
-    }
-
-    if( intracomp_io_flag && (gl_my_comp_id != fbuf->writer_id) ){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_io: intracomp_io_flag(%d) can only be set for the writer component", intracomp_io_flag);
-        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-    }
-    if(fbuf->is_matching_flag){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
-        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-    }
-    dtf_time_start();
-    match_ioreqs(fbuf, intracomp_io_flag);
-    dtf_time_end();
-    return 0;
-}
-
-/*Supposed to be called by the writer process.
-  Used to match against several dtf_match_io functions on the reader side*/
-_EXTERN_C_ void dtf_match_multiple(int ncid)
-{
-
-    if(!lib_initialized) return;
-
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
-    if(fbuf == NULL){
-        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: ncid %d is not treated by DTF( \
-                not in configuration file). Explicit matching ignored.", ncid);
-        return;
-    }
-    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
-    if(!fbuf->explicit_match){
-        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_multiple but explicit match for file \
-                %s not enabled. Ignored.", fbuf->file_path);
-        return;
-    }
-
-    if( gl_my_comp_id != fbuf->writer_id){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_multiple can only be called by writer component. Ignoring.");
-        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-    }
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching multiple");
-    dtf_time_start();
-    fbuf->done_match_multiple_flag = 0;
-    while(!fbuf->done_match_multiple_flag)
-        match_ioreqs(fbuf, 0);
-    //reset
-    fbuf->done_match_multiple_flag = 0;
-    dtf_time_end();
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Finish matching multiple");
-    return;
-}
-
-/*Used by reader to notify writer that it can complete dtf_match_multiple*/
-_EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
-{
-    double t_start;
-    if(!lib_initialized) return;
-
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);
-    if(fbuf == NULL){
-        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
-        return;
-    }
-
-    t_start = MPI_Wtime();
-    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
-    if(fbuf->reader_id != gl_my_comp_id){
-        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: dtf_complete_multiple can only be called by reader");
-        return;
-    }
-    dtf_time_start();
-    MPI_Barrier(fbuf->comm);
-    notify_complete_multiple(fbuf);
-    dtf_time_end();
-
-    gl_stats.accum_match_time += MPI_Wtime() - t_start;
-}
 
 ///* The user has to state whether the process needs to match all read or write requests.
 //   Because the process of matching for a reader and writer is not the same. */
@@ -816,35 +804,10 @@ _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* coun
 //    printf("\n");
 }
 
-/**
-    @brief  Check if the file is intended to be written by this component
-    @param  filename    name of the file
-    @return 1 - yes, 0 - no
-*/
-_EXTERN_C_ int dtf_write_flag(const char* filename)
-{
-    if(!lib_initialized)return 0;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL) return 0;
-    return (fbuf->writer_id == gl_my_comp_id) ? 1 : 0;
-}
 
 _EXTERN_C_ void dtf_print(const char *str)
 {
     DTF_DBG(VERBOSE_ERROR_LEVEL, "%s", str);
-}
-
-/**
-    @brief  Check if the file intended to be read by this component
-    @param  filename    name of the file
-    @return 1 - yes, 0 - no
-*/
-_EXTERN_C_ int dtf_read_flag(const char* filename)
-{
-    if(!lib_initialized) return 0;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL) return 0;
-    return (fbuf->reader_id == gl_my_comp_id) ? 1 : 0;
 }
 
 _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
@@ -931,35 +894,19 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     return ret;
 }
 
-_EXTERN_C_ void dtf_time_start()
+_EXTERN_C_ void dtf_tstart()
 {
     if(gl_stats.timer_start != 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.", gl_stats.timer_start - gl_stats.walltime);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.",
+                gl_stats.timer_start - gl_stats.walltime);
 
     gl_stats.timer_start = MPI_Wtime();
-
 }
-_EXTERN_C_ void dtf_time_end()
+_EXTERN_C_ void dtf_tend()
 {
     double tt = MPI_Wtime() - gl_stats.timer_start;
     gl_stats.timer_accum += tt;
     gl_stats.timer_start = 0;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: lib time %.4f", tt);
-}
-
-
-_EXTERN_C_ void dtf_tstart()
-{
-    if(gl_stats.timer2_start != 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.", gl_stats.timer2_start - gl_stats.walltime);
-
-    gl_stats.timer2_start = MPI_Wtime();
-}
-_EXTERN_C_ void dtf_tend()
-{
-    double tt = MPI_Wtime() - gl_stats.timer2_start;
-    gl_stats.timer2_accum += tt;
-    gl_stats.timer2_start = 0;
     DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
 }
 

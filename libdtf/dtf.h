@@ -21,22 +21,17 @@
 
 #define DTF_UNLIMITED  0L  /*Unlimited dimension*/
 
-/*Interfaces used by an application*/
+/*User API*/
 _EXTERN_C_ int dtf_init(const char *filename, char *module_name);
 _EXTERN_C_ int dtf_finalize();
-_EXTERN_C_ int dtf_wait_all(const char* filename);
-_EXTERN_C_ int dtf_wait(const char* filename, int request);
 _EXTERN_C_ void dtf_print(const char *str);
 _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid);
 _EXTERN_C_ void dtf_match_multiple(int ncid);
 _EXTERN_C_ void dtf_tstart();
 _EXTERN_C_ void dtf_tend();
+_EXTERN_C_ int  dtf_match_io(const char *filename, int ncid, int intracomp_io_flag );
 
-/*Interfaces to be used by a File I/O library*/
-_EXTERN_C_ void dtf_time_start();
-_EXTERN_C_ void dtf_time_end();
-_EXTERN_C_ int dtf_write_flag(const char* filename);
-_EXTERN_C_ int dtf_read_flag(const char* filename);
+/*Interfaces used by PnetCDF*/
 _EXTERN_C_ void dtf_open(const char* filename, MPI_Comm comm);
 _EXTERN_C_ void dtf_close(const char* filename);
 _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid);
@@ -55,7 +50,6 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
                                           int rw_flag,
                                           int *request);
 _EXTERN_C_ int dtf_match_ioreqs(const char* filename);
-_EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag);
 //_EXTERN_C_ void dtf_match_io_all(int rw_flag);
 _EXTERN_C_ void dtf_enddef(const char *filename);
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data);

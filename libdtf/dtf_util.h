@@ -129,8 +129,6 @@ typedef struct stats{
     unsigned        ngetputcall;  /*how many times had to use a subblock extraction function*/
     double          timer_start;    /*measure I/O time from pnetcdf*/
     double          timer_accum;
-    double          timer2_start;   /*measure I/O time from user program*/
-    double          timer2_accum;
     int             nfiles;
 } stats_t;
 
