@@ -463,7 +463,9 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
+    dtf_tstart();
     match_ioreqs(fbuf, intracomp_io_flag);
+    dtf_tend();
     return 0;
 }
 
@@ -872,6 +874,8 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
+
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "def var %d for ncid %d", varid, fbuf->ncid);
 
     /*For now, can only support unlimited dimension if it's the fasted changing dimension array*/
     if( (ndims > 0) && (shape[ndims - 1] == DTF_UNLIMITED))
