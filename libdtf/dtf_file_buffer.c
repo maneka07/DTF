@@ -6,13 +6,8 @@
 #include "dtf.h"
 
 /*API for handling rb_tree in write_db_item*/
-void var_destroy(void* _var)
-{
-    dtf_var_t *var = (dtf_var_t*)_var;
-    dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
-    dtf_free(_var, sizeof(dtf_var_t));
-}
 
+/*
 int var_cmp(const void *a, const void *b)
 {
   if( ((dtf_var_t*)a)->id > ((dtf_var_t*)b)->id ) return 1;
@@ -23,7 +18,7 @@ int var_cmp(const void *a, const void *b)
 void var_print(const void *var)
 {
   DTF_DBG(VERBOSE_DBG_LEVEL, "(varid %d)", ((dtf_var_t*)var)->id);
-}
+} */
 
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid)
 {
@@ -46,19 +41,38 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
 
 dtf_var_t* find_var(file_buffer_t* fbuf, int varid)
 {
-    dtf_var_t var;
-    var.id = varid;
-    rb_red_blk_node *node = RBExactQuery(fbuf->vars, &var);
-    if(node == NULL)
+    if(varid >= fbuf->var_cnt)
         return NULL;
     else
-        return (dtf_var_t*)(node->key);
+        return fbuf->vars[varid];
+//    dtf_var_t var;
+//    var.id = varid;
+//    rb_red_blk_node *node = RBExactQuery(fbuf->vars, &var);
+//    if(node == NULL)
+//        return NULL;
+//    else
+//        return (dtf_var_t*)(node->key);
+}
+
+void delete_var(dtf_var_t* var)
+{
+    dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
+    dtf_free(var, sizeof(dtf_var_t));
 }
 
 void add_var(file_buffer_t *fbuf, dtf_var_t *var)
 {
-    rb_red_blk_node *var_node = RBTreeInsert(fbuf->vars, var, 0);
-    assert(var_node != NULL);
+    //rb_red_blk_node *var_node = RBTreeInsert(fbuf->vars, var, 0);
+    //assert(var_node != NULL);
+
+    dtf_var_t **tmp = (dtf_var_t**)realloc(fbuf->vars, (fbuf->var_cnt+1)*sizeof(dtf_var_t*));
+    assert(tmp != NULL);
+    fbuf->vars = tmp;
+    fbuf->var_cnt++;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "var id %d, cnt %d", var->id, fbuf->var_cnt-1);
+    assert(var->id == fbuf->var_cnt-1);
+    fbuf->vars[fbuf->var_cnt-1] = var;
+    gl_stats.malloc_size += sizeof(dtf_var_t*);
 }
 
 void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
@@ -75,6 +89,7 @@ void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
 
 void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
 {
+    int i;
 
     if(fbuf == NULL)
         return;
@@ -84,7 +99,11 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
     if(fbuf->header != NULL)
         dtf_free(fbuf->header, fbuf->hdr_sz);
 
-    RBTreeDestroy(fbuf->vars);
+    //RBTreeDestroy(fbuf->vars);
+    for(i = 0; i < fbuf->var_cnt; i++)
+        delete_var(fbuf->vars[i]);
+    dtf_free(fbuf->vars, fbuf->var_cnt*sizeof(dtf_var_t*));
+
     assert(fbuf->ioreqs == NULL);
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
@@ -115,7 +134,7 @@ file_buffer_t* new_file_buffer()
     buf->reader_id = -1;
     buf->writer_id=-1;
     buf->is_ready = 0;
-    buf->vars = RBTreeCreate(var_cmp, var_destroy, NullFunction, var_print, NullFunction);
+    buf->vars = NULL; //RBTreeCreate(var_cmp, var_destroy, NullFunction, var_print, NullFunction);
     buf->var_cnt = 0;
     buf->header = NULL;
     buf->hdr_sz = 0;

@@ -39,7 +39,8 @@ typedef struct file_buffer{
   MPI_Comm                  comm;               /*MPI_Communicator used to open the file*/
   void                      *header;            /*buffer to store netcdf header*/
   MPI_Offset                hdr_sz;             /*size of the netcdf header*/
-  rb_red_blk_tree           *vars;              /*Variables in the file*/
+  //rb_red_blk_tree           *vars;              /*Variables in the file*/
+  dtf_var_t                 **vars;
   int                       var_cnt;            /*Number of defined variables*/
   int                       writer_id;
   int                       reader_id;

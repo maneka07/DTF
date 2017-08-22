@@ -50,7 +50,7 @@ static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     MPI_Offset sz = 0, offt = 0;
     unsigned char *chbuf;
     int i;
-    rb_red_blk_node *var_node;
+ //   rb_red_blk_node *var_node;
     /*Pack:
        - file name
        - file header size
@@ -67,15 +67,14 @@ static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
 
     sz += sz%sizeof(MPI_Offset); //padding
 
-    dtf_var_t tmp_var;
     for(i = 0; i < fbuf->var_cnt; i++){
-        tmp_var.id = i;
-        var_node = RBExactQuery(fbuf->vars, &tmp_var);
-        assert(var_node != NULL);
-        var = (dtf_var_t*)(var_node->key);
+//        tmp_var.id = i;
+//        var_node = RBExactQuery(fbuf->vars, &tmp_var);
+//        assert(var_node != NULL);
+//        var = (dtf_var_t*)(var_node->key);
         /*sz += sizeof(var->id) + sizeof(var->el_sz) +
         sizeof(var->ndims) + sizeof(MPI_Offset)*var->ndims;*/
-        sz += sizeof(MPI_Offset)*3+ sizeof(MPI_Offset)*var->ndims;
+        sz += sizeof(MPI_Offset)*3+ sizeof(MPI_Offset)*fbuf->vars[i]->ndims;
     }
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Packing info: sz %lld", sz);
@@ -109,10 +108,11 @@ static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     /*vars*/
 
     for(i = 0; i < fbuf->var_cnt; i++){
-        tmp_var.id = i;
-        var_node = RBExactQuery(fbuf->vars, &tmp_var);
-        assert(var_node != NULL);
-        var = (dtf_var_t*)(var_node->key);
+//        tmp_var.id = i;
+//        var_node = RBExactQuery(fbuf->vars, &tmp_var);
+//        assert(var_node != NULL);
+//        var = (dtf_var_t*)(var_node->key);
+        var = fbuf->vars[i];
         *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)var->id;
         offt += sizeof(MPI_Offset);
         *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)mpitype2int(var->dtype);
@@ -206,7 +206,6 @@ void unpack_file_info(MPI_Offset bufsz, void *buf)
             var->shape = NULL;
 
         add_var(fbuf, var);
-        fbuf->var_cnt++;
     }
     assert(offt == bufsz);
     DTF_DBG(VERBOSE_ALL_LEVEL, "Finished unpacking");
@@ -1149,7 +1148,8 @@ void send_ioreqs(file_buffer_t *fbuf, int intracomp_match)
         if((gl_my_comp_id == fbuf->writer_id) && intracomp_match){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
             dtf_msg_t *msg = new_dtf_msg(NULL, 0, READ_DONE_TAG);
-            int err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm, &(msg->req));
+            int err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer,
+                      READ_DONE_TAG, gl_comps[fbuf->writer_id].comm, &(msg->req));
             CHECK_MPI(err);
             ENQUEUE_ITEM(msg, gl_msg_q);
         }

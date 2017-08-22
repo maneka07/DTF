@@ -340,7 +340,6 @@ int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_O
     for(i = 0; i < ndims; i++)
         DTF_DBG(VERBOSE_DBG_LEVEL, "\t%lld", shape[i]);
 
-    fbuf->var_cnt++;
     return 0;
 }
 
