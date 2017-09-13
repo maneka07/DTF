@@ -612,11 +612,14 @@ panic_exit:
 
 void finalize_comp_comm(){
 
-    int i;
+    int i, err;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finalizing communicators");
     for(i = 0; i<gl_ncomp; i++){
        destroy_intercomm(gl_comps[i].id);
     }
+
+    err = MPI_Comm_free(&gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
 }
 
 void finalize_files()

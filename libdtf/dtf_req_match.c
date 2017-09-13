@@ -1047,9 +1047,9 @@ void send_ioreqs_ver2(file_buffer_t *fbuf, int intracomp_match)
                 cnt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
                 offt[mst] += var->ndims*sizeof(MPI_Offset);
 
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Will send info to mst %d about block:", mst);
+                DTF_DBG(VERBOSE_ALL_LEVEL, "Will send info to mst %d about block:", mst);
                 for(i = 0; i < var->ndims; i++)
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", strt[i], cnt[i]);
+                    DTF_DBG(VERBOSE_ALL_LEVEL, "%lld  ->  %lld", strt[i], cnt[i]);
                 shift += block_range;
             }
             ioreq->sent_flag = 1;
