@@ -5,8 +5,8 @@
 #include "dtf_file_buffer.h"
 #include "rb_red_black_tree.h"
 
-#define DEFAULT_BLOCK_SZ_RANGE 256
-#define AUTO_BLOCK_SZ_RANGE    0
+#define DEFAULT_BLOCK_SZ_RANGE 1
+//#define AUTO_BLOCK_SZ_RANGE    0
 
 #define DTF_DATA_MSG_SIZE_LIMIT 256*1024*1024
 

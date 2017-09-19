@@ -23,6 +23,9 @@ typedef struct dtf_var{
     MPI_Datatype            dtype;      /*Datatype of the variable*/
     MPI_Offset              *shape;     /* dim->size of each dim */
     int                     ndims;      /* number of dimensions */
+    int                     max_dim;    /*Along what dimension the variable is broken into subblocks?
+                                          Each master is responsible for metadata of a predefined subblock.
+                                          */
     double                  checksum;   /*to check if what was written to the var is what was read*/
  }dtf_var_t;
 
@@ -79,6 +82,5 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
 dtf_var_t* find_var(file_buffer_t* fbuf, int varid);
 dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 void add_var(file_buffer_t *fbuf, dtf_var_t *var);
-int has_unlim_dim(dtf_var_t *var);
 int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
 #endif

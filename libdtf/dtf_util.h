@@ -100,8 +100,8 @@ typedef struct dtf_config{
     int         data_msg_size_limit;
     int         detect_overlap_flag;    /*should master process detect write overlap by different processes?*/
     int         do_checksum;
-    MPI_Offset  block_sz_range;  /*the size of the data block in the first dimension*/
-    int         iodb_build_mode;      /*0 - based on var ids, 1 - based on data block range*/
+//    MPI_Offset  block_sz_range;  /*the size of the data block in the first dimension*/
+    int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
 }dtf_config_t;
 
 typedef struct stats{
@@ -111,15 +111,11 @@ typedef struct stats{
     double          accum_comm_time;
     size_t          data_msg_sz;      /*Accumulated size of messages */
     double          accum_match_time;  /*Total time spent in match_ioreqs*/
- //   double          accum_db_match_time; /*Time that master processes spend matching reqs from iodb*/
-    double          accum_comm_data_time;  /*time to send/recv data*/
-    double          accum_extract_data_time;
+    double          idle_time;
     double          accum_progr_time;
-    double          progr_work_time;
     double          accum_do_matching_time;
-    double          do_match_idle_time;
-    double          accum_send_ioreq_time;
     double          accum_rw_var;
+    double          master_time;  /*measure accum time for master-related work*/
     int             ndb_match;       /*How many times I/O req matching was performed*/
     double          walltime;
     size_t          malloc_size;

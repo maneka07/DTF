@@ -322,7 +322,7 @@ int load_config(const char *ini_name, const char *comp_name){
 
   gl_conf.buffered_req_match = 0;
   gl_conf.do_checksum = 0;
-  gl_conf.block_sz_range = AUTO_BLOCK_SZ_RANGE; //DEFAULT_BLOCK_SZ_RANGE;
+ // gl_conf.block_sz_range = AUTO_BLOCK_SZ_RANGE; //DEFAULT_BLOCK_SZ_RANGE;
   gl_conf.iodb_build_mode = IODB_BUILD_RANGE; // IODB_BUILD_VARID;
 
   while(!feof(in)){
@@ -415,7 +415,7 @@ int load_config(const char *ini_name, const char *comp_name){
                     break;
                 }
             }
-        } else if(strcmp(param, "block_range") == 0){
+/*        } else if(strcmp(param, "block_range") == 0){
 
             if(strcmp(value, "auto") == 0)
                 gl_conf.block_sz_range = AUTO_BLOCK_SZ_RANGE;
@@ -426,7 +426,7 @@ int load_config(const char *ini_name, const char *comp_name){
                 MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
             }
             DTF_DBG(VERBOSE_DBG_LEVEL, "Block range set to %lld", gl_conf.block_sz_range);
-
+*/
         } else if(strcmp(param, "iodb_build_mode") == 0){
             if(strcmp(value, "varid") == 0)
                gl_conf.iodb_build_mode = IODB_BUILD_VARID;

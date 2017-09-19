@@ -87,7 +87,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     int create_ioreq = 1;
 
     if((rw_flag == DTF_READ) && (fbuf->writer_id == gl_my_comp_id)){
-        double t_extract = MPI_Wtime();
+
         if(var->ndims > 0){
             int match;
             MPI_Offset matched_els;
@@ -150,7 +150,6 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
                 }
             }
         }
-        gl_stats.accum_extract_data_time += MPI_Wtime() - t_extract;
         if(nelems == 0){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Have read data for var %d, no rreq created", varid);
             create_ioreq = 0;

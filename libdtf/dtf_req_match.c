@@ -131,9 +131,12 @@ void unpack_file_info(MPI_Offset bufsz, void *buf)
 {
     int i, varid, var_cnt;
     file_buffer_t *fbuf;
+    int ndims;
     dtf_var_t *var;
     MPI_Offset offt = 0;
     int type;
+    MPI_Datatype dtype;
+    MPI_Offset *shape;
     unsigned char *chbuf = (unsigned char*)buf;
     char filename[MAX_FILE_NAME];
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start unpackinf file info for of sz %d", (int)bufsz);
@@ -190,21 +193,16 @@ void unpack_file_info(MPI_Offset bufsz, void *buf)
         offt += sizeof(MPI_Offset);
         var = find_var(fbuf, varid);
         assert(var == NULL);
-        var = new_var(varid, 0, 0, NULL);
+
         type = (int)(*((MPI_Offset*)(chbuf+offt)));
-        var->dtype = int2mpitype(type);
+        dtype = int2mpitype(type);
         offt+=sizeof(MPI_Offset);
-        var->ndims = (int)(*((MPI_Offset*)(chbuf+offt)));
+        ndims = (int)(*((MPI_Offset*)(chbuf+offt)));
         offt += sizeof(MPI_Offset);
+        shape = (MPI_Offset*)(chbuf+offt);
+        offt += sizeof(MPI_Offset)*ndims;
 
-        if(var->ndims > 0){
-            var->shape = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            assert(var->shape != NULL);
-            memcpy((void*)var->shape, chbuf+offt, sizeof(MPI_Offset)*var->ndims);
-            offt += sizeof(MPI_Offset)*var->ndims;
-        } else
-            var->shape = NULL;
-
+        var = new_var(varid, ndims, dtype, shape);
         add_var(fbuf, var);
     }
     assert(offt == bufsz);
@@ -233,11 +231,13 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
     int ndims;
     int ntimes_while = 0;
 
-    double t_st;
+    double t_st, t_idle = 0, t_start;
 
     int n_matched_blocks = 0;
     if(!fbuf->mst_info->iodb->updated_flag) //no new info since last time matching was done, ignore
         return;
+
+    t_start = MPI_Wtime();
 
     fbuf->mst_info->iodb->updated_flag = 0; //reset
 
@@ -265,9 +265,13 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
     ritem = fbuf->mst_info->iodb->ritems;
     while(ritem != NULL){
 
+        t_st = MPI_Wtime();
+
         /*If we are supposed to match intra component io requests
         then skip all other requests*/
         if(intracomp_io_flag && (ritem->comm != gl_comps[gl_my_comp_id].comm)){
+            gl_stats.idle_time += MPI_Wtime() - t_st;
+            t_idle += MPI_Wtime() - t_st;
             ritem = ritem->next;
             continue;
         }
@@ -282,8 +286,6 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
         }
 
         n_matched_blocks = 0;
-
-        t_st = MPI_Wtime();
 
         for(i = 0; i < allocd_nwriters; i++){
             sbuf[i] = NULL;
@@ -304,6 +306,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
         while(rblock != NULL){
             ntimes_while++;
             var_id = rblock->var_id;
+            t_st = MPI_Wtime();
 
             if( (witem == NULL) || (witem->var_id != var_id)){
                 //find the write record for this var_id
@@ -317,7 +320,9 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                 if(witem == NULL){
                     rblock = rblock->next;
                     /*No match right now*/
-                    gl_stats.do_match_idle_time += MPI_Wtime() - t_st;
+                    gl_stats.idle_time += MPI_Wtime() - t_st;
+                    t_idle += MPI_Wtime() - t_st;
+
                     continue;
                 }
             }
@@ -353,6 +358,8 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
 
                 if(wblock == NULL){
                     //didn't find
+                    gl_stats.idle_time += MPI_Wtime() - t_st;
+                    t_idle += MPI_Wtime() - t_st;
                     break;
                 }
 
@@ -464,6 +471,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                     nelems_matched *= matched_count[i];
                 }
                 nelems_to_match -= nelems_matched;
+                t_st = MPI_Wtime(); //reset
             }
 
             dtf_free(matched_count, ndims*sizeof(MPI_Offset));
@@ -497,9 +505,6 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                 continue;
             }
 
-            if(nelems_matched == 0)
-                gl_stats.do_match_idle_time += MPI_Wtime() - t_st;
-
             rblock = rblock->next;
         }
 
@@ -522,9 +527,6 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                     ENQUEUE_ITEM(msg, gl_msg_q);
                 }
             }
-            //err = MPI_Waitall(nwriters, sreqs, MPI_STATUSES_IGNORE);
-            //CHECK_MPI(err);
-            //gl_stats.accum_comm_time += MPI_Wtime() - t_start_send;
 
             if(my_idx != -1){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Parse data req to myself");
@@ -555,12 +557,20 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
             ritem = ritem->next;
         }
     }
+    if(nwriters == 0)
+        t_st = MPI_Wtime(); //reset
     /*dealloc stuff*/
     dtf_free(writers, allocd_nwriters*sizeof(int));
     dtf_free(offt, allocd_nwriters*sizeof(size_t));
     dtf_free(bufsz, allocd_nwriters*sizeof(int));
     dtf_free(sbuf, allocd_nwriters*sizeof(unsigned char*));
     gl_stats.ndb_match++;
+
+    if(nwriters == 0)
+        gl_stats.idle_time += MPI_Wtime() - t_st;
+
+    assert( MPI_Wtime() - t_start >= t_idle);
+    gl_stats.master_time = MPI_Wtime() - t_start - t_idle;  //useful work
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "after matching: %d ritems", (int)fbuf->mst_info->iodb->nritems);
 }
@@ -821,15 +831,15 @@ io_req_t *new_ioreq(int id,
         ioreq->user_buf_sz = count[0];
         for(i=1;i<ndims;i++)
             ioreq->user_buf_sz *= count[i];
-//        char *s = getenv("BT_BENCH");
-//        int bt_bench = 0;
-//        if(s!=NULL)
-//            bt_bench = 1;
-//        if(bt_bench){
-//            int def_el_sz;
-//            MPI_Type_size(MPI_DOUBLE, &def_el_sz);
-//            ioreq->user_buf_sz *= def_el_sz;
-//        } else
+        char *s = getenv("BT_BENCH");
+        int bt_bench = 0;
+        if(s!=NULL)
+            bt_bench = 1;
+        if(bt_bench){
+            int def_el_sz;
+            MPI_Type_size(MPI_DOUBLE, &def_el_sz);
+            ioreq->user_buf_sz *= def_el_sz;
+        } else
             ioreq->user_buf_sz *= el_sz;
 
         ioreq->start = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
@@ -899,8 +909,8 @@ void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
     dtf_free((*ioreq), sizeof(io_req_t));
 }
 
-/*This version divides the variable data among masters based on its
-  first dimention */
+/*This version divides the variable data among masters along the var's biggest dimension.
+  If there is an unlimited dimension, the division happens along it*/
 void send_ioreqs_ver2(file_buffer_t *fbuf, int intracomp_match)
 {
     dtf_var_t *var = NULL;
@@ -993,21 +1003,33 @@ void send_ioreqs_ver2(file_buffer_t *fbuf, int intracomp_match)
             *(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->var_id;
             offt[mst] += sizeof(MPI_Offset);
         } else {
-            if(gl_conf.block_sz_range == AUTO_BLOCK_SZ_RANGE){ //divide equally among masters by the 1st dimension
-                //If the first dimension is unlimited then will divide by default blocks
-                if(var->shape[0] == DTF_UNLIMITED)
-                    block_range = DEFAULT_BLOCK_SZ_RANGE;
-                else{
-                    block_range = (MPI_Offset)(var->shape[0]/fbuf->mst_info->nmasters);
-                    if(block_range == 0)
-                        block_range = var->shape[0];
-                }
-            } else
-                block_range = gl_conf.block_sz_range;
+//            if(gl_conf.block_sz_range == AUTO_BLOCK_SZ_RANGE){ //divide equally among masters by the 1st dimension
+//                //If the first dimension is unlimited then will divide by default blocks
+//                if(var->shape[0] == DTF_UNLIMITED)
+//                    block_range = DEFAULT_BLOCK_SZ_RANGE;
+//                else{
+//                    block_range = (MPI_Offset)(var->shape[0]/fbuf->mst_info->nmasters);
+//                    if(block_range == 0)
+//                        block_range = var->shape[0];
+//                }
+//            } else
+//                block_range = gl_conf.block_sz_range;
+            if(var->shape[var->max_dim] == DTF_UNLIMITED)
+                block_range = DEFAULT_BLOCK_SZ_RANGE;
+            else
+                block_range = (MPI_Offset)(var->shape[var->max_dim]/fbuf->mst_info->nmasters);
+
+            if(block_range == 0)
+                block_range = DEFAULT_BLOCK_SZ_RANGE;
 
             shift = 0;
-            while(ioreq->start[0] + shift < ioreq->start[0] + ioreq->count[0]){
-                mst = (MPI_Offset)((ioreq->start[0] + shift)/block_range)%fbuf->mst_info->nmasters;
+            while(ioreq->start[var->max_dim] + shift < ioreq->start[var->max_dim] + ioreq->count[var->max_dim]){
+
+                if(block_range == 1)
+                    mst = (int)((ioreq->start[var->max_dim] + shift) % fbuf->mst_info->nmasters);
+                else
+                    mst = (int)((ioreq->start[var->max_dim] + shift)/block_range);
+
                 DTF_DBG(VERBOSE_DBG_LEVEL, "mst %d", mst);
                 if(bufsz[mst] == 0){
                     sbuf[mst] = dtf_malloc(MAX_FILE_NAME + mlc_chunk);
@@ -1089,12 +1111,12 @@ fn_exit:
 
 
 
-
+/*The metadata is distributed among masters based on the var id.*/
 void send_ioreqs(file_buffer_t *fbuf, int intracomp_match)
 {
     dtf_var_t *var = NULL;
     io_req_t *ioreq;
-    int mst = 0;    //only one master for now
+    int mst = 0;
     int nrreqs = 0;
     unsigned char **sbuf;
     size_t *bufsz, *offt;
@@ -1298,8 +1320,6 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     else /*IODB_BUILD_RANGE*/
         send_ioreqs_ver2(fbuf, intracomp_io_flag);
 
-    gl_stats.accum_send_ioreq_time += MPI_Wtime() - t_start;
-
 //    t_part1 = MPI_Wtime() - t_part1;
 //    t_part2 = MPI_Wtime();
 
@@ -1314,9 +1334,11 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
                // counter = 0;
                 gl_stats.accum_progr_time += MPI_Wtime() - t_st;
                 t_st = MPI_Wtime();
-                if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag  )
+                if( (fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag  ){
                     do_matching(fbuf, intracomp_io_flag);
-                gl_stats.accum_do_matching_time += MPI_Wtime() - t_st;
+                    gl_stats.accum_do_matching_time += MPI_Wtime() - t_st;
+                } else
+                    gl_stats.idle_time += MPI_Wtime() - t_st;
             //}
     }
 
@@ -1369,7 +1391,6 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
     int nblocks_written = 0;
     MPI_Offset *new_count = NULL, *new_start = NULL, *tmp;
     MPI_Offset nelems, fit_nelems;
-    double t_start;
     int min_bl_ndims;
     size_t min_bl_sz;
     char filename[MAX_FILE_NAME];
@@ -1384,9 +1405,6 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
 
     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     assert(fbuf != NULL);
-
-    t_start = MPI_Wtime();
-
     assert(gl_msg_buf != NULL);
     sbuf = (unsigned char*)gl_msg_buf;
     sbufsz = (int)gl_conf.data_msg_size_limit;
@@ -1566,18 +1584,18 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
             } else {
                 int cnt_mismatch = 0;
                 int type_mismatch = 0;
-                //int bt_bench = 0;
+                int bt_bench = 0;
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Will copy subblock (strt->cnt):");
                 for(i=0; i < var->ndims; i++)
                     DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld \t orig: \t %lld\t --> %lld)", new_start[i], new_count[i], start[i], count[i]);
 
                 /*Copy the block to send buffer*/
 
-//                    char *s = getenv("BT_BENCH");
-//                    if(s != NULL)  //HACK: don't check  for type mismatch for BT benchmark
-//                        bt_bench = 1;
-//                    if(!bt_bench && (var->dtype != ioreq->dtype)){
-                if(var->dtype != ioreq->dtype){
+                char *s = getenv("BT_BENCH");
+                if(s != NULL)  //HACK: don't check  for type mismatch for BT benchmark
+                    bt_bench = 1;
+                if(!bt_bench && (var->dtype != ioreq->dtype)){
+                //if(var->dtype != ioreq->dtype){
                     /*Will only support conversion from MPI_DOUBLE to MPI_FLOAT*/
                     if(var->dtype == MPI_FLOAT){
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from float to double");
@@ -1621,9 +1639,9 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                         MPI_Offset start_cpy_offt;
                         MPI_Type_size(ioreq->dtype, &req_el_sz);
                         //TODO do not include this in git (special for bt benchmark)
-//                        if(bt_bench)
-//                            start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, new_start) * def_el_sz;
-//                        else
+                        if(bt_bench)
+                            start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, new_start) * def_el_sz;
+                        else
                             start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, new_start) * req_el_sz;
 
                         if(type_mismatch){
@@ -1686,7 +1704,6 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
 
     free(new_start);
     free(new_count);
-    gl_stats.accum_extract_data_time += MPI_Wtime() - t_start;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished sending the data");
    // dtf_free(sbuf, sbufsz); //comment out since use gl_msg_buf
 }
@@ -1768,12 +1785,12 @@ static void recv_data_rdr(void* buf, int bufsz)
         MPI_Type_size(var->dtype, &def_el_sz);
 
         type_mismatch = 0;
-//        int bt_bench = 0;
-//         char *s = getenv("BT_BENCH");
-//        if(s != NULL)  //HACK: don't check  for type mismatch for BT benchmark
-//            bt_bench = 1;
-        //if(!bt_bench && (ioreq->dtype != var->dtype)){
-        if(ioreq->dtype != var->dtype){
+        int bt_bench = 0;
+         char *s = getenv("BT_BENCH");
+        if(s != NULL)  //HACK: don't check  for type mismatch for BT benchmark
+            bt_bench = 1;
+        if(!bt_bench && (ioreq->dtype != var->dtype)){
+        //if(ioreq->dtype != var->dtype){
             type_mismatch = 1;
             if(var->dtype == MPI_FLOAT){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from float to double");
@@ -1802,9 +1819,9 @@ static void recv_data_rdr(void* buf, int bufsz)
                             NULL, NULL, NULL, data, DTF_WRITE, type_mismatch);
         } else if(cnt_mismatch <= 1){
             MPI_Offset start_cpy_offt;
-//                if(bt_bench)
-//                    start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * def_el_sz;
-//                else
+                if(bt_bench)
+                    start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * def_el_sz;
+                else
                 start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * req_el_sz;
             if(type_mismatch){
                 convertcpy(var->dtype, ioreq->dtype, data, (unsigned char*)ioreq->user_buf + start_cpy_offt, nelems);
@@ -1817,9 +1834,9 @@ static void recv_data_rdr(void* buf, int bufsz)
         }
         gl_stats.nbl++;
         offt += nelems*def_el_sz +(nelems*def_el_sz)%sizeof(MPI_Offset);
-//            if(bt_bench)
-//                ioreq->get_sz += (MPI_Offset)(nelems*def_el_sz);
-//            else
+            if(bt_bench)
+                ioreq->get_sz += (MPI_Offset)(nelems*def_el_sz);
+            else
             ioreq->get_sz += (MPI_Offset)(nelems*req_el_sz);
 
 
@@ -1858,7 +1875,6 @@ static void recv_data_rdr(void* buf, int bufsz)
         }
     } //while(bufsz)
 
-    gl_stats.accum_extract_data_time += MPI_Wtime()-t_begin;
     DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: time to extract the data: %.3f (%d blocks)", MPI_Wtime() - t_begin, nblocks_read);
 }
 
@@ -1951,6 +1967,7 @@ void progress_msg_queue()
 
     msg = gl_msg_q;
     while(msg != NULL){
+        t_st = MPI_Wtime();
         err = MPI_Test(&(msg->req), &flag, &status);
         CHECK_MPI(err);
         if(flag){
@@ -1967,9 +1984,10 @@ void progress_msg_queue()
             }
             delete_dtf_msg(msg);
             msg = tmp;
-            gl_stats.progr_work_time += MPI_Wtime() - t_st;
-        } else
+        } else{
+            gl_stats.idle_time += MPI_Wtime() - t_st;
             msg = msg->next;
+        }
     }
 }
 
@@ -2040,16 +2058,18 @@ void progress_io_matching()
         }
 
         while(1){
+            t_st = MPI_Wtime();
             err = MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, gl_comps[comp].comm, &flag, &status);
             CHECK_MPI(err);
 
             if(!flag){
+                gl_stats.idle_time += MPI_Wtime() - t_st;
                 break;
             }
             src = status.MPI_SOURCE;
 
             print_recv_msg(status.MPI_TAG);
-            t_st = MPI_Wtime();
+
             switch(status.MPI_TAG){
                 case FILE_INFO_REQ_TAG:
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Recv root req from rank %d (comp %s)", src, gl_comps[comp].name);
@@ -2078,17 +2098,8 @@ void progress_io_matching()
                         req->buf = rbuf;
                         req->next = NULL;
                         req->prev = NULL;
+
                         ENQUEUE_ITEM(req, gl_finfo_req_q);
-
-                        //enqueue
-//                        if(gl_finfo_req_q == NULL)
-//                            gl_finfo_req_q = req;
-//                        else {
-//                            req->next = gl_finfo_req_q;
-//                            gl_finfo_req_q->prev = req;
-//                            gl_finfo_req_q = req;
-//                        }
-
                         break;
                     }
                     if(gl_my_rank == fbuf->root_writer){
@@ -2120,6 +2131,7 @@ void progress_io_matching()
 
                     break;
                 case IO_REQS_TAG:
+                    t_st = MPI_Wtime();
                     MPI_Get_count(&status, MPI_BYTE, &bufsz);
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Received reqs from %d, comp %d (my comp %d), bufsz %d", src, comp,gl_my_comp_id, (int)bufsz);
                     rbuf = dtf_malloc(bufsz);
@@ -2130,6 +2142,7 @@ void progress_io_matching()
                     gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
                     parse_ioreqs(rbuf, bufsz, src, gl_comps[comp].comm);
                     dtf_free(rbuf, bufsz);
+                    gl_stats.master_time += MPI_Wtime() - t_st;
                     break;
                 case IO_DATA_REQ_TAG:
                     MPI_Get_count(&status, MPI_BYTE, &bufsz);
@@ -2160,6 +2173,7 @@ void progress_io_matching()
                    // dtf_free(rbuf, bufsz);
                     break;
                 case READ_DONE_TAG:
+                    t_st = MPI_Wtime();
                     err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, READ_DONE_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(err);
                     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
@@ -2188,16 +2202,20 @@ void progress_io_matching()
                         notify_workgroup(fbuf, MATCH_DONE_TAG);
                         fbuf->done_matching_flag = 1;
                     }
+                    gl_stats.master_time += MPI_Wtime() - t_st;
                     break;
                 case MATCH_DONE_TAG:
+
                     err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, MATCH_DONE_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(err);
                     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
                     assert(fbuf != NULL);
                     if(fbuf->mst_info->is_master_flag){
+                        t_st = MPI_Wtime();
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that req matching for %s completed", fbuf->file_path);
                         /*Tell other writer ranks that they can complete matching*/
                         notify_workgroup(fbuf, MATCH_DONE_TAG);
+                        gl_stats.master_time += MPI_Wtime() - t_st;
                     }
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
                     fbuf->done_matching_flag = 1;
@@ -2216,6 +2234,7 @@ void progress_io_matching()
 //                        }
                     //}
                     */
+
                     break;
                 case IO_CLOSE_FILE_TAG:
                     err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, IO_CLOSE_FILE_TAG, gl_comps[comp].comm, &status);
@@ -2234,8 +2253,10 @@ void progress_io_matching()
                             fbuf->fready_notify_flag = RDR_HASNT_OPENED;
                     }
                     if(fbuf->mst_info->is_master_flag){
+                        t_st = MPI_Wtime();
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that they can close the file %s", fbuf->file_path);
                         notify_workgroup(fbuf, IO_CLOSE_FILE_TAG);
+                        gl_stats.master_time += MPI_Wtime() - t_st;
                     }
                     //TODO figure out with letkf multiple closing file when to reset this flag?
                     fbuf->rdr_closed_flag = 1;
@@ -2281,9 +2302,11 @@ void progress_io_matching()
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Recv done multiple tag for %s from %d", fbuf->file_path, src);
 
                     if(fbuf->mst_info->is_master_flag){
+                        t_st = MPI_Wtime();
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that multiple matching for %s completed", fbuf->file_path);
                         /*Tell other writer ranks that they can complete matching*/
                         notify_workgroup(fbuf, DONE_MULTIPLE_FLAG);
+                        gl_stats.master_time += MPI_Wtime() - t_st;
                     }
                     fbuf->done_matching_flag = 1;
                     fbuf->done_match_multiple_flag = 1;
@@ -2295,20 +2318,20 @@ void progress_io_matching()
                     assert(fbuf != NULL);
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Recv open file tag for %s from %d", fbuf->file_path, src);
                     if(fbuf->mst_info->is_master_flag){
+                        t_st = MPI_Wtime();
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Notify workgroup");
                         notify_workgroup(fbuf, IO_OPEN_FILE_FLAG);
                         fbuf->rdr_closed_flag = 0;
 
                         if(fbuf->iomode == DTF_IO_MODE_FILE)
                             fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
-
+                        gl_stats.master_time += MPI_Wtime() - t_st;
                     }
                     break;
                 default:
                     DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown tag %d", status.MPI_TAG);
                     assert(0);
             }
-            gl_stats.progr_work_time += MPI_Wtime() - t_st;
         }
     }
 }

@@ -66,8 +66,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.accum_match_time = 0;
     gl_stats.ndb_match = 0;
     gl_stats.walltime = MPI_Wtime();
-    if(gl_my_rank == 0)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: started at %.3f", gl_stats.walltime);
     gl_stats.accum_comm_time = 0;
     gl_stats.nprogress_call = 0;
     gl_stats.nioreqs = 0;
@@ -75,17 +73,14 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.ngetputcall = 0;
     gl_stats.timer_accum = 0;
     gl_stats.timer_start = 0;
-    gl_stats.accum_comm_data_time = 0;
-    gl_stats.accum_extract_data_time = 0;
     gl_stats.accum_dbuff_sz = 0;
     gl_stats.accum_dbuff_time = 0;
     gl_stats.accum_rw_var = 0;
     gl_stats.accum_progr_time = 0;
     gl_stats.accum_do_matching_time = 0;
     gl_stats.nfiles = 0;
-    gl_stats.accum_send_ioreq_time = 0;
-    gl_stats.progr_work_time = 0;
-    gl_stats.do_match_idle_time = 0;
+    gl_stats.idle_time = 0;
+    gl_stats.master_time = 0;
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -188,8 +183,8 @@ _EXTERN_C_ int dtf_finalize()
     if(gl_msg_buf != NULL)
         dtf_free(gl_msg_buf, gl_conf.data_msg_size_limit);
 
-    if(gl_stats.malloc_size != MAX_COMP_NAME )
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
+    //if(gl_stats.malloc_size != MAX_COMP_NAME )
+      //  DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
     assert(gl_finfo_req_q == NULL);
     assert(gl_msg_q == NULL);
 
