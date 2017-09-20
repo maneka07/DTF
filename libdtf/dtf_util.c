@@ -233,6 +233,11 @@ void print_stats()
     }
 
     /*AVERAGE STATS*/
+    if(gl_stats.iodb_nioreqs > 0){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: nioreqs in iodb %lu", gl_stats.iodb_nioreqs);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: parse ioreq t %.4f", gl_stats.parse_ioreq_time);
+    }
+
     err = MPI_Reduce(&walltime, &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank == 0)

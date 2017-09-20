@@ -237,9 +237,9 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
     if(!fbuf->mst_info->iodb->updated_flag) //no new info since last time matching was done, ignore
         return;
 
-    t_start = MPI_Wtime();
-
     fbuf->mst_info->iodb->updated_flag = 0; //reset
+
+    t_start = MPI_Wtime();
 
     writers = (int*)dtf_malloc(mlc_ranks*sizeof(int));
     assert(writers != NULL);
@@ -572,6 +572,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
     assert( MPI_Wtime() - t_start >= t_idle);
     gl_stats.master_time = MPI_Wtime() - t_start - t_idle;  //useful work
 
+
     DTF_DBG(VERBOSE_DBG_LEVEL, "after matching: %d ritems", (int)fbuf->mst_info->iodb->nritems);
 }
 
@@ -642,6 +643,8 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
     char filename[MAX_FILE_NAME];
     unsigned char *chbuf = (unsigned char*)buf;
 
+    double t_start = MPI_Wtime();
+
     memcpy(filename, chbuf, MAX_FILE_NAME);
     offt += MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
@@ -659,6 +662,8 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
         offt += sizeof(MPI_Offset);
         var_id = (int)(*(MPI_Offset*)(chbuf+offt));
         offt += sizeof(MPI_Offset);
+
+        gl_stats.iodb_nioreqs++;
 
         if((var == NULL) || (var->id != var_id)){
             var = find_var(fbuf, var_id);
@@ -807,6 +812,8 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
     }
     assert(offt == (size_t)bufsz);
     fbuf->mst_info->iodb->updated_flag = 1;
+
+    gl_stats.parse_ioreq_time += MPI_Wtime() - t_start;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_stats.malloc_size);
 }
 
@@ -1087,10 +1094,14 @@ void send_ioreqs_ver2(file_buffer_t *fbuf, int intracomp_match)
         if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->mst_info->masters[mst] == gl_my_rank)){
             idx = mst;
         } else {
+            int flag;
+            MPI_Status status;
             dtf_msg_t *msg = new_dtf_msg(sbuf[mst], bufsz[mst], IO_REQS_TAG);
             DTF_DBG(VERBOSE_DBG_LEVEL, "Post send ioreqs req to mst %d (bufsz %lu (allcd %lu)", fbuf->mst_info->masters[mst], offt[mst], bufsz[mst]);
             err = MPI_Isend((void*)sbuf[mst], (int)offt[mst], MPI_BYTE, fbuf->mst_info->masters[mst], IO_REQS_TAG,
                             gl_comps[fbuf->writer_id].comm, &(msg->req));
+            CHECK_MPI(err);
+            err = MPI_Test(&(msg->req), &flag, &status);
             CHECK_MPI(err);
             ENQUEUE_ITEM(msg, gl_msg_q);
         }
@@ -1971,7 +1982,7 @@ void progress_msg_queue()
         err = MPI_Test(&(msg->req), &flag, &status);
         CHECK_MPI(err);
         if(flag){
-            t_st = MPI_Wtime();
+            gl_stats.accum_comm_time += MPI_Wtime() - t_st;
             dtf_msg_t *tmp = msg->next;
             DEQUEUE_ITEM(msg, gl_msg_q);
             if(msg->tag == FILE_READY_TAG){

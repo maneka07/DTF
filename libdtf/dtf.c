@@ -81,6 +81,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.nfiles = 0;
     gl_stats.idle_time = 0;
     gl_stats.master_time = 0;
+    gl_stats.iodb_nioreqs = 0;
+    gl_stats.parse_ioreq_time = 0; //TODO remove this var
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);

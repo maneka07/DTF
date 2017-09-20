@@ -121,11 +121,13 @@ typedef struct stats{
     size_t          malloc_size;
     unsigned long   nprogress_call;
     unsigned        nioreqs;
+    unsigned long   iodb_nioreqs;   /*number of blocks in iodb for matching*/
     unsigned        nbl;    /*number of blocks transfered*/
     unsigned        ngetputcall;  /*how many times had to use a subblock extraction function*/
     double          timer_start;    /*measure I/O time from pnetcdf*/
     double          timer_accum;
     int             nfiles;
+    double          parse_ioreq_time;
 } stats_t;
 
 typedef struct dtf_msg{
