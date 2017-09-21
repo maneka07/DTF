@@ -80,6 +80,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.accum_do_matching_time = 0;
     gl_stats.nfiles = 0;
     gl_stats.idle_time = 0;
+    gl_stats.idle_do_match_time = 0;
     gl_stats.master_time = 0;
     gl_stats.iodb_nioreqs = 0;
     gl_stats.parse_ioreq_time = 0; //TODO remove this var

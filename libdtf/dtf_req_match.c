@@ -272,6 +272,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
         if(intracomp_io_flag && (ritem->comm != gl_comps[gl_my_comp_id].comm)){
             gl_stats.idle_time += MPI_Wtime() - t_st;
             t_idle += MPI_Wtime() - t_st;
+            gl_stats.idle_do_match_time += MPI_Wtime() - t_st;
             ritem = ritem->next;
             continue;
         }
@@ -322,7 +323,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                     /*No match right now*/
                     gl_stats.idle_time += MPI_Wtime() - t_st;
                     t_idle += MPI_Wtime() - t_st;
-
+                    gl_stats.idle_do_match_time += MPI_Wtime() - t_st;
                     continue;
                 }
             }
@@ -360,6 +361,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                     //didn't find
                     gl_stats.idle_time += MPI_Wtime() - t_st;
                     t_idle += MPI_Wtime() - t_st;
+                    gl_stats.idle_do_match_time += MPI_Wtime() - t_st;
                     break;
                 }
 

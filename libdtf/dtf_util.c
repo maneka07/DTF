@@ -281,10 +281,14 @@ void print_stats()
     if(gl_my_rank == 0 && dblsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg tot match time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
 
-    err = MPI_Reduce(&(gl_stats.accum_do_matching_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
-    CHECK_MPI(err);
-    if(gl_my_rank == 0 && dblsum > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg do match time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
+//    err = MPI_Reduce(&(gl_stats.accum_do_matching_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+//    CHECK_MPI(err);
+//    if(gl_my_rank == 0 && dblsum > 0)
+//        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg do match time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
+    if(gl_stats.accum_do_matching_time > 0){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: do match time: %.4f (%.4f%%), idle do match %.4f",
+                gl_stats.accum_do_matching_time, gl_stats.accum_do_matching_time/avglibt*100, gl_stats.idle_do_match_time);
+    }
 
     //DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: my do match time: %.4f (%.4f%%)", gl_stats.accum_do_matching_time, gl_stats.accum_do_matching_time/avglibt*100);
 

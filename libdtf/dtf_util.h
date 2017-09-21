@@ -112,6 +112,7 @@ typedef struct stats{
     size_t          data_msg_sz;      /*Accumulated size of messages */
     double          accum_match_time;  /*Total time spent in match_ioreqs*/
     double          idle_time;
+    double          idle_do_match_time;
     double          accum_progr_time;
     double          accum_do_matching_time;
     double          accum_rw_var;
