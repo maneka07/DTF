@@ -1031,6 +1031,8 @@ void send_ioreqs_ver2(file_buffer_t *fbuf, int intracomp_match)
             if(block_range == 0)
                 block_range = DEFAULT_BLOCK_SZ_RANGE;
 
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Var %d, max dim %d, block_range %lld", var->id, var->max_dim, block_range);
+
             shift = 0;
             while(ioreq->start[var->max_dim] + shift < ioreq->start[var->max_dim] + ioreq->count[var->max_dim]){
 
@@ -1066,15 +1068,18 @@ void send_ioreqs_ver2(file_buffer_t *fbuf, int intracomp_match)
                 *(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->var_id;
                 offt[mst] += sizeof(MPI_Offset);
                 memcpy(sbuf[mst]+offt[mst], ioreq->start, var->ndims*sizeof(MPI_Offset));
-                //change the coord of the first dim
-                *(MPI_Offset*)(sbuf[mst]+offt[mst]) = ioreq->start[0] + shift;
+
+                /*Adjust corresponding start coordinate*/
+                *(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) = ioreq->start[var->max_dim] + shift;
                 strt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
                 offt[mst] += var->ndims*sizeof(MPI_Offset);
                 memcpy(sbuf[mst]+offt[mst], ioreq->count, var->ndims*sizeof(MPI_Offset));
-                if(ioreq->count[0] - shift > block_range )
-                    *(MPI_Offset*)(sbuf[mst]+offt[mst]) = block_range;
+
+                /*Adjust corresponding count*/
+                if(ioreq->count[var->max_dim] - shift > block_range )
+                    *(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) = block_range;
                 else
-                    *(MPI_Offset*)(sbuf[mst]+offt[mst]) = ioreq->count[0] - shift;
+                    *(MPI_Offset*)(sbuf[mst]+offt[mst]+var->max_dim*sizeof(MPI_Offset)) = ioreq->count[var->max_dim] - shift;
                 cnt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
                 offt[mst] += var->ndims*sizeof(MPI_Offset);
 
