@@ -165,17 +165,19 @@ _EXTERN_C_ int dtf_finalize()
 
 //int MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype,
 //               MPI_Op op, int root, MPI_Comm comm)
-
+    DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalize");
+    
     while(gl_msg_q != NULL)
         progress_msg_queue();
 
     /*Send any unsent file notifications
       and delete buf files*/
+      
     finalize_files();
 
     assert(gl_finfo_req_q == NULL);
 
-    DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalize");
+
 
     print_stats();
 

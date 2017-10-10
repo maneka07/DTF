@@ -322,7 +322,6 @@ int load_config(const char *ini_name, const char *comp_name){
 
   gl_conf.buffered_req_match = 0;
   gl_conf.do_checksum = 0;
- // gl_conf.block_sz_range = AUTO_BLOCK_SZ_RANGE; //DEFAULT_BLOCK_SZ_RANGE;
   gl_conf.iodb_build_mode = IODB_BUILD_RANGE; // IODB_BUILD_VARID;
 
   while(!feof(in)){
@@ -348,7 +347,7 @@ int load_config(const char *ini_name, const char *comp_name){
         if (gl_ncomp == 0){
            DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: [file] section defined before [info] section.");
             goto panic_exit;
-        } else{
+        } else {
             for(i = 0; i < gl_ncomp; i++)
                 if(gl_comps[i].name[0] == '\0'){
                     DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: not all component names defined.");

@@ -42,6 +42,7 @@ void delete_ioreqs(file_buffer_t *fbuf)
     }
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
+    assert(fbuf->ioreqs == NULL);
 }
 
 static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
@@ -584,10 +585,15 @@ void clean_iodb(ioreq_db_t *iodb)
     read_db_item_t *ritem;
     unsigned nitems = 0, ndblocks = 0;
 
+    if(iodb == NULL){
+		return;
+	}
+//    DTF_DBG(VERBOSE_DBG_LEVEL, "Clean iodb: memuse %lu, peak %lu", gl_stats.iodb_cur_memuse, gl_stats.iodb_peak_memuse);
+
+
     witem = iodb->witems;
     while(witem != NULL){
         nitems++;
-
         if(witem->dblocks != NULL){
             write_dblock_t *block = witem->dblocks;
             while(block != NULL){
@@ -601,7 +607,6 @@ void clean_iodb(ioreq_db_t *iodb)
             }
             assert(witem->nblocks == 0);
         }
-
         iodb->witems = iodb->witems->next;
         dtf_free(witem, sizeof(write_db_item_t));
         witem = iodb->witems;
@@ -630,10 +635,49 @@ void clean_iodb(ioreq_db_t *iodb)
         ritem = iodb->ritems;
         iodb->nritems--;
     }
+    DTF_DBG(VERBOSE_DBG_LEVEL, "iodb clean");
 //    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STATS: %u ritems, %u dblocks", nitems, ndblocks);
     iodb->witems = NULL;
     iodb->ritems = NULL;
     assert(iodb->nritems == 0);
+    iodb->updated_flag = 0;
+
+}
+
+static write_db_item_t *new_witem(int varid, int ndims, MPI_Offset *shape)
+{
+
+//    write_db_item_t *dbitem = (write_db_item_t*)dtf_malloc(sizeof(write_db_item_t));
+//    assert(dbitem != NULL);
+//    dbitem->var_id = varid;
+//    dbitem->next = NULL;
+//    dbitem->ndims = ndims;
+//    dbitem->dblocks = NULL;
+
+//    return dbitem;
+}
+
+static write_dblock_t *new_wblock(int rank, MPI_Offset *start, MPI_Offset *count, int ndims)
+{
+    write_dblock_t *dblock = dtf_malloc(sizeof(write_dblock_t));
+    assert(dblock != NULL);
+    dblock->rank = rank;
+    dblock->next = NULL;
+
+    if(ndims == 0){
+        dblock->start = NULL;
+        dblock->count = NULL;
+    } else {
+        dblock->start = dtf_malloc(ndims*sizeof(MPI_Offset));
+        assert(dblock->start != NULL);
+        dblock->count = dtf_malloc(ndims*sizeof(MPI_Offset));
+        assert(dblock->count != NULL);
+        memcpy(dblock->start, start, ndims*sizeof(MPI_Offset));
+        memcpy(dblock->count, count, ndims*sizeof(MPI_Offset));
+    }
+
+    return dblock;
+
 }
 
 static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
@@ -1140,7 +1184,7 @@ void send_ioreqs(file_buffer_t *fbuf, int intracomp_match)
     size_t *bufsz, *offt;
     int data_to_send = 0;
     int nmasters = fbuf->mst_info->nmasters;
-    int idx, err;
+    int idx, err, flag;
     MPI_Request *reqs = dtf_malloc(nmasters * sizeof(MPI_Request));
     assert(reqs != NULL);
 
@@ -1259,7 +1303,7 @@ void send_ioreqs(file_buffer_t *fbuf, int intracomp_match)
             //ENQUEUE_ITEM(msg, gl_msg_q);
         }
     }
-    int flag = 0;
+    flag = 0;
     while(!flag){
         err = MPI_Testall(nmasters, reqs, &flag, MPI_STATUSES_IGNORE);
         CHECK_MPI(err);
@@ -1284,7 +1328,7 @@ static void reset_fbuf_match(file_buffer_t *fbuf)
 {
     if ((fbuf->writer_id == gl_my_comp_id) && fbuf->mst_info->is_master_flag)
         /*Reset flag for future matchings*/
-        fbuf->mst_info->iodb->updated_flag = 1;
+        fbuf->mst_info->iodb->updated_flag = 0;
 
     fbuf->is_matching_flag = 0;
     fbuf->mst_info->nwranks_completed = 0;
@@ -1326,6 +1370,29 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     }
     assert(!fbuf->is_matching_flag);
 
+    if(gl_my_comp_id == fbuf->reader_id){
+		/*Reader cannot proceed to a new match for this file until
+		 * writer confirmed that it has finished with the previous match.
+		 * Crucial for multi-iterative programs where there is I/O in
+		 * every iteration*/
+		if(fbuf->done_match_confirm_flag == DTF_UNDEFINED)
+			fbuf->done_match_confirm_flag = 0;
+		else{
+
+
+			if(gl_my_rank == fbuf->root_reader)
+				while(!fbuf->done_match_confirm_flag){
+					progress_io_matching();
+				}
+
+			int err = MPI_Bcast(&(fbuf->done_match_confirm_flag), 1, MPI_INT, 0, fbuf->comm);
+			CHECK_MPI(err);
+			assert(fbuf->done_match_confirm_flag);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Confirmation received. Proceed to match");
+			fbuf->done_match_confirm_flag = 0; //reset
+		}
+	}
+
     fbuf->done_matching_flag = 0;
     t_start = MPI_Wtime();
     /*If a writer process doesn't have any io requests, it still has to
@@ -1360,6 +1427,15 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
             //}
     }
 
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time for matching %.4f", MPI_Wtime() - t_start);
+    reset_fbuf_match(fbuf);
+    gl_stats.accum_match_time += MPI_Wtime() - t_start;
+
+	if(fbuf->mst_info->is_master_flag)
+		clean_iodb(fbuf->mst_info->iodb);
+
+	delete_ioreqs(fbuf);
+
     MPI_Barrier(fbuf->comm);
 
 //    t_part2 = MPI_Wtime() - t_part2;
@@ -1376,11 +1452,13 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
                 CHECK_MPI(err);
             }
         }
-    }
-
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Stat: Time for matching %.4f", MPI_Wtime() - t_start);
-    reset_fbuf_match(fbuf);
-    gl_stats.accum_match_time += MPI_Wtime() - t_start;
+    } else if(gl_my_comp_id == fbuf->writer_id && gl_my_rank == fbuf->root_writer){
+		/*Notify reader writer finished this matching. Needed for multi-iterative cases*/
+		dtf_msg_t *msg = new_dtf_msg(NULL, 0, READ_DONE_CONFIRM_TAG);
+		int err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, READ_DONE_CONFIRM_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
+		CHECK_MPI(err);
+		ENQUEUE_ITEM(msg, gl_msg_q);
+	}
 
 //    t_part3 = MPI_Wtime() - t_part3;
 //
@@ -2048,8 +2126,12 @@ static void print_recv_msg(int tag)
         case IO_DATA_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_DATA_TAG");
             break;
+        case READ_DONE_CONFIRM_TAG:
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_CONFIRM_TAG");
+			break;
         default:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag unknown %d", tag);
+            assert(0);
     }
 }
 
@@ -2203,7 +2285,7 @@ void progress_io_matching()
                         fbuf->mst_info->nwranks_completed++;
                         DTF_DBG(VERBOSE_DBG_LEVEL, " -> from writer %d (tot %d)", src, fbuf->mst_info->nwranks_completed);
                         if((fbuf->mst_info->nwranks_opened > 0) && (fbuf->mst_info->nwranks_completed == fbuf->mst_info->nwranks_opened)){
-
+							//TODO this needs to be checked
                             assert(gl_my_rank == fbuf->root_writer);
                             DTF_DBG(VERBOSE_DBG_LEVEL, "Notify masters & workgroup that intracomp matching is finished");
                             notify_masters(fbuf, MATCH_DONE_TAG);
@@ -2219,6 +2301,7 @@ void progress_io_matching()
                         //notify_masters(fbuf, MATCH_DONE_TAG);
                         notify_workgroup(fbuf, MATCH_DONE_TAG);
                         fbuf->done_matching_flag = 1;
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
                     }
                     gl_stats.master_time += MPI_Wtime() - t_st;
                     break;
@@ -2228,13 +2311,13 @@ void progress_io_matching()
                     CHECK_MPI(err);
                     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
                     assert(fbuf != NULL);
-                    if(fbuf->mst_info->is_master_flag){
-                        t_st = MPI_Wtime();
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that req matching for %s completed", fbuf->file_path);
-                        /*Tell other writer ranks that they can complete matching*/
-                        notify_workgroup(fbuf, MATCH_DONE_TAG);
-                        gl_stats.master_time += MPI_Wtime() - t_st;
-                    }
+                    //if(fbuf->mst_info->is_master_flag){
+                        //t_st = MPI_Wtime();
+                        //DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that req matching for %s completed", fbuf->file_path);
+                        ///*Tell other writer ranks that they can complete matching*/
+                        //notify_workgroup(fbuf, MATCH_DONE_TAG);
+                        //gl_stats.master_time += MPI_Wtime() - t_st;
+                    //}
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
                     fbuf->done_matching_flag = 1;
 /*
@@ -2254,6 +2337,14 @@ void progress_io_matching()
                     */
 
                     break;
+                case READ_DONE_CONFIRM_TAG:
+					err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, READ_DONE_CONFIRM_TAG, gl_comps[comp].comm, &status);
+                    CHECK_MPI(err);
+                    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+                    assert(fbuf != NULL);
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Recv done match confirm tag for %s from %d", fbuf->file_path, src);
+                    fbuf->done_match_confirm_flag = 1;
+					break;
                 case IO_CLOSE_FILE_TAG:
                     err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, IO_CLOSE_FILE_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(err);
@@ -2429,6 +2520,7 @@ int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
             mst_info->my_wg = NULL;
         } else {
             nranks = mst_info->my_wg_sz - 1;
+            //TODO is allocing really needed??
             mst_info->my_wg = dtf_malloc(nranks*sizeof(int));
             assert(mst_info->my_wg != NULL);
             ranks = dtf_malloc(nranks*sizeof(int));

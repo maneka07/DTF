@@ -24,6 +24,7 @@
 #define ROOT_MST_TAG        9
 #define MATCH_DONE_TAG      10
 #define IO_REQS_TAG         11
+#define READ_DONE_CONFIRM_TAG	12
 
 #define IODB_BUILD_VARID    0
 #define IODB_BUILD_RANGE 1
@@ -51,8 +52,6 @@
     }   \
     DTF_DBG(VERBOSE_DBG_LEVEL, "deq_item %p", (void*)item);    \
 } while(0)
-
-typedef unsigned char byte;
 
 #define VERBOSE_ERROR_LEVEL   0
 #define VERBOSE_WARNING_LEVEL 1
@@ -121,7 +120,7 @@ typedef struct stats{
     double          walltime;
     size_t          malloc_size;
     unsigned long   nprogress_call;
-    unsigned        nioreqs;
+    unsigned long   nioreqs;
     unsigned long   iodb_nioreqs;   /*number of blocks in iodb for matching*/
     unsigned        nbl;    /*number of blocks transfered*/
     unsigned        ngetputcall;  /*how many times had to use a subblock extraction function*/

@@ -138,7 +138,7 @@ void print_stats()
     double dblsum = 0, walltime, avglibt;
     unsigned long data_sz, lngsum;
     int sclltkf = 0, intsum;
-    unsigned unsgn;
+    unsigned long unsgn;
     typedef struct{
         double dbl;
         int intg;
@@ -322,7 +322,7 @@ void print_stats()
     CHECK_MPI(err);
     if(gl_my_rank==0 && lngsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg data msg sz acrosss ps: %lu", (unsigned long)(lngsum/nranks));
-    err = MPI_Reduce(&(gl_stats.nioreqs), &unsgn, 1, MPI_UNSIGNED, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    err = MPI_Reduce(&(gl_stats.nioreqs), &unsgn, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg nioreqs: %u", (unsigned)(unsgn/nranks));
@@ -392,6 +392,10 @@ void close_file(file_buffer_t *fbuf)
             assert(fbuf->wreq_cnt == 0);
 
             if(fbuf->root_reader == gl_my_rank && fbuf->iomode == DTF_IO_MODE_MEMORY){
+				
+				while(!fbuf->done_match_confirm_flag){
+					progress_io_matching();
+				}
                 int i;
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer masters readers have closed the file");
                 for(i = 0; i < fbuf->mst_info->nmasters; i++){

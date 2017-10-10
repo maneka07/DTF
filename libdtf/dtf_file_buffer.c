@@ -147,6 +147,7 @@ file_buffer_t* new_file_buffer()
     buf->done_matching_flag = 0;
     buf->rdr_closed_flag = 0;
     buf->fready_notify_flag = DTF_UNDEFINED;
+    buf->done_match_confirm_flag = DTF_UNDEFINED;
     buf->comm = MPI_COMM_NULL;
     buf->root_writer = -1;
     buf->root_reader = -1;

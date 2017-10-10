@@ -64,6 +64,9 @@ typedef struct file_buffer{
   unsigned int              wreq_cnt;
   int                       done_match_multiple_flag;     /*Set to 1 when reader notifies writer*/
   int                       done_matching_flag;     /*Flag used to complete matching requests*/
+  int                       done_match_confirm_flag;	/*Is set by the reader when the writer confirms that it finished matching.
+														  Needed for multi-iterative programs to prevent the reader from sending 
+														  * ioreqs from the next iteration before writer finished with previous iteration*/
   int                       is_matching_flag;   /*Set to 1 when process starts matching. Reset to 0 when matching is done.*/
   int                       rdr_closed_flag;           /*Flag set to 1 when reader closes the file*/
   int                       fready_notify_flag;   /*flag used to notify the reader that the file is ready for reading.
