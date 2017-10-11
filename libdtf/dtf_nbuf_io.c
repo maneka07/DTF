@@ -187,6 +187,8 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
             buffered = 1;
 
         req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, buffered);
+        
+        req->is_permanent = 1; //dont delete this req when cleaning the list of ioreqs
 
         if(gl_conf.do_checksum && (rw_flag == DTF_WRITE))
             var->checksum += req->checksum;

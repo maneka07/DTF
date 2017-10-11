@@ -6,6 +6,7 @@
 #endif
 #include"rb_misc.h"
 #include"rb_stack.h"
+#include <mpi.h>
 
 /*  CONVENTIONS:  All data structures for red-black trees have the prefix */
 /*                "rb_" to prevent name conflicts. */
@@ -52,20 +53,64 @@ typedef struct rb_red_blk_tree {
   /*  that the root and nil nodes do not require special cases in the code */
   rb_red_blk_node* root;
   rb_red_blk_node* nil;
+  /*DTF*/
+  int cur_dim;
+  unsigned long nnodes;
 } rb_red_blk_tree;
+
+
+/*///////////////////////////////////DTF structs/////////////////////////////*/
+
+typedef struct block{
+    int rank;
+    MPI_Offset *start;
+    MPI_Offset *count;
+}block_t;
+
+typedef struct insert_info{
+	int cur_dim;
+	int ndims;
+	block_t *blck;		
+}insert_info;
+
+typedef struct node_info{
+	MPI_Offset	max_node_rcoord;
+	MPI_Offset	max_subtr_rcoord;
+	block_t    *blck;
+	struct rb_red_blk_tree *next_dim_tree;   //tree sorting blocks in the dimension cur_dim+1
+}node_info;
+/*////////////////////////////////////////////////////////////////*/
 
 rb_red_blk_tree* RBTreeCreate(int  (*CompFunc)(const void*, const void*),
 			     void (*DestFunc)(void*),
 			     void (*InfoDestFunc)(void*),
 			     void (*PrintFunc)(const void*),
 			     void (*PrintInfo)(void*));
+rb_red_blk_tree* RBTreeCreateBlocks(int  (*CompFunc)(const void*, const void*),
+			     void (*DestFunc)(void*),
+			     void (*InfoDestFunc)(void*),
+			     void (*PrintFunc)(const void*),
+			     void (*PrintInfo)(void*), int cur_dim);
 rb_red_blk_node * RBTreeInsert(rb_red_blk_tree*, void* key, void* info);
+rb_red_blk_node * RBTreeInsertBlock(rb_red_blk_tree* tree, void* ins_info);
+
 void RBTreePrint(rb_red_blk_tree*);
+void RBTreePrintBlocks(rb_red_blk_tree *tree);
 void RBDelete(rb_red_blk_tree* , rb_red_blk_node* );
 void RBTreeDestroy(rb_red_blk_tree*);
 rb_red_blk_node* TreePredecessor(rb_red_blk_tree*,rb_red_blk_node*);
 rb_red_blk_node* TreeSuccessor(rb_red_blk_tree*,rb_red_blk_node*);
 rb_red_blk_node* RBExactQuery(rb_red_blk_tree*, void*);
+rb_red_blk_node* RBExactQueryBlock(rb_red_blk_tree* tree, MPI_Offset* start, int ndims);
 stk_stack * RBEnumerate(rb_red_blk_tree* tree,void* low, void* high);
 void NullFunction(void*);
+
+/***********************DTF***************************************/
+void rb_print_info(void *ninfo);
+void rb_print_key(const void *key);
+int rb_key_cmp(const void *a, const void *b);
+void rb_destroy_node_info(void* ninfo);
+
+void rb_print_stats();
+block_t *rb_find_block(rb_red_blk_tree* tree, MPI_Offset* start, int ndims);
 #endif

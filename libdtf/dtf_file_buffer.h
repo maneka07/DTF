@@ -57,6 +57,7 @@ typedef struct file_buffer{
   int                       root_reader;
   struct master_info       *mst_info;
   int                       nwriters;               /*Number of processes writing to the file*/
+  //TODO move ioreqs inside var structure
   struct io_req             *ioreqs;           /*Read or write I/O requests*/
   int                       explicit_match;   /*0 - request matching is initiated from inside of pnetcdf;
                                                 1 - request matching is initiated by the user*/
@@ -65,7 +66,7 @@ typedef struct file_buffer{
   int                       done_match_multiple_flag;     /*Set to 1 when reader notifies writer*/
   int                       done_matching_flag;     /*Flag used to complete matching requests*/
   int                       done_match_confirm_flag;	/*Is set by the reader when the writer confirms that it finished matching.
-														  Needed for multi-iterative programs to prevent the reader from sending 
+														  Needed for multi-iterative programs to prevent the reader from sending
 														  * ioreqs from the next iteration before writer finished with previous iteration*/
   int                       is_matching_flag;   /*Set to 1 when process starts matching. Reset to 0 when matching is done.*/
   int                       rdr_closed_flag;           /*Flag set to 1 when reader closes the file*/

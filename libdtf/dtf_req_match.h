@@ -25,6 +25,7 @@ typedef struct io_req{
     MPI_Offset              *count;
     MPI_Offset              get_sz;         /*size of data received from writer ranks*/
     unsigned                is_buffered;    /*1 if the data is buffered. 0 otherwise*/
+    unsigned                is_permanent;  /*needed for SCALE-LETKF as the timeframe var is constantly overwritten in the new iteration but we need to keep the last value*/
     double                  checksum;
     struct io_req           *next;
     struct io_req           *prev;
@@ -35,19 +36,12 @@ typedef struct io_req{
   This is done for simplicity of matching and sending
   data requests to writer ranks*/
 
-typedef struct write_dblock{
-    int rank;
-    MPI_Offset *start;
-    MPI_Offset *count;
-    struct write_dblock *next;
-}write_dblock_t;
 
 
 typedef struct write_db_item{
     int                    var_id;
     int                    ndims;
-    write_dblock_t         *dblocks;
-    write_dblock_t         *last_block;
+    void                   *dblocks; /*rb_red_blk_tree for ndims>0, block_t for ndims=0*/
     MPI_Offset             nblocks;
     struct write_db_item   *next;
 }write_db_item_t;
@@ -75,6 +69,7 @@ typedef struct read_db_item{
 typedef struct ioreq_db{
     int                  updated_flag;
     MPI_Offset           nritems;
+    //TODO replace list with something more efficient
     struct write_db_item *witems;
     struct read_db_item  *ritems;
 }ioreq_db_t;
@@ -115,7 +110,8 @@ io_req_t *new_ioreq(int id,
 
 void progress_msg_queue();
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
-void delete_ioreqs(file_buffer_t *fbuf);
+//void delete_ioreqs(file_buffer_t *fbuf);
+void delete_ioreqs(file_buffer_t *fbuf, int finalize);
 void progress_io_matching();
 void send_ioreqs(file_buffer_t *fbuf, int intracomp_match);
 void clean_iodb(ioreq_db_t *iodb);

@@ -30,19 +30,27 @@ io_req_t *find_io_req(io_req_t *list, int var_id)
 }
 
 void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq);
-void delete_ioreqs(file_buffer_t *fbuf)
+void delete_ioreqs(file_buffer_t *fbuf, int finalize)
 {
-    io_req_t *ioreq;
+    io_req_t *ioreq, *tmp;
     DTF_DBG(VERBOSE_ALL_LEVEL, "Delete io requests for file %s", fbuf->file_path);
 
     ioreq = fbuf->ioreqs;
     while(ioreq != NULL){
+		if(ioreq->is_permanent && !finalize){
+			ioreq = ioreq->next;
+			continue;
+		}
+		tmp = ioreq->next;
         delete_ioreq(fbuf, &ioreq);
-        ioreq = fbuf->ioreqs;
+        ioreq = tmp; //fbuf->ioreqs;
     }
-    assert(fbuf->rreq_cnt == 0);
-    assert(fbuf->wreq_cnt == 0);
-    assert(fbuf->ioreqs == NULL);
+    
+    if(finalize){
+		assert(fbuf->rreq_cnt == 0);
+		assert(fbuf->wreq_cnt == 0);
+		assert(fbuf->ioreqs == NULL);
+	}
 }
 
 static void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
@@ -219,7 +227,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
     write_db_item_t *witem = NULL;
     read_db_item_t *ritem;
     read_dblock_t *rblock;
-    write_dblock_t *wblock;
+    block_t *wblock;
     int rank_idx, var_id;
     int nwriters, allocd_nwriters;
     int *writers;
@@ -345,8 +353,12 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
 
             while(nelems_to_match){
                 nelems_matched = 0;
-                int match;
-                wblock = witem->dblocks;
+				if(var->ndims > 0)
+					wblock = rb_find_block(witem->dblocks, rblock->start, var->ndims);
+				else 
+					wblock = (block_t*)witem->dblocks;
+
+                /*witem->dblocks;
                 if(ndims > 0)
                     while(wblock != NULL){
                         match = 0;
@@ -356,7 +368,7 @@ static void do_matching(file_buffer_t *fbuf, int intracomp_io_flag)
                         if(match == ndims)
                             break;
                         wblock = wblock->next;
-                    }
+                    }*/
 
                 if(wblock == NULL){
                     //didn't find
@@ -583,7 +595,6 @@ void clean_iodb(ioreq_db_t *iodb)
 {
     write_db_item_t *witem;
     read_db_item_t *ritem;
-    unsigned nitems = 0, ndblocks = 0;
 
     if(iodb == NULL){
 		return;
@@ -593,33 +604,24 @@ void clean_iodb(ioreq_db_t *iodb)
 
     witem = iodb->witems;
     while(witem != NULL){
-        nitems++;
-        if(witem->dblocks != NULL){
-            write_dblock_t *block = witem->dblocks;
-            while(block != NULL){
-                ndblocks++;
-                dtf_free(block->start, witem->ndims*sizeof(MPI_Offset));
-                dtf_free(block->count, witem->ndims*sizeof(MPI_Offset));
-                witem->dblocks = witem->dblocks->next;
-                dtf_free(block, sizeof(write_dblock_t));
-                witem->nblocks--;
-                block = witem->dblocks;
-            }
-            assert(witem->nblocks == 0);
-        }
+		if(witem->ndims > 0){
+			RBTreeDestroy(witem->dblocks);
+			gl_stats.malloc_size -= witem->nblocks*(sizeof(block_t)+sizeof(MPI_Offset)*2*witem->ndims);
+		} else 
+			dtf_free(witem->dblocks, sizeof(block_t));
+			
         iodb->witems = iodb->witems->next;
         dtf_free(witem, sizeof(write_db_item_t));
         witem = iodb->witems;
     }
-    DTF_DBG(VERBOSE_DBG_LEVEL, "STATS: %u witems, %u dblocks", nitems, ndblocks);
-    nitems = (unsigned)iodb->nritems;
-    ndblocks = 0;
+
+
     ritem = iodb->ritems;
     while(ritem != NULL){
         if(ritem->dblocks != NULL){
             read_dblock_t *block = ritem->dblocks;
             while(block != NULL){
-                ndblocks++;
+
                 dtf_free(block->start, block->ndims*sizeof(MPI_Offset));
                 dtf_free(block->count, block->ndims*sizeof(MPI_Offset));
                 ritem->dblocks = ritem->dblocks->next;
@@ -644,41 +646,6 @@ void clean_iodb(ioreq_db_t *iodb)
 
 }
 
-static write_db_item_t *new_witem(int varid, int ndims, MPI_Offset *shape)
-{
-
-//    write_db_item_t *dbitem = (write_db_item_t*)dtf_malloc(sizeof(write_db_item_t));
-//    assert(dbitem != NULL);
-//    dbitem->var_id = varid;
-//    dbitem->next = NULL;
-//    dbitem->ndims = ndims;
-//    dbitem->dblocks = NULL;
-
-//    return dbitem;
-}
-
-static write_dblock_t *new_wblock(int rank, MPI_Offset *start, MPI_Offset *count, int ndims)
-{
-    write_dblock_t *dblock = dtf_malloc(sizeof(write_dblock_t));
-    assert(dblock != NULL);
-    dblock->rank = rank;
-    dblock->next = NULL;
-
-    if(ndims == 0){
-        dblock->start = NULL;
-        dblock->count = NULL;
-    } else {
-        dblock->start = dtf_malloc(ndims*sizeof(MPI_Offset));
-        assert(dblock->start != NULL);
-        dblock->count = dtf_malloc(ndims*sizeof(MPI_Offset));
-        assert(dblock->count != NULL);
-        memcpy(dblock->start, start, ndims*sizeof(MPI_Offset));
-        memcpy(dblock->count, count, ndims*sizeof(MPI_Offset));
-    }
-
-    return dblock;
-
-}
 
 static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
 {
@@ -779,6 +746,7 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
             assert(comm == gl_comps[fbuf->writer_id].comm);
 
             /*Find corresponding record in the database*/
+
             assert(fbuf->mst_info->iodb!=NULL);
             dbitem = fbuf->mst_info->iodb->witems;
             while(dbitem != NULL){
@@ -792,10 +760,14 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
                 assert(dbitem != NULL);
                 dbitem->var_id = var_id;
                 dbitem->next = NULL;
-                dbitem->dblocks = NULL;
-                dbitem->last_block = NULL;
+                if(var->ndims > 0)
+                    dbitem->dblocks = (void*)RBTreeCreateBlocks(rb_key_cmp, NullFunction, rb_destroy_node_info, rb_print_key, rb_print_info, 0);
+                else{
+                    dbitem->dblocks = dtf_malloc(sizeof(block_t));
+                    assert(dbitem->dblocks != NULL);
+				}
                 dbitem->nblocks = 0;
-                dbitem->ndims = var->ndims;
+                dbitem->ndims = var->ndims; 
                 //enqueue
                 if(fbuf->mst_info->iodb->witems == NULL)
                     fbuf->mst_info->iodb->witems = dbitem;
@@ -804,55 +776,65 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
                     fbuf->mst_info->iodb->witems = dbitem;
                 }
             }
-            write_dblock_t *dblock = dtf_malloc(sizeof(write_dblock_t));
-            assert(dblock != NULL);
-            dblock->rank = rank;
-            dblock->next = NULL;
-            if(var->ndims == 0){
-                dblock->start = NULL;
-                dblock->count = NULL;
-            } else {
-                dblock->start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-                assert(dblock->start != NULL);
-                dblock->count = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-                assert(dblock->count != NULL);
-                memcpy(dblock->start, chbuf+offt, var->ndims*sizeof(MPI_Offset));
-                offt += var->ndims*sizeof(MPI_Offset);
-                memcpy(dblock->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
-                offt += var->ndims*sizeof(MPI_Offset);
-            }
+            if(var->ndims > 0){
+				insert_info *info = dtf_malloc(sizeof(insert_info));
+				assert(info != NULL);
+				info->ndims = var->ndims;
 
-            /*add to list*/
-            if(dbitem->dblocks == NULL){
-                dbitem->dblocks = dblock;
-                dbitem->last_block = dblock;
-            } else {
-                if(gl_conf.detect_overlap_flag){
-                    /*detect if there is write overlap
-                    among different ranks*/
-                    write_dblock_t *tmp = dbitem->dblocks;
-                    int overlap;
-                    int i;
-                    while(tmp != NULL){
-                        overlap = 0;
-                        for(i = 0; i < var->ndims; i++)
-                            if( (dblock->start[i] >= tmp->start[i]) && (dblock->start[i] < tmp->start[i] + tmp->count[i]))
-                                overlap++;
-                            else
-                                break;
-                        if( (overlap == var->ndims) && (dblock->rank != tmp->rank) && (var->ndims > 0)){
-                            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: data for var %d written by ranks %d \
-                            and %d overlaps. State of file %s is undefined. Overlapping blocks:", var->id, dblock->rank, tmp->rank, fbuf->file_path );
-                            for(i = 0; i < var->ndims; i++)
-                                DTF_DBG(VERBOSE_DBG_LEVEL, "(%lld, %lld) and (%lld, %lld)",
-                                dblock->start[i], dblock->count[i], tmp->start[i], tmp->count[i]);
-                        }
-                        tmp = tmp->next;
-                    }
-                }
-                dbitem->last_block->next = dblock;
-                dbitem->last_block = dblock;
-            }
+				info->blck = dtf_malloc(sizeof(block_t));
+				assert(info->blck != NULL);
+				info->cur_dim = 0;
+				info->blck->rank = rank;
+				info->blck->start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+                assert(info->blck->start != NULL);
+                info->blck->count = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+                assert(info->blck->count != NULL);
+                memcpy(info->blck->start, chbuf+offt, var->ndims*sizeof(MPI_Offset));
+                offt += var->ndims*sizeof(MPI_Offset);
+                memcpy(info->blck->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
+                offt += var->ndims*sizeof(MPI_Offset);
+                /*add block to the database*/
+				rb_red_blk_node *bl_node = RBTreeInsertBlock(dbitem->dblocks, info);
+				assert(bl_node != NULL);
+				dtf_free(info, sizeof(insert_info));
+
+			} else{
+                ((block_t*)dbitem->dblocks)->start = NULL;
+                ((block_t*)dbitem->dblocks)->count = NULL;
+                ((block_t*)dbitem->dblocks)->rank = rank;
+            } 
+            
+            //if(dbitem->dblocks == NULL){
+                //dbitem->dblocks = dblock;
+                //dbitem->last_block = dblock;
+            //} else {
+                //if(gl_conf.detect_overlap_flag){
+                    ///*detect if there is write overlap
+                    //among different ranks*/
+                    //write_dblock_t *tmp = dbitem->dblocks;
+                    //int overlap;
+                    //int i;
+                    //while(tmp != NULL){
+                        //overlap = 0;
+                        //for(i = 0; i < var->ndims; i++)
+                            //if( (dblock->start[i] >= tmp->start[i]) && (dblock->start[i] < tmp->start[i] + tmp->count[i]))
+                                //overlap++;
+                            //else
+                                //break;
+                        //if( (overlap == var->ndims) && (dblock->rank != tmp->rank) && (var->ndims > 0)){
+                            //DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: data for var %d written by ranks %d \
+                            //and %d overlaps. State of file %s is undefined. Overlapping blocks:", var->id, dblock->rank, tmp->rank, fbuf->file_path );
+                            //for(i = 0; i < var->ndims; i++)
+                                //DTF_DBG(VERBOSE_DBG_LEVEL, "(%lld, %lld) and (%lld, %lld)",
+                                //dblock->start[i], dblock->count[i], tmp->start[i], tmp->count[i]);
+                        //}
+                        //tmp = tmp->next;
+                    //}
+                //}
+                //dbitem->last_block->next = dblock;
+                //dbitem->last_block = dblock;
+            //}
+
             dbitem->nblocks++;
         }
     }
@@ -925,6 +907,7 @@ io_req_t *new_ioreq(int id,
     ioreq->prev = NULL;
     ioreq->dtype = dtype;
     ioreq->rw_flag = rw_flag;
+    ioreq->is_permanent = 0;
 
     if( (rw_flag == DTF_WRITE) && gl_conf.do_checksum && (dtype == MPI_DOUBLE || dtype == MPI_FLOAT)){
         ioreq->checksum = compute_checksum(buf, ndims, count, dtype);
@@ -1361,6 +1344,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     double t_start;
     int i;
     double t_st;
+    int finalize = 0;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %s (ncid %d), intracomp %d", fbuf->file_path, fbuf->ncid, intracomp_io_flag);
 
@@ -1434,7 +1418,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 	if(fbuf->mst_info->is_master_flag)
 		clean_iodb(fbuf->mst_info->iodb);
 
-	delete_ioreqs(fbuf);
+	delete_ioreqs(fbuf,finalize);
 
     MPI_Barrier(fbuf->comm);
 

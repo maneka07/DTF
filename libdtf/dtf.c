@@ -251,7 +251,7 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
   Used to match against several dtf_match_io functions on the reader side*/
 _EXTERN_C_ void dtf_match_multiple(int ncid)
 {
-
+	//TODO figure out with cleaning iodb and notifications
     if(!lib_initialized) return;
 
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, NULL, ncid);

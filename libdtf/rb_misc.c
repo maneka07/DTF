@@ -1,5 +1,4 @@
 #include "rb_misc.h"
-
 /***********************************************************************/
 /*  FUNCTION:  void Assert(int assertion, char* error)  */
 /**/
@@ -58,3 +57,5 @@ void * SafeMalloc(size_t size) {
 /*  been defined */
 
 void NullFunction(void * junk) { ; }
+
+

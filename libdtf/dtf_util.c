@@ -13,7 +13,7 @@
 #include "dtf.h"
 #include "dtf_file_buffer.h"
 #include "dtf_req_match.h"
-
+#include "rb_red_black_tree.h"
 
 extern file_info_req_q_t *gl_finfo_req_q;
 extern dtf_msg_t *gl_msg_q;
@@ -232,6 +232,8 @@ void print_stats()
         }
     }
 
+	rb_print_stats();
+
     /*AVERAGE STATS*/
     if(gl_stats.iodb_nioreqs > 0){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: nioreqs in iodb %lu", gl_stats.iodb_nioreqs);
@@ -361,13 +363,14 @@ void close_file(file_buffer_t *fbuf)
                 notify_file_ready(fbuf);
 
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
+			int finalize = 1;
             /* cannot close file untill the reader closed it as well.
              then we can clean up all the requests etc. */
             DTF_DBG(VERBOSE_DBG_LEVEL, "Reader hasn't closed the file yet. Waiting...");
             while( !fbuf->rdr_closed_flag)
                 progress_io_matching();
             DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
-            delete_ioreqs(fbuf);
+            delete_ioreqs(fbuf, finalize);
             if(fbuf->mst_info->iodb != NULL){
                 clean_iodb(fbuf->mst_info->iodb);
                 dtf_free(fbuf->mst_info->iodb, sizeof(ioreq_db_t));
