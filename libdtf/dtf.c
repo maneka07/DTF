@@ -83,7 +83,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.idle_do_match_time = 0;
     gl_stats.master_time = 0;
     gl_stats.iodb_nioreqs = 0;
-    gl_stats.parse_ioreq_time = 0; //TODO remove this var
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -166,13 +165,13 @@ _EXTERN_C_ int dtf_finalize()
 //int MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype,
 //               MPI_Op op, int root, MPI_Comm comm)
     DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalize");
-    
+
     while(gl_msg_q != NULL)
         progress_msg_queue();
 
     /*Send any unsent file notifications
       and delete buf files*/
-      
+
     finalize_files();
 
     assert(gl_finfo_req_q == NULL);
@@ -241,6 +240,7 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_io is called for file %s, but a matching process has already started before.", fbuf->file_path);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
+
     dtf_tstart();
     match_ioreqs(fbuf, intracomp_io_flag);
     dtf_tend();
@@ -373,7 +373,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 
             assert(fbuf->mst_info->iodb == NULL);
             init_iodb(fbuf);
-            fbuf->mst_info->nwranks_opened = (unsigned int)nranks;
+            fbuf->mst_info->nranks_opened = (unsigned int)nranks;
         }
 
     } else if(fbuf->iomode == DTF_IO_MODE_FILE){
@@ -451,22 +451,26 @@ _EXTERN_C_ void dtf_open(const char *filename, MPI_Comm comm)
         DTF_DBG(VERBOSE_DBG_LEVEL, "File opened in component's communicator (%d nprocs)", nranks);
     else
         DTF_DBG(VERBOSE_DBG_LEVEL, "File opened in subcommunicator (%d nprocs)", nranks);
-
     open_file(fbuf, comm);
 }
 
 _EXTERN_C_ void dtf_enddef(const char *filename)
 {
-//    if(!lib_initialized) return;
-//    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-//    if(fbuf == NULL) return;
-//    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
-//
-//    if((fbuf->writer_id == gl_my_comp_id) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH))
-//        send_file_info(fbuf);
+    if(!lib_initialized) return;
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return;
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
 
-    //We don't know which reader rank needs the info, so file info will be sent when
-    //corresponding reader requests it!!
+	
+	if(fbuf->mst_info->is_master_flag){
+		int i;
+		assert(fbuf->mst_info->iodb != NULL);
+
+		fbuf->mst_info->iodb->witems = dtf_malloc(fbuf->nvars*sizeof(write_db_item_t*));
+		assert(fbuf->mst_info->iodb->witems != NULL);
+		for(i = 0; i < fbuf->nvars; i++)
+			fbuf->mst_info->iodb->witems[i] = NULL;
+	}
 }
 
 _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
@@ -517,6 +521,9 @@ _EXTERN_C_ int dtf_match_ioreqs(const char* filename)
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
     /*User will have to explicitly initiate matching*/
     if(fbuf->explicit_match) return 0;
+
+     //Never checked if this function works correctly
+     assert(0);
 
     if(fbuf->is_matching_flag){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_ioreqs is called for file %s, but a matching process has already started before.", fbuf->file_path);
@@ -607,6 +614,11 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY)
         return 0;
+
+	if(varid >= fbuf->nvars){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: variable with id %d does not exist. Abort.", varid);
+		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+	}
 
     if(boundary_check(fbuf, varid, start, count ))
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);

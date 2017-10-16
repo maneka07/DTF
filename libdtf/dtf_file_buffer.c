@@ -39,21 +39,6 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
     return ptr;
 }
 
-dtf_var_t* find_var(file_buffer_t* fbuf, int varid)
-{
-    if(varid >= fbuf->var_cnt)
-        return NULL;
-    else
-        return fbuf->vars[varid];
-//    dtf_var_t var;
-//    var.id = varid;
-//    rb_red_blk_node *node = RBExactQuery(fbuf->vars, &var);
-//    if(node == NULL)
-//        return NULL;
-//    else
-//        return (dtf_var_t*)(node->key);
-}
-
 void delete_var(dtf_var_t* var)
 {
     dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
@@ -64,14 +49,14 @@ void add_var(file_buffer_t *fbuf, dtf_var_t *var)
 {
     //rb_red_blk_node *var_node = RBTreeInsert(fbuf->vars, var, 0);
     //assert(var_node != NULL);
-
-    dtf_var_t **tmp = (dtf_var_t**)realloc(fbuf->vars, (fbuf->var_cnt+1)*sizeof(dtf_var_t*));
+    assert(var->id == fbuf->nvars);
+    dtf_var_t **tmp = (dtf_var_t**)realloc(fbuf->vars, (fbuf->nvars+1)*sizeof(dtf_var_t*));
     assert(tmp != NULL);
     fbuf->vars = tmp;
-    fbuf->var_cnt++;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "var id %d, cnt %d", var->id, fbuf->var_cnt-1);
-    assert(var->id == fbuf->var_cnt-1);
-    fbuf->vars[fbuf->var_cnt-1] = var;
+    fbuf->nvars++;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "var id %d, cnt %d", var->id, fbuf->nvars-1);
+    assert(var->id == fbuf->nvars-1);
+    fbuf->vars[fbuf->nvars-1] = var;
     gl_stats.malloc_size += sizeof(dtf_var_t*);
 }
 
@@ -100,16 +85,15 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
         dtf_free(fbuf->header, fbuf->hdr_sz);
 
     //RBTreeDestroy(fbuf->vars);
-    for(i = 0; i < fbuf->var_cnt; i++)
+    for(i = 0; i < fbuf->nvars; i++)
         delete_var(fbuf->vars[i]);
-    dtf_free(fbuf->vars, fbuf->var_cnt*sizeof(dtf_var_t*));
+    dtf_free(fbuf->vars, fbuf->nvars*sizeof(dtf_var_t*));
 
     assert(fbuf->ioreqs == NULL);
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
     if(fbuf->mst_info->iodb != NULL){
-        clean_iodb(fbuf->mst_info->iodb);
-        dtf_free(fbuf->mst_info->iodb, sizeof(ioreq_db_t));
+        finalize_iodb(fbuf);
     }
     if(fbuf->mst_info != NULL){
         if(fbuf->mst_info->masters != NULL)
@@ -135,7 +119,7 @@ file_buffer_t* new_file_buffer()
     buf->writer_id=-1;
     buf->is_ready = 0;
     buf->vars = NULL; //RBTreeCreate(var_cmp, var_destroy, NullFunction, var_print, NullFunction);
-    buf->var_cnt = 0;
+    buf->nvars = 0;
     buf->header = NULL;
     buf->hdr_sz = 0;
     buf->iomode = DTF_UNDEFINED;
@@ -160,8 +144,8 @@ file_buffer_t* new_file_buffer()
     buf->mst_info->my_wg = NULL;
     buf->mst_info->nmasters = 0;
     buf->mst_info->iodb = NULL;
-    buf->mst_info->nwranks_completed = 0;
-    buf->mst_info->nwranks_opened = 0;
+    buf->mst_info->nrranks_completed = 0;
+    buf->mst_info->nranks_opened = 0;
     buf->is_matching_flag = 0;
 
     gl_stats.nfiles++;
@@ -206,11 +190,7 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 
 int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start, const MPI_Offset *count )
 {
-    dtf_var_t *var = find_var(fbuf, varid);
-    if(var == NULL){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "Did not find var id %d in file %s", varid, fbuf->file_path);
-        return 1;
-    }
+    dtf_var_t *var = fbuf->vars[varid];
 
     if(var->ndims > 0){
         int i;

@@ -45,11 +45,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         return 0;
     }
 
-    dtf_var_t *var = find_var(fbuf, varid);
-    if(var == NULL){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: could not find var with id %d", varid);
-        return 0;
-    }
+    dtf_var_t *var = fbuf->vars[varid];
     DTF_DBG(VERBOSE_DBG_LEVEL, "rw call %d for %s (ncid %d) var %d", rw_flag,fbuf->file_path, fbuf->ncid, var->id);
     /*check number of elements to read*/
     nelems = 0;

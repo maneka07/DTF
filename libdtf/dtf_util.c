@@ -235,11 +235,9 @@ void print_stats()
 	rb_print_stats();
 
     /*AVERAGE STATS*/
-    if(gl_stats.iodb_nioreqs > 0){
+    if(gl_stats.iodb_nioreqs > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: nioreqs in iodb %lu", gl_stats.iodb_nioreqs);
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: parse ioreq t %.4f", gl_stats.parse_ioreq_time);
-    }
-
+    
     err = MPI_Reduce(&walltime, &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank == 0)
@@ -371,11 +369,9 @@ void close_file(file_buffer_t *fbuf)
                 progress_io_matching();
             DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
             delete_ioreqs(fbuf, finalize);
-            if(fbuf->mst_info->iodb != NULL){
-                clean_iodb(fbuf->mst_info->iodb);
-                dtf_free(fbuf->mst_info->iodb, sizeof(ioreq_db_t));
-                fbuf->mst_info->iodb = NULL;
-            }
+            if(fbuf->mst_info->iodb != NULL)
+                finalize_iodb(fbuf);
+            
             //reset flags
             fbuf->rdr_closed_flag = 0;
 
@@ -395,7 +391,7 @@ void close_file(file_buffer_t *fbuf)
             assert(fbuf->wreq_cnt == 0);
 
             if(fbuf->root_reader == gl_my_rank && fbuf->iomode == DTF_IO_MODE_MEMORY){
-				
+
 				while(!fbuf->done_match_confirm_flag){
 					progress_io_matching();
 				}
@@ -425,6 +421,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
     MPI_Status status;
     int rank; //, notif_open=1;
+
     int err;
 
     if(fbuf->reader_id == gl_my_comp_id){
@@ -491,23 +488,24 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
             /*First, find out who is the root master*/
-
-            int nranks;
             int bufsz;
             void *buf;
-
-            if(fbuf->root_writer != -1)
-                goto fn_exit;   //already got all info from previous iteration
+            
+           // if(fbuf->root_writer != -1)
+           //     goto fn_exit;   //already got all info from previous iteration
 
             /*Zero rank will inquire the pnetcdf header/dtf vars info/masters info
             from writer's global zero rank and then broadcast this info to other
             readers that opened the file*/
             if(rank == 0){
+				int nranks;
+				
                 buf = dtf_malloc(MAX_FILE_NAME+2*sizeof(int));
                 assert(buf != NULL);
                 memcpy(buf, fbuf->file_path, MAX_FILE_NAME);
                 memcpy((unsigned char*)buf+MAX_FILE_NAME, &gl_my_rank, sizeof(int));
                 MPI_Comm_size(comm, &nranks);
+                fbuf->mst_info->nranks_opened = nranks;
                 memcpy((unsigned char*)buf+MAX_FILE_NAME+sizeof(int), &nranks, sizeof(int));
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Asking writer who is the root of file %s", fbuf->file_path);
                 err = MPI_Send(buf, (int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, 0, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm);
@@ -548,11 +546,13 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
             CHECK_MPI(err);
         }
     } else if(fbuf->writer_id == gl_my_comp_id){
+		//TODO reinit iodb, allocate stuff for witems and ritems
+		//TODO do not destroy fbuf when file closed, only destroy in finalize
         //do we need it?
         assert(0);
         /*reset all flags*/
     }
-fn_exit:
+
     DTF_DBG(VERBOSE_DBG_LEVEL,   "Exit dtf_open %s", fbuf->file_path);
 }
 

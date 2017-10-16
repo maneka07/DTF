@@ -39,11 +39,9 @@ typedef struct io_req{
 
 
 typedef struct write_db_item{
-    int                    var_id;
     int                    ndims;
     void                   *dblocks; /*rb_red_blk_tree for ndims>0, block_t for ndims=0*/
     MPI_Offset             nblocks;
-    struct write_db_item   *next;
 }write_db_item_t;
 
 
@@ -69,15 +67,16 @@ typedef struct read_db_item{
 typedef struct ioreq_db{
     int                  updated_flag;
     MPI_Offset           nritems;
-    //TODO replace list with something more efficient
-    struct write_db_item *witems;
+    
+    struct write_db_item **witems;
     struct read_db_item  *ritems;
 }ioreq_db_t;
 
 typedef struct master_info{
-    unsigned int         nwranks_completed;  /*Number of writer ranks that completed their read requests
-                                              (writer can also read the file). Counted only by master 0.*/
-    unsigned int         nwranks_opened;     /*Number of writer ranks that opened the file*/
+    unsigned int         nrranks_completed;  /*Number of ranks that completed their read requests
+                                              (writer component can also read the file).
+                                               Counted only by master 0.*/
+    unsigned int         nranks_opened;     /*Number of writer ranks that opened the file*/
     struct ioreq_db      *iodb;
     int is_master_flag;  /*is this rank a master rank*/
     int nmasters;   /*Number of master nodes that hold data for request matching*/
@@ -114,11 +113,12 @@ void add_ioreq(io_req_t **list, io_req_t *ioreq);
 void delete_ioreqs(file_buffer_t *fbuf, int finalize);
 void progress_io_matching();
 void send_ioreqs(file_buffer_t *fbuf, int intracomp_match);
-void clean_iodb(ioreq_db_t *iodb);
+
 int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
 //void match_ioreqs_all(int rw_flag);
 int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);
 void init_iodb(file_buffer_t *fbuf);
+void finalize_iodb(file_buffer_t *fbuf);
 void unpack_file_info(MPI_Offset bufsz, void *buf);
 void send_file_info(file_buffer_t *fbuf, int reader_root);
 void notify_complete_multiple(file_buffer_t *fbuf);

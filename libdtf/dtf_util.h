@@ -16,7 +16,7 @@
 #define IO_DATA_REQ_TAG     1       /*master -> writer*/
 #define DONE_MULTIPLE_FLAG  2
 #define IO_DATA_TAG         3       /*writer -> reader*/
-#define READ_DONE_TAG       4       /*reader->master*/
+#define READ_DONE_TAG       4       
 #define IO_CLOSE_FILE_TAG   5      /*reader->master, master->writers*/
 #define IO_OPEN_FILE_FLAG   6
 #define FILE_INFO_TAG       7
@@ -127,7 +127,6 @@ typedef struct stats{
     double          timer_start;    /*measure I/O time from pnetcdf*/
     double          timer_accum;
     int             nfiles;
-    double          parse_ioreq_time;
 } stats_t;
 
 typedef struct dtf_msg{

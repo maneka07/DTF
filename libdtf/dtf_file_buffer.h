@@ -42,9 +42,8 @@ typedef struct file_buffer{
   MPI_Comm                  comm;               /*MPI_Communicator used to open the file*/
   void                      *header;            /*buffer to store netcdf header*/
   MPI_Offset                hdr_sz;             /*size of the netcdf header*/
-  //rb_red_blk_tree           *vars;              /*Variables in the file*/
   dtf_var_t                 **vars;
-  int                       var_cnt;            /*Number of defined variables*/
+  int                       nvars;            /*Number of defined variables*/
   int                       writer_id;
   int                       reader_id;
   int                       is_ready;           /*Used to let the reader know that the file is either
@@ -83,7 +82,6 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf);
 
 file_buffer_t* new_file_buffer();
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid);
-dtf_var_t* find_var(file_buffer_t* fbuf, int varid);
 dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 void add_var(file_buffer_t *fbuf, dtf_var_t *var);
 int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
