@@ -185,12 +185,12 @@ void print_stats()
 //
 //    }
 
-    /*DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times matched: %u", gl_stats.ndb_match);
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times matched: %u", gl_stats.ndb_match);
     if(gl_stats.nprogress_call > 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
 
     if(gl_stats.nioreqs > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: nreqs: %u", gl_stats.nioreqs);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: nreqs: %lu", gl_stats.nioreqs);
 
     if(gl_stats.nbl > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: Out of %u blocks handled %u noncontig blocks", gl_stats.nbl, gl_stats.ngetputcall);
@@ -198,7 +198,7 @@ void print_stats()
         DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering time: %.5f: %.4f", gl_stats.accum_dbuff_time,(gl_stats.accum_dbuff_time/gl_stats.timer_accum)*100);
         DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering size: %lu",  gl_stats.accum_dbuff_sz);
     }
-    */
+    
     if(gl_stats.ndata_msg_sent > 0 && gl_my_rank == 0){
         data_sz = (unsigned long)(gl_stats.data_msg_sz/gl_stats.ndata_msg_sent);
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: total sent %lu, avg data msg sz %lu (%d msgs)", gl_stats.data_msg_sz, data_sz, gl_stats.ndata_msg_sent);

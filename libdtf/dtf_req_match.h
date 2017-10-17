@@ -112,8 +112,6 @@ void add_ioreq(io_req_t **list, io_req_t *ioreq);
 //void delete_ioreqs(file_buffer_t *fbuf);
 void delete_ioreqs(file_buffer_t *fbuf, int finalize);
 void progress_io_matching();
-void send_ioreqs(file_buffer_t *fbuf, int intracomp_match);
-
 int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
 //void match_ioreqs_all(int rw_flag);
 int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);

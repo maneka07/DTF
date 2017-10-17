@@ -26,8 +26,9 @@
 #define IO_REQS_TAG         11
 #define READ_DONE_CONFIRM_TAG	12
 
-#define IODB_BUILD_VARID    0
-#define IODB_BUILD_RANGE 1
+#define IODB_BUILD_VARID    0  /*Distribute ioreqs based on var id*/
+#define IODB_BUILD_BLOCK    1  /*Distribute ioreqs by dividing var to blocks*/
+#define IODB_BUILD_RANK     2  /*Each master collects all ioreqs from all writers. Reader sends its reqs to a predefined master.*/
 
 #define ENQUEUE_ITEM(item, queue) do{\
     if(queue == NULL)   \
