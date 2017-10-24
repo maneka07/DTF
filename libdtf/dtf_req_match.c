@@ -671,6 +671,8 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     assert(fbuf != NULL);
     
+    double t_st = MPI_Wtime();
+    
     if( (gl_conf.iodb_build_mode == IODB_BUILD_RANK) && fbuf->done_matching_flag){
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: discard new ioreqs from %d because already finished matching", rank);
 		return;
@@ -805,6 +807,7 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
     }
     assert(offt == (size_t)bufsz);
 	fbuf->mst_info->iodb->updated_flag = 1;
+    gl_stats.parse_ioreq_time += MPI_Wtime() - t_st;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_stats.malloc_size);
 }
 
@@ -2223,7 +2226,7 @@ void cancel_send_ioreqs()
 			msg = msg->next;
 			continue;
 		}
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Try to cancel msg %p", (void*)msg);
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "Try to cancel msg %p", (void*)msg);
 		//try to cancel the request
 		err = MPI_Cancel(&(msg->req));
 		CHECK_MPI(err);
@@ -2232,6 +2235,8 @@ void cancel_send_ioreqs()
 	    err = MPI_Test_cancelled( &status, &flag );
 		if (!flag) 
 			DTF_DBG(VERBOSE_ERROR_LEVEL," DTF Warning: Failed to cancel an Isend request\n" );
+		else 
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "Canceled");
 			
 		tmp = msg->next;
 		DEQUEUE_ITEM(msg, gl_msg_q);		

@@ -20,6 +20,21 @@ void var_print(const void *var)
   DTF_DBG(VERBOSE_DBG_LEVEL, "(varid %d)", ((dtf_var_t*)var)->id);
 } */
 
+//int match_str(char* pattern, char* filename)
+//{
+//    int ret = 0;
+//    if(strlen(pattern)== 0 || strlen(filename)==0)
+//        return ret;
+//
+//    char *substr = strtok(pattern, "...");
+//    while(substr != NULL){
+//        if(strstr(filename, substr) == NULL){
+//            ret = 1;
+//        }
+//        substr = strtok(NULL, "...");
+//    }
+//}
+
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid)
 {
     struct file_buffer *ptr = buflist;
@@ -29,8 +44,10 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
        if((ncid >= 0) && (ptr->ncid == ncid))
                 break;
        if( (file_path != NULL) &&
-           (strlen(file_path)!=0 && ( (strstr(file_path, ptr->file_path)!=NULL || strstr(ptr->file_path, file_path)!=NULL)  ||
-             (strlen(ptr->alias_name)!=0 &&  (strstr(file_path, ptr->alias_name)!=NULL || strstr(ptr->alias_name, file_path)!=NULL) ) )) )
+           (strlen(file_path)!=0 && ( (strstr(file_path, ptr->file_path)!=NULL || strstr(ptr->file_path, file_path)!=NULL))))
+           break;
+
+        if(strlen(ptr->alias_name)!=0 &&  (strstr(file_path, ptr->alias_name)!=NULL || strstr(ptr->alias_name, file_path)!=NULL) )
                 break;
 
         ptr = ptr->next;
@@ -54,8 +71,8 @@ void add_var(file_buffer_t *fbuf, dtf_var_t *var)
     assert(tmp != NULL);
     fbuf->vars = tmp;
     fbuf->nvars++;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "var id %d, cnt %d", var->id, fbuf->nvars-1);
-    assert(var->id == fbuf->nvars-1);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "var id %d, cnt %d", var->id, fbuf->nvars);
+
     fbuf->vars[fbuf->nvars-1] = var;
     gl_stats.malloc_size += sizeof(dtf_var_t*);
 }
@@ -166,18 +183,18 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
         for(i=0; i<ndims;i++)
             var->shape[i] = shape[i];
 
-        if(shape[0] == DTF_UNLIMITED)
-            var->max_dim = 0;
-        else {
+        //if(shape[0] == DTF_UNLIMITED)
+          //  var->max_dim = 0;
+        //else {
             int maxdim = 0;
             MPI_Offset maxdimlen = shape[0];
             for(i = 1; i < ndims; i++)
                 if(shape[i] > maxdimlen){
-                    maxdim = 1;
+                    maxdim = i;
                     maxdimlen = shape[i];
                 }
             var->max_dim = maxdim;
-        }
+        //}
     }
     else
         var->shape = NULL;

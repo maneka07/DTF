@@ -60,6 +60,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         fflush(stderr);
         exit(1);
     }
+
     gl_stats.malloc_size = 0;
     gl_stats.data_msg_sz = 0;
     gl_stats.ndata_msg_sent = 0;
@@ -83,6 +84,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.idle_do_match_time = 0;
     gl_stats.master_time = 0;
     gl_stats.iodb_nioreqs = 0;
+    gl_stats.parse_ioreq_time = 0;
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -90,10 +92,19 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 
     s = getenv("DTF_VERBOSE_LEVEL");
     if(s == NULL)
-        gl_verbose = VERBOSE_DBG_LEVEL;
+        gl_verbose = VERBOSE_ERROR_LEVEL;
     else
         gl_verbose = atoi(s);
-
+        
+    //during init only root will print out stuff
+    if(gl_my_rank != 0){
+        verbose = gl_verbose;
+        gl_verbose = VERBOSE_ERROR_LEVEL;
+    }
+        
+    if(gl_my_rank == 0)
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Init DTF");
+		
     s = getenv("DTF_DETECT_OVERLAP");
     if(s == NULL)
         gl_conf.detect_overlap_flag = 0;
@@ -105,17 +116,13 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_conf.data_msg_size_limit = DTF_DATA_MSG_SIZE_LIMIT;
     else
         gl_conf.data_msg_size_limit = atoi(s) * 1024;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Data message size limit set to %d", gl_conf.data_msg_size_limit);
+    
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Data message size limit set to %d", gl_conf.data_msg_size_limit);
 
     assert(gl_conf.data_msg_size_limit > 0);
 
     gl_msg_buf = NULL;
-
-    //during init only root will print out stuff
-    if(gl_my_rank != 0){
-        verbose = gl_verbose;
-        gl_verbose = VERBOSE_ERROR_LEVEL;
-    }
+    
     /*Parse ini file and initialize components*/
     err = load_config(filename, module_name);
     if(err) goto panic_exit;

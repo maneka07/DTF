@@ -109,6 +109,7 @@ typedef struct stats{
     double          accum_dbuff_time;
     size_t          accum_dbuff_sz;
     double          accum_comm_time;
+    double          parse_ioreq_time;
     size_t          data_msg_sz;      /*Accumulated size of messages */
     double          accum_match_time;  /*Total time spent in match_ioreqs*/
     double          idle_time;
