@@ -411,7 +411,7 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
 			}
 		  }
 		  tree->root->left->red=0;
-			DTF_DBG(VERBOSE_DBG_LEVEL, "End balance");
+			DTF_DBG(VERBOSE_ALL_LEVEL, "End balance");
 
 		  //DTF_DBG(VERBOSE_DBG_LEVEL,"Inserted node 2 %p\n", insert_node);
 		  //update max rcoords on the path back to the parent

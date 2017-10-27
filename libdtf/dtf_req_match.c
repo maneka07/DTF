@@ -3,8 +3,6 @@
 #include "dtf.h"
 #include <unistd.h>
 
-file_info_req_q_t *gl_finfo_req_q = NULL;
-dtf_msg_t *gl_msg_q = NULL;
 
 static void send_data_wrt2rdr(void* buf, int bufsz);
 
@@ -22,7 +20,7 @@ io_req_t *find_io_req(io_req_t *list, int var_id)
 
 void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
 {
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Delete req %d, cur wreqs %d, rreqs %d", (*ioreq)->id,
+	DTF_DBG(VERBOSE_ALL_LEVEL, "Delete req %d, cur wreqs %d, rreqs %d", (*ioreq)->id,
 			fbuf->wreq_cnt, fbuf->rreq_cnt);
 
     dtf_var_t *var = fbuf->vars[(*ioreq)->var_id];
@@ -47,7 +45,7 @@ void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
     if((*ioreq)->start != NULL)
         dtf_free((*ioreq)->start, var->ndims*sizeof(MPI_Offset));
     dtf_free((*ioreq), sizeof(io_req_t));
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Deleted, cur wreqs %d, rreqs %d",
+    DTF_DBG(VERBOSE_ALL_LEVEL, "Deleted, cur wreqs %d, rreqs %d",
 			fbuf->wreq_cnt, fbuf->rreq_cnt);
 }
 
@@ -753,7 +751,7 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
                 ritem->last_block = dblock;
             }
             ritem->nblocks++;
-            DTF_DBG(VERBOSE_DBG_LEVEL, "ritems %d, cur item %lld blocks",(int)fbuf->mst_info->iodb->nritems, ritem->nblocks);
+            DTF_DBG(VERBOSE_DBG_LEVEL, "ritems %d, cur item (r %d) %lld blocks",(int)fbuf->mst_info->iodb->nritems, ritem->rank, ritem->nblocks);
         } else { /*DTF_WRITE*/
             write_db_item_t *witem;
             /*Allow write requests only from the writer*/
@@ -1502,10 +1500,21 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
     reset_fbuf_match(fbuf);
     gl_stats.accum_match_time += MPI_Wtime() - t_start;
 
-	if(fbuf->mst_info->is_master_flag)
-		clean_iodb(fbuf->mst_info->iodb, fbuf->nvars);
-
-	delete_ioreqs(fbuf,finalize);
+	
+	{
+		int is_scale = 0;
+		
+		char *c = getenv("DTF_SCALE");
+		if(c != NULL)
+			is_scale = atoi(c);
+			
+	    if(!is_scale){
+			if(fbuf->mst_info->is_master_flag)
+				clean_iodb(fbuf->mst_info->iodb, fbuf->nvars);
+			
+			delete_ioreqs(fbuf,finalize);
+		}
+	}
 
 //    t_part2 = MPI_Wtime() - t_part2;
 //    t_part3 = MPI_Wtime();
@@ -2282,63 +2291,94 @@ void progress_io_matching()
 
             switch(status.MPI_TAG){
                 case FILE_INFO_REQ_TAG:
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "Recv root req from rank %d (comp %s)", src, gl_comps[comp].name);
+					//TODO remove this tag and use OPEN_FILE for everything
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Recv file info req from rank %d (comp %s)", src, gl_comps[comp].name);
                     rbuf = dtf_malloc(MAX_FILE_NAME+sizeof(int));
                     assert(rbuf != NULL);
                     err = MPI_Recv(rbuf, (int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, src, FILE_INFO_REQ_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(err);
                     memcpy(filename, rbuf, MAX_FILE_NAME);
-                    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-                    if(fbuf == NULL)
-                        DTF_DBG(VERBOSE_ERROR_LEVEL, "File not found %s", filename);
-                    assert(fbuf != NULL);
+                    
+                    if(gl_my_rank == 0){
+						file_info_t *finfo = gl_finfo_list;
+						while(finfo != NULL){
+							if(strcmp(finfo->filename, filename)==0)
+								break;
+							finfo = finfo->next;
+						}
 
-                    /* If the global master zero (global rank 0) couldn't process the
-                       request immediately because it doesn't know yet who is the root
-                       writer for the file, the req has to be enqueue and, later, the master
-                       will periodically check the queue to see if it can process the
-                       request.
-                     */
-                    if(fbuf->root_writer == -1){
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Don't know who is the root for %s now. Will queue the req.", fbuf->file_path);
+						/* If the global master zero (global rank 0) couldn't process the
+						   request immediately because it doesn't know yet who is the root
+						   writer for the file, the req has to be enqueue and, later, the master
+						   will periodically check the queue to see if it can process the
+						   request.
+						 */
+						if(finfo == NULL){
+							DTF_DBG(VERBOSE_DBG_LEVEL, "Don't know who is the root for %s now. Will queue the req.", filename);
 
-                        file_info_req_q_t *req = dtf_malloc(sizeof(file_info_req_q_t));
-                        assert(req != NULL);
-                        memcpy(req->filename, filename, MAX_FILE_NAME);
-                        req->buf = rbuf;
-                        req->next = NULL;
-                        req->prev = NULL;
+							file_info_req_q_t *req = dtf_malloc(sizeof(file_info_req_q_t));
+							assert(req != NULL);
+							memcpy(req->filename, filename, MAX_FILE_NAME);
+							req->buf = rbuf;
+							req->next = NULL;
+							req->prev = NULL;
 
-                        ENQUEUE_ITEM(req, gl_finfo_req_q);
-                        break;
-                    }
-                    if(gl_my_rank == fbuf->root_writer){
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request");
+							ENQUEUE_ITEM(req, gl_finfo_req_q);
+							 
+						} else if(finfo->root_writer == gl_my_rank){
+							DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request");
+							
+							fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+							assert(fbuf != NULL);
 
-                        if(fbuf->iomode == DTF_IO_MODE_FILE){
-                            memcpy(&fbuf->root_reader, (unsigned char*)rbuf+MAX_FILE_NAME, sizeof(int));
-                            /*just notify the reader that I am the root writer*/
+							if(fbuf->iomode == DTF_IO_MODE_FILE){
+								memcpy(&fbuf->root_reader, (unsigned char*)rbuf+MAX_FILE_NAME, sizeof(int));
+								/*just notify the reader that I am the root writer*/
 
-                            err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm);
-                            CHECK_MPI(err);
-                            fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+								err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm);
+								CHECK_MPI(err);
+								fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+								if(fbuf->is_ready) //writer has already closed the file
+									notify_file_ready(fbuf);
+							} else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
+								memcpy(&fbuf->root_reader, (unsigned char*)rbuf+MAX_FILE_NAME, sizeof(int));
+								send_file_info(fbuf, fbuf->root_reader);
+							}
+							DTF_DBG(VERBOSE_DBG_LEVEL, "Root reader for file %s is %d", fbuf->file_path, fbuf->root_reader);
+							dtf_free(rbuf, MAX_FILE_NAME+sizeof(int));
+							
+							
+						} else {
+							DTF_DBG(VERBOSE_DBG_LEVEL, "Forward the request to rank %d", finfo->root_writer);
+							dtf_msg_t *msg = new_dtf_msg(rbuf, MAX_FILE_NAME+sizeof(int), FILE_INFO_REQ_TAG);
 
-                        } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-                            memcpy(&fbuf->root_reader, (unsigned char*)rbuf+MAX_FILE_NAME, sizeof(int));
-                            send_file_info(fbuf, fbuf->root_reader);
-                        }
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Root reader for file %s is %d", fbuf->file_path, fbuf->root_reader);
-                        dtf_free(rbuf, MAX_FILE_NAME+sizeof(int));
-                    } else {
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Forward the request to rank %d", fbuf->root_writer);
-                        dtf_msg_t *msg = new_dtf_msg(rbuf, MAX_FILE_NAME+sizeof(int), FILE_INFO_REQ_TAG);
+							err = MPI_Isend(msg->buf,(int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, finfo->root_writer,
+											   FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
+							CHECK_MPI(err);
+							ENQUEUE_ITEM(msg, gl_msg_q);
+						}
+					} else {
+						DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request");
+							
+						fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+						assert(fbuf != NULL);
 
-                        err = MPI_Isend(msg->buf,(int)(MAX_FILE_NAME+sizeof(int)), MPI_BYTE, fbuf->root_writer,
-                                           FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
-                        CHECK_MPI(err);
-                        ENQUEUE_ITEM(msg, gl_msg_q);
-                    }
+						if(fbuf->iomode == DTF_IO_MODE_FILE){
+							memcpy(&fbuf->root_reader, (unsigned char*)rbuf+MAX_FILE_NAME, sizeof(int));
+							/*just notify the reader that I am the root writer*/
 
+							err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm);
+							CHECK_MPI(err);
+							fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+                            if(fbuf->is_ready) //writer has already closed the file
+								notify_file_ready(fbuf);
+						} else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
+							memcpy(&fbuf->root_reader, (unsigned char*)rbuf+MAX_FILE_NAME, sizeof(int));
+							send_file_info(fbuf, fbuf->root_reader);
+						}
+						DTF_DBG(VERBOSE_DBG_LEVEL, "Root reader for file %s is %d", fbuf->file_path, fbuf->root_reader);
+						dtf_free(rbuf, MAX_FILE_NAME+sizeof(int));
+					}
                     break;
                 case IO_REQS_TAG:
                     t_st = MPI_Wtime();
@@ -2483,8 +2523,9 @@ void progress_io_matching()
                         //notify_masters(fbuf, IO_CLOSE_FILE_TAG);
 
                         //TODO for multi-cycle version will need to figure out with these states and notifications
-                        if(fbuf->iomode == DTF_IO_MODE_FILE)
-                            fbuf->fready_notify_flag = RDR_HASNT_OPENED;
+                        //note: this should be set when opening or creating the file!
+                        //if(fbuf->iomode == DTF_IO_MODE_FILE)
+                          //  fbuf->fready_notify_flag = RDR_HASNT_OPENED;
                     }
                     if(fbuf->mst_info->is_master_flag){
                         t_st = MPI_Wtime();
@@ -2492,7 +2533,7 @@ void progress_io_matching()
                         notify_workgroup(fbuf, IO_CLOSE_FILE_TAG);
                         gl_stats.master_time += MPI_Wtime() - t_st;
                     }
-                    //TODO figure out with letkf multiple closing file when to reset this flag?
+                
                     fbuf->rdr_closed_flag = 1;
 
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Close flag set for file %s", fbuf->file_path);
@@ -2513,11 +2554,23 @@ void progress_io_matching()
                     err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, ROOT_MST_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(err);
                     DTF_DBG(VERBOSE_DBG_LEVEL,   "Receive ROOT_MST_TAG notif for %s", filename);
-
-                    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-                    assert(fbuf != NULL);
-                    assert(fbuf->root_writer == -1);
-                    fbuf->root_writer = src;
+					
+					{
+						file_info_t *finfo = dtf_malloc(sizeof(file_info_t));
+						assert(finfo != NULL);
+						strcpy(finfo->filename, filename);
+						finfo->root_writer = src;
+						finfo->prev = NULL;
+						finfo->next = NULL;
+						if(gl_finfo_list == NULL)
+							gl_finfo_list = finfo;
+						else{ 
+							finfo->next = gl_finfo_list;
+							finfo->next->prev = finfo;
+							gl_finfo_list = finfo;
+						}
+					}
+					
                     break;
                 case FILE_READY_TAG:
                     err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, FILE_READY_TAG, gl_comps[comp].comm, &status);
@@ -2551,14 +2604,15 @@ void progress_io_matching()
                     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
                     assert(fbuf != NULL);
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Recv open file tag for %s from %d", fbuf->file_path, src);
+                    fbuf->rdr_closed_flag = 0;
                     if(fbuf->mst_info->is_master_flag){
                         t_st = MPI_Wtime();
                         DTF_DBG(VERBOSE_DBG_LEVEL, "Notify workgroup");
                         notify_workgroup(fbuf, IO_OPEN_FILE_FLAG);
-                        fbuf->rdr_closed_flag = 0;
 
-                        if(fbuf->iomode == DTF_IO_MODE_FILE)
-                            fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+                        if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
+							fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;									
+						
                         gl_stats.master_time += MPI_Wtime() - t_st;
                     }
                     break;

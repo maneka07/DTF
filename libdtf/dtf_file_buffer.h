@@ -36,12 +36,11 @@ struct master_struc;
 
 typedef struct file_buffer{
   char                      file_path[MAX_FILE_NAME];    /* path of the file */
-  char                      alias_name[MAX_FILE_NAME];	/* alias name for the file */
-  char                      slink_name[MAX_FILE_NAME];
-  int                       ncid;                        /*handler that pnetcdf assigns to a file*/
-  MPI_Comm                  comm;               /*MPI_Communicator used to open the file*/
-  void                      *header;            /*buffer to store netcdf header*/
-  MPI_Offset                hdr_sz;             /*size of the netcdf header*/
+  char                      *slink_name;   
+  int                       ncid;            /*handler that pnetcdf assigns to a file*/
+  MPI_Comm                  comm;            /*MPI_Communicator used to open the file*/
+  void                      *header;         /*buffer to store netcdf header*/
+  MPI_Offset                hdr_sz;          /*size of the netcdf header*/
   dtf_var_t                 **vars;
   int                       nvars;            /*Number of defined variables*/
   int                       writer_id;
@@ -62,8 +61,8 @@ typedef struct file_buffer{
                                                 1 - request matching is initiated by the user*/
   unsigned int              rreq_cnt;
   unsigned int              wreq_cnt;
-  int                       done_match_multiple_flag;     /*Set to 1 when reader notifies writer*/
-  int                       done_matching_flag;     /*Flag used to complete matching requests*/
+  int                       done_match_multiple_flag;   /*Set to 1 when reader notifies writer*/
+  int                       done_matching_flag;     	/*Flag used to complete matching requests*/
   int                       done_match_confirm_flag;	/*Is set by the reader when the writer confirms that it finished matching.
 														  Needed for multi-iterative programs to prevent the reader from sending
 														  * ioreqs from the next iteration before writer finished with previous iteration*/
@@ -73,14 +72,25 @@ typedef struct file_buffer{
                                                     Possible values: 0 - the ps does not write to this file
                                                                      1 - the ps writes to this file. The file is not ready yet.
                                                                      2 - The file is ready, reader has been notified */
-  struct file_buffer        *next;             /* pointer to the next record */
-
+  struct file_buffer        *next;             
+  struct file_buffer        *prev;
 }file_buffer_t;
 
-void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf);
-void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* buf);
+typedef struct fname_pattern{
+    char fname[MAX_FILE_NAME];   /*File name pattern or the file name*/
+    char *slink_name;
+    char **excl_fnames;         /*File name patterns to exclude*/
+    int  nexcls;                 /*Number of file name patterns to exclude*/
+    int  wrt;
+    int  rdr;
+    int  iomode;
+    int  expl_mtch;
+    struct fname_pattern *next;
+}fname_pattern_t;
 
-file_buffer_t* new_file_buffer();
+void delete_file_buffer(file_buffer_t* buf);
+file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path);
+fname_pattern_t* new_fname_pattern();
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid);
 dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 void add_var(file_buffer_t *fbuf, dtf_var_t *var);

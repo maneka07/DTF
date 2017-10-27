@@ -26,10 +26,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 
     if(rw_flag == DTF_READ){
         if(fbuf->reader_id==gl_my_comp_id){
-            if(!fbuf->is_ready){
-                DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Error trying to read file %s that is not ready", fbuf->file_path);
-                assert(fbuf->is_ready);
-            }
+          assert(fbuf->is_ready);
         } else{
             DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: writer process tries to read file %s (var %d)", fbuf->file_path, varid);
             //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);

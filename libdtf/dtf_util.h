@@ -16,7 +16,7 @@
 #define IO_DATA_REQ_TAG     1       /*master -> writer*/
 #define DONE_MULTIPLE_FLAG  2
 #define IO_DATA_TAG         3       /*writer -> reader*/
-#define READ_DONE_TAG       4       
+#define READ_DONE_TAG       4
 #define IO_CLOSE_FILE_TAG   5      /*reader->master, master->writers*/
 #define IO_OPEN_FILE_FLAG   6
 #define FILE_INFO_TAG       7
@@ -140,13 +140,21 @@ typedef struct dtf_msg{
     struct dtf_msg *prev;
 }dtf_msg_t;
 
+typedef struct file_info{
+	char filename[MAX_FILE_NAME];
+	int root_writer;
+	struct file_info *next;
+	struct file_info *prev;
+}file_info_t;
 
 struct file_buffer;
+struct file_info_req_q;
 int mpitype2int(MPI_Datatype dtype);
 MPI_Datatype int2mpitype(int num);
 
 /*GLOBAL VARIABLES*/
 extern struct file_buffer* gl_filebuf_list;        /*List of all file buffers*/
+extern struct fname_pattern *gl_fname_ptrns;    /*Patterns for file name*/
 extern struct component *gl_comps;                 /*List of components*/
 extern int gl_my_comp_id;                          /*Id of this compoinent*/
 extern int gl_ncomp;                               /*Number of components*/
@@ -154,17 +162,21 @@ extern int gl_verbose;
 extern int gl_my_rank;                         /*For debug messages*/
 extern struct dtf_config gl_conf;                 /*Framework settings*/
 extern struct stats gl_stats;
-char _buff[1024];
+extern char *gl_my_comp_name;
 extern void* gl_msg_buf;
-char *gl_my_comp_name;
+extern struct file_info_req_q *gl_finfo_req_q;
+extern dtf_msg_t *gl_msg_q;
+extern file_info_t *gl_finfo_list;
+char _buff[1024];
+
 
 char error_string[1024];
 
 
 /*FUNCTIONS*/
+int match_ptrn(char* pattern, const char* filename, char** excl_fnames, int nexcls);
 void notify_file_ready(file_buffer_t *fbuf);
 void close_file(file_buffer_t *fbuf);
-int file_buffer_ready(const char* filename);
 void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header);
 MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
 int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);

@@ -13,15 +13,23 @@
 #include "dtf_nbuf_io.h"
 #include "dtf_req_match.h"
 
-int lib_initialized=0;
-int gl_verbose;
-int gl_my_rank;
-struct dtf_config gl_conf;
-struct stats gl_stats;
+static int lib_initialized=0;
 
-void *gl_msg_buf = NULL;
-extern file_info_req_q_t *gl_finfo_req_q;
-extern dtf_msg_t *gl_msg_q;
+file_info_req_q_t *gl_finfo_req_q = NULL;
+file_info_t *gl_finfo_list = NULL;
+dtf_msg_t *gl_msg_q = NULL;
+
+struct file_buffer* gl_filebuf_list = NULL;        /*List of all file buffers*/
+struct fname_pattern *gl_fname_ptrns = NULL;    /*Patterns for file name*/
+struct component *gl_comps = NULL;                 /*List of components*/
+int gl_my_comp_id;                          /*Id of this compoinent*/
+int gl_ncomp;                               /*Number of components*/
+int gl_verbose;
+int gl_my_rank;                         /*For debug messages*/
+struct dtf_config gl_conf;                 /*Framework settings*/
+struct stats gl_stats;
+char *gl_my_comp_name = NULL;
+void* gl_msg_buf = NULL;
 
 /*
 ************************************User API**********************************************
@@ -95,16 +103,16 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_verbose = VERBOSE_ERROR_LEVEL;
     else
         gl_verbose = atoi(s);
-        
+
     //during init only root will print out stuff
     if(gl_my_rank != 0){
         verbose = gl_verbose;
         gl_verbose = VERBOSE_ERROR_LEVEL;
     }
-        
-    if(gl_my_rank == 0)
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Init DTF");
-		
+
+   
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Init DTF");
+
     s = getenv("DTF_DETECT_OVERLAP");
     if(s == NULL)
         gl_conf.detect_overlap_flag = 0;
@@ -116,13 +124,17 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_conf.data_msg_size_limit = DTF_DATA_MSG_SIZE_LIMIT;
     else
         gl_conf.data_msg_size_limit = atoi(s) * 1024;
-    
+
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Data message size limit set to %d", gl_conf.data_msg_size_limit);
 
     assert(gl_conf.data_msg_size_limit > 0);
 
     gl_msg_buf = NULL;
-    
+    gl_fname_ptrns = NULL;
+    gl_filebuf_list = NULL;
+    gl_finfo_req_q = NULL;
+    gl_msg_q = NULL;
+
     /*Parse ini file and initialize components*/
     err = load_config(filename, module_name);
     if(err) goto panic_exit;
@@ -144,7 +156,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 panic_exit:
 
     dtf_finalize();
-    exit(1);
+    MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     return 1;
 }
 
@@ -157,6 +169,7 @@ panic_exit:
 _EXTERN_C_ int dtf_finalize()
 {
     int mpi_initialized;
+    file_info_t *finfo;
 
     if(!lib_initialized) return 0;
 
@@ -182,9 +195,15 @@ _EXTERN_C_ int dtf_finalize()
     finalize_files();
 
     assert(gl_finfo_req_q == NULL);
-
-
-
+    //TODO send notification to root 0 when file is closed so that it's deleted from the list
+	finfo = gl_finfo_list;
+	while(finfo != NULL){
+		gl_finfo_list = gl_finfo_list->next;
+		dtf_free(finfo, sizeof(file_info_t));
+		finfo = gl_finfo_list;
+	}
+	
+	
     print_stats();
 
     finalize_comp_comm();
@@ -345,15 +364,34 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
 }
 
 _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
-{
+{   
+    file_buffer_t *fbuf;
+    fname_pattern_t *pat;
+    
     if(!lib_initialized) return;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL){
+  
+    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf != NULL){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error creating file: a file with the same name (%s) has been created/opened before and has not been closed yet. Abort.", filename);
+		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+	}
+   
+    pat = gl_fname_ptrns;
+	while(pat != NULL){
+		if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls)){
+			fbuf = create_file_buffer(pat, filename);
+			break;
+		}
+		pat = pat->next;
+	} 
+    
+	if(fbuf == NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL, "Creating file %s. File is not treated by DTF", filename);
         return;
     } else {
         DTF_DBG(VERBOSE_DBG_LEVEL, "Created file %s (ncid %d)", filename, ncid);
     }
+    
     fbuf->ncid = ncid;
     fbuf->comm = comm;
     int root_mst = gl_my_rank;
@@ -361,7 +399,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
     CHECK_MPI(err);
     fbuf->root_writer = root_mst;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
-    if(gl_my_rank == fbuf->root_writer && gl_my_rank != 0){
+    if(gl_my_rank == fbuf->root_writer){
         /*Notify global rank 0 that I am the root master for this file*/
         DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify global rank 0 that I am master");
         dtf_msg_t *msg = new_dtf_msg(NULL, 0, ROOT_MST_TAG);
@@ -389,7 +427,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
         /*Create symlink to this file (needed for SCALE-LETKF since
           there is no way to execute the script to perform all the file
           movement in the middle of the execution)*/
-        if(strlen(fbuf->slink_name)>0 && fbuf->root_writer==gl_my_rank){
+         if(fbuf->slink_name!=NULL && fbuf->root_writer==gl_my_rank){
             int err;
             size_t slen1, slen2;
             char *dir = NULL;
@@ -430,25 +468,31 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 _EXTERN_C_ void dtf_open(const char *filename, MPI_Comm comm)
 {
     int nranks;
+    file_buffer_t *fbuf;
+
     if(!lib_initialized) return;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL){
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
+    
+    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    
+    if(fbuf == NULL){  
+		fname_pattern_t *pat = gl_fname_ptrns;
+		while(pat != NULL){
+			if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls)){
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
+				fbuf = create_file_buffer(pat, filename);
+				break;
+			}
+			pat = pat->next;
+		} 
+	}
+    
+    if(fbuf == NULL) {
         DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s. File is not treated by DTF", filename);
         return;
     }
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
-    /*A hack for scale-letkf: if we are trying to open an alias,
-    create an empty file, otherwise letkf will crash because
-    it won't  find the file*/
-    if( (fbuf->iomode == DTF_IO_MODE_MEMORY) && (strlen(fbuf->alias_name) > 0) && (strstr(filename, fbuf->alias_name) !=NULL)){
-        MPI_File fh;
-        int err;
-        err = MPI_File_open(comm, (char*)filename, MPI_MODE_WRONLY | MPI_MODE_CREATE, MPI_INFO_NULL, &fh );
-        CHECK_MPI(err);
-        err = MPI_File_close(&fh);
-        CHECK_MPI(err);
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Created a dummy alias file");
-    }
+    
+
     if(fbuf->comm == MPI_COMM_NULL)
         fbuf->comm = comm;
     else
@@ -468,7 +512,7 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     if(fbuf == NULL) return;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
 
-	
+
 	if(fbuf->mst_info->is_master_flag){
 		int i;
 		assert(fbuf->mst_info->iodb != NULL);
@@ -634,8 +678,16 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     if(rw_flag==DTF_WRITE && fbuf->reader_id == gl_my_comp_id){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: reader component cannot write to the file %s", fbuf->file_path);
-        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        int el_sz, i;
+        dtf_var_t *var = fbuf->vars[varid];
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: reader component cannot write to the file %s. Ignore I/O call", fbuf->file_path);
+        MPI_Type_size(dtype, &el_sz);
+		ret = 1;
+		for(i = 0; i < var->ndims; i++)
+			ret *= count[i];
+		ret *= el_sz;
+		return ret;
+        //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
 
      if(request == NULL)
@@ -709,7 +761,7 @@ _EXTERN_C_ void dtf_tend()
     tt = MPI_Wtime() - gl_stats.timer_start;
     gl_stats.timer_accum += tt;
     gl_stats.timer_start = 0;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
+ //   DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
 }
 
 /************************************************  Fortran Interfaces  *********************************************************/

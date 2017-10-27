@@ -59,7 +59,7 @@ typedef struct rb_red_blk_tree {
 } rb_red_blk_tree;
 
 
-/*///////////////////////////////////DTF structs/////////////////////////////*/
+/*DTF structs*/
 
 typedef struct block{
     int rank;
@@ -79,7 +79,6 @@ typedef struct node_info{
 	block_t    *blck;
 	struct rb_red_blk_tree *next_dim_tree;   //tree sorting blocks in the dimension cur_dim+1
 }node_info;
-/*////////////////////////////////////////////////////////////////*/
 
 rb_red_blk_tree* RBTreeCreate(int  (*CompFunc)(const void*, const void*),
 			     void (*DestFunc)(void*),

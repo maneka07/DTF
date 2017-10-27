@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <string.h>
+#include <unistd.h>
 #include "dtf_util.h"
 #include "dtf_req_match.h"
 #include "dtf_file_buffer.h"
@@ -20,23 +21,13 @@ void var_print(const void *var)
   DTF_DBG(VERBOSE_DBG_LEVEL, "(varid %d)", ((dtf_var_t*)var)->id);
 } */
 
-//int match_str(char* pattern, char* filename)
-//{
-//    int ret = 0;
-//    if(strlen(pattern)== 0 || strlen(filename)==0)
-//        return ret;
-//
-//    char *substr = strtok(pattern, "...");
-//    while(substr != NULL){
-//        if(strstr(filename, substr) == NULL){
-//            ret = 1;
-//        }
-//        substr = strtok(NULL, "...");
-//    }
-//}
+
 
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid)
 {
+	/* If a file buffer for this file exists, return it. Otherwise, check if file name 
+	 * matches any file name pattern. If yes, create a new file buffer and return it. 
+	 * Otherwise, return NULL*/
     struct file_buffer *ptr = buflist;
 
     while(ptr != NULL)
@@ -44,15 +35,18 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
        if((ncid >= 0) && (ptr->ncid == ncid))
                 break;
        if( (file_path != NULL) &&
-           (strlen(file_path)!=0 && ( (strstr(file_path, ptr->file_path)!=NULL || strstr(ptr->file_path, file_path)!=NULL))))
+           (strlen(file_path)!=0 && ( (strstr(file_path, ptr->file_path)!=NULL || strstr(ptr->file_path, file_path)!=NULL)))){
+		   //DTF_DBG(VERBOSE_DBG_LEVEL, "Found by name in list %s", ptr->file_path);
            break;
+	   }
 
-        if(strlen(ptr->alias_name)!=0 &&  (strstr(file_path, ptr->alias_name)!=NULL || strstr(ptr->alias_name, file_path)!=NULL) )
-                break;
+        if(ptr->slink_name!=NULL &&  (strstr(file_path, ptr->slink_name)!=NULL || strstr(ptr->slink_name, file_path)!=NULL) )
+           break;
 
         ptr = ptr->next;
     }
-
+		
+	//DTF_DBG(VERBOSE_DBG_LEVEL, "Return fbuf %p", (void*)ptr);
     return ptr;
 }
 
@@ -77,38 +71,43 @@ void add_var(file_buffer_t *fbuf, dtf_var_t *var)
     gl_stats.malloc_size += sizeof(dtf_var_t*);
 }
 
-void add_file_buffer(file_buffer_t** buflist, file_buffer_t* buf)
-{
-    if(*buflist == NULL){
-        *buflist = buf;
-    } else {
-        file_buffer_t* tmp = *buflist;
-        while(tmp->next != NULL)
-            tmp = tmp->next;
-        tmp->next = buf;
-    }
-}
-
-void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
+void delete_file_buffer(file_buffer_t* fbuf)
 {
     int i;
 
     if(fbuf == NULL)
         return;
 
-    assert(buflist != NULL);
+    assert(gl_filebuf_list != NULL);
 
     if(fbuf->header != NULL)
         dtf_free(fbuf->header, fbuf->hdr_sz);
+
+	{
+		int is_scale = 0;
+		
+		char *c = getenv("DTF_SCALE");
+		if(c != NULL)
+			is_scale = atoi(c);
+			
+		if(is_scale){
+			if(fbuf->mst_info->is_master_flag)
+				clean_iodb(fbuf->mst_info->iodb, fbuf->nvars);
+		
+			delete_ioreqs(fbuf,1);
+		}
+	}
 
     //RBTreeDestroy(fbuf->vars);
     for(i = 0; i < fbuf->nvars; i++)
         delete_var(fbuf->vars[i]);
     dtf_free(fbuf->vars, fbuf->nvars*sizeof(dtf_var_t*));
+	
 
     assert(fbuf->ioreqs == NULL);
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
+    
     if(fbuf->mst_info->iodb != NULL){
         finalize_iodb(fbuf);
     }
@@ -119,32 +118,78 @@ void delete_file_buffer(file_buffer_t** buflist, file_buffer_t* fbuf)
             dtf_free(fbuf->mst_info->my_wg,(fbuf->mst_info->my_wg_sz - 1)*sizeof(int));
         dtf_free(fbuf->mst_info, sizeof(master_info_t));
     }
+    
+    if( (fbuf->reader_id == gl_my_comp_id) && (fbuf->root_reader == gl_my_rank) && (fbuf->slink_name != NULL)){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Remove symbolic link %s", fbuf->slink_name);
+		int err;
+		char *dir = NULL;
+		char wdir[MAX_FILE_NAME]="\0";
+		char slink[MAX_FILE_NAME]="\0";
+
+		dir = getcwd(wdir, MAX_FILE_NAME);
+		assert(dir != NULL);
+		sprintf(slink, "%s/%s", wdir, fbuf->slink_name);
+
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Remove symlink %s", slink);
+		err = unlink(slink);
+		if(err)
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: error deleting symbolic link %s", slink);
+	}
+    
+    if(gl_filebuf_list == fbuf)
+		gl_filebuf_list = fbuf->next;
+	
+	if(fbuf->prev != NULL)
+		fbuf->prev->next = fbuf->next;
+	if(fbuf->next != NULL)
+		fbuf->next->prev = fbuf->prev;
+    
     dtf_free(fbuf, sizeof(file_buffer_t));
+    gl_stats.nfiles--;
 }
 
-file_buffer_t* new_file_buffer()
+fname_pattern_t *new_fname_pattern()
 {
-    file_buffer_t *buf;
+    fname_pattern_t *pat = dtf_malloc(sizeof(fname_pattern_t));
+    assert(pat != NULL);
+	pat->fname[0]='\0';
+    pat->expl_mtch = 1; //default
+    pat->iomode = DTF_UNDEFINED;
+    pat->excl_fnames = NULL;
+    pat->nexcls = 0;
+    pat->next = NULL;
+    pat->rdr = -1;
+    pat->wrt = -1;
+    pat->slink_name = NULL;
+    return pat;
+}
 
-    buf = (file_buffer_t*)dtf_malloc(sizeof(struct file_buffer));
+file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
+{
+	//TODO move init_masters here
+	
+	file_buffer_t *buf;
+	
+	DTF_DBG(VERBOSE_ALL_LEVEL, "Create file buffer for file %s", file_path);
+	
+	if(strlen(file_path) > MAX_FILE_NAME){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: filename %s longer than MAX_FILE_NAME (%d)", file_path, MAX_FILE_NAME);
+		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+	}
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
+	buf = dtf_malloc(sizeof(struct file_buffer));
     assert( buf != NULL );
-    buf->file_path[0]='\0';
-    buf->alias_name[0]='\0';
-    buf->slink_name[0]='\0';
     buf->next = NULL;
-    buf->reader_id = -1;
-    buf->writer_id=-1;
+    buf->prev = NULL;
     buf->is_ready = 0;
     buf->vars = NULL; //RBTreeCreate(var_cmp, var_destroy, NullFunction, var_print, NullFunction);
     buf->nvars = 0;
     buf->header = NULL;
     buf->hdr_sz = 0;
-    buf->iomode = DTF_UNDEFINED;
     buf->rreq_cnt = 0;
     buf->wreq_cnt = 0;
     buf->ioreqs = NULL;
     buf->ncid = -1;
-    buf->explicit_match = 0;
     buf->done_matching_flag = 0;
     buf->rdr_closed_flag = 0;
     buf->fready_notify_flag = DTF_UNDEFINED;
@@ -164,9 +209,27 @@ file_buffer_t* new_file_buffer()
     buf->mst_info->nrranks_completed = 0;
     buf->mst_info->nranks_opened = 0;
     buf->is_matching_flag = 0;
-
-    gl_stats.nfiles++;
-    return buf;
+	strcpy(buf->file_path, file_path);
+	buf->reader_id = pat->rdr;
+	buf->writer_id = pat->wrt;
+	buf->explicit_match = pat->expl_mtch;
+	if(pat->slink_name != NULL){
+		buf->slink_name = dtf_malloc(MAX_FILE_NAME*sizeof(char));
+		assert(buf->slink_name != NULL);
+		strcpy(buf->slink_name, pat->slink_name);
+	} else 
+		buf->slink_name = NULL;
+	buf->iomode = pat->iomode;
+	//insert
+	if(gl_filebuf_list == NULL)
+		gl_filebuf_list = buf;
+	else{
+		buf->next = gl_filebuf_list;
+		buf->next->prev = buf;
+		gl_filebuf_list = buf;
+	}
+	gl_stats.nfiles++;
+	return buf;
 }
 
 dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)

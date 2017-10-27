@@ -8,8 +8,6 @@
 #include "dtf.h"
 
 
-struct file_buffer * gl_filebuf_list = NULL;
-struct component *gl_comps = NULL;
 int gl_my_comp_id = -1;
 int gl_ncomp = 0;
 int gl_my_rank;
@@ -66,7 +64,7 @@ static char* str_to_lower(char* str){
 static void print_config(){
 
     int i;
-    file_buffer_t *fb = gl_filebuf_list;
+    fname_pattern_t *fb = gl_fname_ptrns;
 
     if(gl_comps == NULL) return;
 
@@ -84,8 +82,8 @@ static void print_config(){
     }
 
     while(fb != NULL){
-        DTF_DBG(VERBOSE_DBG_LEVEL,   "File %s, writer %s, reader %s ",
-                fb->file_path, gl_comps[fb->writer_id].name, gl_comps[fb->reader_id].name);
+        DTF_DBG(VERBOSE_DBG_LEVEL,   "File pattern %s, writer %s, reader %s ",
+                fb->fname, gl_comps[fb->wrt].name, gl_comps[fb->rdr].name);
         switch(fb->iomode){
             case DTF_IO_MODE_UNDEFINED:
                 DTF_DBG(VERBOSE_DBG_LEVEL,   "I/O mode: undefined ");
@@ -108,20 +106,44 @@ static void print_config(){
 
 static int check_config()
 {
+	int ret = 0;
+	int i;
+    fname_pattern_t *cur_fpat = gl_fname_ptrns;
 
-    file_buffer_t *fbuf = gl_filebuf_list;
+	for(i = 0; i < gl_ncomp; i++)
+		if(gl_comps[i].name[0] == '\0'){
+			DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: not all component names defined.");
+			ret = 1;
+		}     
 
-    while(fbuf!= NULL){
-
-        if(fbuf->iomode == DTF_IO_MODE_UNDEFINED){
-            DTF_DBG(VERBOSE_ERROR_LEVEL,   " DTF Error: I/O mode for file %s underfined", fbuf->file_path);
-            return 1;
+    while(cur_fpat!= NULL){
+		if(cur_fpat->fname[0] == '\0'){
+			DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Error parsing config file: file name not set");
+			ret = 1;
+		}
+		
+		if(cur_fpat->slink_name != NULL){
+			char *token = strchr(cur_fpat->slink_name, '%');
+			if(token != NULL){
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: pattern symbol %% not allowed in symbolic links (%s)", cur_fpat->slink_name);
+				ret = 1;
+			}
+		}
+		
+		if(cur_fpat->wrt == -1 || cur_fpat->rdr == -1 ){
+			DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Error parsing config file: file reader or writer not set for file %s", cur_fpat->fname);
+			ret = 1;
+		}
+		
+        if(cur_fpat->iomode == DTF_IO_MODE_UNDEFINED){
+            DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: I/O mode for file %s underfined", cur_fpat->fname);
+            ret = 1;
         }
 
-        fbuf = fbuf->next;
+        cur_fpat = cur_fpat->next;
     }
 
-    return 0;
+    return ret;
 }
 
 static int create_intercomm(int comp_id, char* global_path){
@@ -294,9 +316,27 @@ static void destroy_intercomm(int comp_id){
 
 
 void clean_config(){
-
-    if(gl_comps != NULL)
-        dtf_free(gl_comps, gl_ncomp*sizeof(component_t));
+  int i;
+  fname_pattern_t *pat = gl_fname_ptrns;
+  //TODO more?
+  
+  while(pat != NULL){
+	 if(pat->slink_name != NULL)
+		dtf_free(pat->slink_name, MAX_FILE_NAME*sizeof(char));
+		
+	 for(i = 0; i < pat->nexcls; i++)
+		dtf_free(pat->excl_fnames[i], sizeof(char)*MAX_FILE_NAME);
+	 if(pat->nexcls > 0)
+		dtf_free(pat->excl_fnames, sizeof(char*)*pat->nexcls);
+		
+	 gl_fname_ptrns = gl_fname_ptrns->next;
+	 dtf_free(pat, sizeof(fname_pattern_t));
+	 pat = gl_fname_ptrns;
+  }
+  
+  if(gl_comps != NULL)
+	dtf_free(gl_comps, gl_ncomp*sizeof(component_t));
+		
 }
 
 int load_config(const char *ini_name, const char *comp_name){
@@ -306,7 +346,8 @@ int load_config(const char *ini_name, const char *comp_name){
   char       param[ASCIILINESZ], value[ASCIILINESZ];
   //char       comp_name[MAX_COMP_NAME];
   int        i, len, lineno=0;
-  struct file_buffer* cur_fb = NULL;
+  struct fname_pattern* cur_fpat = NULL;
+  char *tmp_ininame;
  // ini = iniparser_load(ini_name);
 
   line[0] = 0;
@@ -315,10 +356,20 @@ int load_config(const char *ini_name, const char *comp_name){
 
   DTF_DBG(VERBOSE_DBG_LEVEL,   "Load config %s for comp %s", ini_name, comp_name);
 
-  if ((in=fopen(ini_name, "r"))==NULL) {
-        DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: cannot open %s\n", ini_name);
-        return 1 ;
+  tmp_ininame = getenv("DTF_INI_FILE");
+  if(tmp_ininame == NULL){
+	if ((in=fopen(ini_name, "r"))==NULL) {
+		DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: cannot open %s\n", ini_name);
+		return 1 ;
+	}
+  } else {
+	  	if ((in=fopen(tmp_ininame, "r"))==NULL) {
+		DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: cannot open %s\n", ini_name);
+		return 1 ;
+	}
   }
+
+
 
   gl_conf.buffered_req_match = 0;
   gl_conf.do_checksum = 0;
@@ -334,7 +385,7 @@ int load_config(const char *ini_name, const char *comp_name){
         continue;
 
     if(line[len-1] != '\n' && !feof(in)){
-        DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: Line %d in the ini file too long.", lineno);
+        DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: Line %d in the ini file too long.", lineno);
         goto panic_exit;
     }
 
@@ -345,33 +396,18 @@ int load_config(const char *ini_name, const char *comp_name){
 
         //check that we have already parsed the [info] section
         if (gl_ncomp == 0){
-           DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: [file] section defined before [info] section.");
+           DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: [file] section defined before [info] section.");
             goto panic_exit;
-        } else {
-            for(i = 0; i < gl_ncomp; i++)
-                if(gl_comps[i].name[0] == '\0'){
-                    DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: not all component names defined.");
-                    goto panic_exit;
-                }
-        }
+        }  
+        cur_fpat = new_fname_pattern();
+        assert(cur_fpat != NULL);
 
-        if (cur_fb != NULL){
-            /* first check that all required params for the
-            curent buffer_file have been defined */
-            if(cur_fb->file_path[0] == '\0'){
-                DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: filename not set.");
-                goto panic_exit;
-            }
-
-            if( (cur_fb->iomode != DTF_IO_MODE_FILE) && (cur_fb->writer_id == -1 || cur_fb->reader_id == -1) ){
-                DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Error: file reader or writer not set for file %s.", cur_fb->file_path);
-                goto panic_exit;
-            }
-        }
-        cur_fb = new_file_buffer();
-        assert(cur_fb != NULL);
-
-        add_file_buffer(&gl_filebuf_list, cur_fb);
+        if(gl_fname_ptrns == NULL)
+			gl_fname_ptrns = cur_fpat;
+		else {
+			cur_fpat->next = gl_fname_ptrns;
+			gl_fname_ptrns = cur_fpat;
+		}
 
     } else if (sscanf (line, "%[^=] = \"%[^\"]\"", param, value) == 2
            ||  sscanf (line, "%[^=] = '%[^\']'",   param, value) == 2
@@ -391,7 +427,7 @@ int load_config(const char *ini_name, const char *comp_name){
         if(strcmp(param, "ncomp") == 0){
             gl_ncomp = atoi(value);
             if(gl_ncomp <= 0){
-                DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: invalid number of components.");
+                DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: invalid number of components.");
                 goto panic_exit;
             }
             gl_comps = (struct component*)dtf_malloc(gl_ncomp*sizeof(struct component));
@@ -414,18 +450,6 @@ int load_config(const char *ini_name, const char *comp_name){
                     break;
                 }
             }
-/*        } else if(strcmp(param, "block_range") == 0){
-
-            if(strcmp(value, "auto") == 0)
-                gl_conf.block_sz_range = AUTO_BLOCK_SZ_RANGE;
-            else
-                gl_conf.block_sz_range = (MPI_Offset)(atoi(value));
-            if(gl_conf.block_sz_range < 0){
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: incorrect value for block range: %lld", gl_conf.block_sz_range);
-                MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-            }
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Block range set to %lld", gl_conf.block_sz_range);
-*/
         } else if(strcmp(param, "iodb_build_mode") == 0){
             if(strcmp(value, "varid") == 0)
                gl_conf.iodb_build_mode = IODB_BUILD_VARID;
@@ -434,18 +458,18 @@ int load_config(const char *ini_name, const char *comp_name){
             else if(strcmp(value, "all") == 0)
 				 gl_conf.iodb_build_mode = IODB_BUILD_RANK;
             else {
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown iodb build moed (%s): should be 'varid' or 'range'", value);
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown iodb build mode (%s)", value);
                 MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
             }
         } else if(strcmp(param, "buffered_req_match") == 0){
 
             gl_conf.buffered_req_match = atoi(value);
             if(gl_conf.buffered_req_match == 0)
-                DTF_DBG(VERBOSE_DBG_LEVEL, "DTF: buffered_req_match disabled");
+                DTF_DBG(VERBOSE_DBG_LEVEL, "buffered_req_match disabled");
             else if(gl_conf.buffered_req_match == 1)
-                DTF_DBG(VERBOSE_DBG_LEVEL, "DTF: buffered_req_match enabled");
+                DTF_DBG(VERBOSE_DBG_LEVEL, "buffered_req_match enabled");
             else {
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Value for buffered_req_match should be 0 or 1.");
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: Value for buffered_req_match should be 0 or 1.");
                 goto panic_exit;
             }
         } else if(strcmp(param, "do_checksum") == 0){
@@ -454,78 +478,83 @@ int load_config(const char *ini_name, const char *comp_name){
             assert((gl_conf.do_checksum == 0) || (gl_conf.do_checksum == 1));
 
         }else if(strcmp(param, "explicit_match") == 0){
-            assert(cur_fb != NULL);
-            cur_fb->explicit_match = atoi(value);
-
-            if(cur_fb->explicit_match == 0)
-                DTF_DBG(VERBOSE_ALL_LEVEL, "DTF: explicit match disabled for %s", cur_fb->file_path);
-            else if(cur_fb->explicit_match == 1)
-                DTF_DBG(VERBOSE_ALL_LEVEL, "DTF: explicit match enabled for %s", cur_fb->file_path);
-            else {
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Value for explicit match should be 0 or 1 for %s.", cur_fb->file_path);
+            assert(cur_fpat != NULL);
+            cur_fpat->expl_mtch = atoi(value);
+            
+            if(cur_fpat->expl_mtch != 0 && cur_fpat->expl_mtch != 1){
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: Value for explicit match should be 0 or 1");
                 goto panic_exit;
             }
 
         } else if(strcmp(param, "filename") == 0){
-            assert(cur_fb != NULL);
-            assert(strlen(value) <= MAX_FILE_NAME);
-            strcpy(cur_fb->file_path, value);
-
-        } else if(strcmp(param, "alias") == 0){
-            assert(cur_fb != NULL);
-            assert(strlen(value) <= MAX_FILE_NAME);
-            strcpy(cur_fb->alias_name, value);
+            assert(cur_fpat != NULL);
+			assert(strlen(value) <= MAX_FILE_NAME);
+			strcpy(cur_fpat->fname, value);
 
         } else if(strcmp(param, "slink") == 0){
-            assert(cur_fb != NULL);
+            assert(cur_fpat != NULL);
             assert(strlen(value) <= MAX_FILE_NAME);
-            strcpy(cur_fb->slink_name, value);
-
+            cur_fpat->slink_name = dtf_malloc(sizeof(char)*MAX_FILE_NAME);
+            assert(cur_fpat->slink_name != NULL);
+            strcpy(cur_fpat->slink_name, value);
+            
+         } else if(strcmp(param, "exclude_name") == 0){
+            assert(cur_fpat != NULL);
+            assert(strlen(value) <= MAX_FILE_NAME);
+            char **tmp = realloc(cur_fpat->excl_fnames, sizeof(char*)*(cur_fpat->nexcls+1));
+            assert(tmp != NULL);
+            gl_stats.malloc_size += sizeof(char*);
+            cur_fpat->excl_fnames = tmp;
+            cur_fpat->excl_fnames[cur_fpat->nexcls] = dtf_malloc(MAX_FILE_NAME*sizeof(char));
+            assert(cur_fpat->excl_fnames[cur_fpat->nexcls] != NULL);
+            strcpy(cur_fpat->excl_fnames[cur_fpat->nexcls], value);
+            cur_fpat->nexcls++;
+               
         } else if(strcmp(param, "writer") == 0){
-            assert(cur_fb != NULL);
+            assert(cur_fpat != NULL);
             assert(gl_ncomp != 0);
             for(i = 0; i < gl_ncomp; i++){
                 if(strcmp(value, gl_comps[i].name) == 0){
-                    cur_fb->writer_id = i;
+                    cur_fpat->wrt = i;
                     break;
                 }
             }
 
         } else if(strcmp(param, "reader") == 0){
-            assert(cur_fb != NULL);
+            assert(cur_fpat != NULL);
             assert(gl_ncomp != 0);
 
-            if(cur_fb->reader_id != -1){
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "File %s cannot have multiple readers (%d)", cur_fb->file_path, cur_fb->reader_id);
+            if(cur_fpat->rdr != -1){
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: File %s cannot have multiple readers (%d)", cur_fpat->fname, cur_fpat->rdr);
                 goto panic_exit;
             }
             for(i = 0; i < gl_ncomp; i++){
                 if(strcmp(value, gl_comps[i].name) == 0){
-                    cur_fb->reader_id = i;
+                    cur_fpat->rdr = i;
                     break;
                 }
             }
 
         } else if(strcmp(param, "mode") == 0){
-            assert(cur_fb != NULL);
+            assert(cur_fpat != NULL);
 
             if(strcmp(value, "file") == 0)
-                cur_fb->iomode = DTF_IO_MODE_FILE;
+                cur_fpat->iomode = DTF_IO_MODE_FILE;
             else if(strcmp(value, "memory") == 0){
 
-                cur_fb->iomode = DTF_IO_MODE_MEMORY;
+                cur_fpat->iomode = DTF_IO_MODE_MEMORY;
 
                 if(gl_msg_buf == NULL){
                     gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
                     assert(gl_msg_buf != NULL);
                 }
             } else {
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown I/O mode: %s.", value);
-				MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown I/O mode: %s.", value);
+				goto panic_exit;
 			}
 
         } else {
-            DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: unknown parameter %s.", param);
+            DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: unknown parameter %s.", param);
             goto panic_exit;
         }
 
@@ -555,18 +584,18 @@ int load_config(const char *ini_name, const char *comp_name){
   esablish an intercommunicatior between these two components later. If there is no
   file flow then the connection mode is not set(DTF_UNDEFINED).
 */
-    cur_fb = gl_filebuf_list;
-    while(cur_fb != NULL){
-        if(cur_fb->writer_id == gl_my_comp_id){
-            if(gl_comps[ cur_fb->reader_id ].connect_mode == DTF_UNDEFINED )
-               gl_comps[ cur_fb->reader_id ].connect_mode = CONNECT_MODE_SERVER; // I am server
+    cur_fpat = gl_fname_ptrns;
+    while(cur_fpat != NULL){
+        if(cur_fpat->wrt == gl_my_comp_id){
+            if(gl_comps[ cur_fpat->rdr ].connect_mode == DTF_UNDEFINED )
+               gl_comps[ cur_fpat->rdr ].connect_mode = CONNECT_MODE_SERVER; // I am server
 
-        } else if( gl_comps[ cur_fb->writer_id ].connect_mode == DTF_UNDEFINED){
-            if(cur_fb->reader_id == gl_my_comp_id )
-               gl_comps[ cur_fb->writer_id ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
+        } else if( gl_comps[ cur_fpat->wrt ].connect_mode == DTF_UNDEFINED){
+            if(cur_fpat->rdr == gl_my_comp_id )
+               gl_comps[ cur_fpat->wrt ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
         }
 
-        cur_fb = cur_fb->next;
+        cur_fpat = cur_fpat->next;
     }
 
     if(gl_verbose)print_config();
@@ -628,58 +657,71 @@ void finalize_comp_comm(){
 
 void finalize_files()
 {
-    int file_cnt = 0, compl_cnt = 0;
+    int file_cnt = 0;
     file_buffer_t *fbuf = gl_filebuf_list;
-    /*First, writers compute number of files
-      they wrote*/
+    
     while(fbuf != NULL){
-        DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, close_flag %d, notif_flag %d", fbuf->file_path, fbuf->rdr_closed_flag, fbuf->fready_notify_flag);
-        if(fbuf->fready_notify_flag != DTF_UNDEFINED && fbuf->root_writer == gl_my_rank){
-            assert(fbuf->writer_id == gl_my_comp_id);
-            file_cnt++;
-        }
+        DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, close_flag %d, fready_notif_flag %d", fbuf->file_path, fbuf->rdr_closed_flag, fbuf->fready_notify_flag);
+        if(fbuf->iomode == DTF_IO_MODE_FILE){
+			 if( (fbuf->writer_id == gl_my_comp_id) && 
+			     (fbuf->root_writer == gl_my_rank)  &&
+			     (fbuf->fready_notify_flag != RDR_NOTIFIED) )
+				file_cnt++;
+        } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
+			if( (fbuf->writer_id == gl_my_comp_id) && !fbuf->rdr_closed_flag )
+				file_cnt++;
+			else if( (fbuf->reader_id == gl_my_comp_id) &&
+			         (gl_my_rank == fbuf->root_reader)  &&
+			         (!fbuf->done_match_confirm_flag) )
+			         file_cnt++;
+		}
+        
+        
         fbuf = fbuf->next;
     }
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Process has to finalize notifications for %d files", file_cnt);
-    while(file_cnt != compl_cnt){
-        compl_cnt = 0;
-        fbuf = gl_filebuf_list;
-        while(fbuf != NULL){
-            if(fbuf->fready_notify_flag != DTF_UNDEFINED && fbuf->root_writer == gl_my_rank){
-                assert(fbuf->writer_id == gl_my_comp_id);
-
-                if(fbuf->iomode == DTF_IO_MODE_FILE){
-                    //DTF_DBG(VERBOSE_DBG_LEVEL, "Finalizing file %s", fbuf->file_path);
-                        if(fbuf->fready_notify_flag == RDR_NOTIFIED)
-                            compl_cnt++;
-                        else{
-                            //DTF_DBG(VERBOSE_DBG_LEVEL, "Waiting to know root reader");
-                            if(fbuf->root_reader != -1 && fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
-                                //progress_io_matching();
-                                DTF_DBG(VERBOSE_DBG_LEVEL, "Root reader is %d", fbuf->root_reader);
-                                notify_file_ready(fbuf);
-                            } else
-                                progress_io_matching();
-                        }
-                } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-                        if(fbuf->rdr_closed_flag)
-                            compl_cnt++;
-                        else
-                            progress_io_matching();
-                }
-            }
-
-            fbuf = fbuf->next;
-        }
-    }
-    MPI_Barrier(gl_comps[gl_my_comp_id].comm);
+    assert(file_cnt <= gl_stats.nfiles);
+    
+	file_cnt = 0;
+	fbuf = gl_filebuf_list;
+	while(fbuf != NULL){
+			
+		if(fbuf->iomode == DTF_IO_MODE_FILE){
+			 if( (fbuf->writer_id == gl_my_comp_id) && 
+				 (fbuf->root_writer == gl_my_rank)  &&
+				 (fbuf->fready_notify_flag != RDR_NOTIFIED) ){
+				
+				if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED)
+					notify_file_ready(fbuf);
+				 
+				while(fbuf->fready_notify_flag != RDR_NOTIFIED)
+					progress_io_matching();
+			 }	 
+			 file_cnt++;
+		} else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
+			if(fbuf->writer_id == gl_my_comp_id){
+				while(!fbuf->rdr_closed_flag )
+					progress_io_matching();
+				file_cnt++;
+			}else if(fbuf->reader_id == gl_my_comp_id){
+				
+					 if(gl_my_rank == fbuf->root_reader)
+						while(!fbuf->done_match_confirm_flag) 
+							progress_io_matching();
+					 file_cnt++;
+			}
+		} 
+		fbuf = fbuf->next;	
+	}
+	assert(file_cnt == gl_stats.nfiles);
+	
+    //MPI_Barrier(gl_comps[gl_my_comp_id].comm);
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished finalizing notifications. Will delete file bufs");
     /*Now, delete all file buffers*/
     fbuf = gl_filebuf_list;
     while(fbuf != NULL){
-        gl_filebuf_list = fbuf->next;
-        delete_file_buffer(&gl_filebuf_list, fbuf);
+        delete_file_buffer(fbuf);
         fbuf = gl_filebuf_list;
     }
 }
