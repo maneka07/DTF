@@ -181,7 +181,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     assert( buf != NULL );
     buf->next = NULL;
     buf->prev = NULL;
-    buf->is_ready = 0;
+    buf->is_ready = 0;   //TODO what to do with this flag when letkf openes the file the second time?
     buf->vars = NULL; //RBTreeCreate(var_cmp, var_destroy, NullFunction, var_print, NullFunction);
     buf->nvars = 0;
     buf->header = NULL;

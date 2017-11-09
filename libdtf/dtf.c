@@ -185,7 +185,10 @@ _EXTERN_C_ int dtf_finalize()
 //int MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype,
 //               MPI_Op op, int root, MPI_Comm comm)
     DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalize");
-
+	
+	if(gl_msg_q != NULL)
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize message queue");
+		
     while(gl_msg_q != NULL)
         progress_msg_queue();
 
@@ -218,11 +221,28 @@ _EXTERN_C_ int dtf_finalize()
     assert(gl_finfo_req_q == NULL);
     assert(gl_msg_q == NULL);
 
-
+	if(gl_my_rank == 0)
+		DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF: finalized");
     dtf_free(gl_my_comp_name, MAX_COMP_NAME);
     lib_initialized = 0;
     fflush(stdout);
     fflush(stderr);
+    return 0;
+}
+
+_EXTERN_C_ int dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_flag, int it )
+{
+	char *s = getenv("DTF_IGNORE_ITER");
+	if(it < 0)
+		return dtf_match_io(filename, ncid, intracomp_io_flag);
+	if(s != NULL){
+		if(it > atoi(s)){
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Match io call for iter %d", it);
+			return dtf_match_io(filename, ncid, intracomp_io_flag);
+		} else 
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Ignore match io call for iter %d", it);
+	} else 
+		return dtf_match_io(filename, ncid, intracomp_io_flag);
     return 0;
 }
 
@@ -562,6 +582,7 @@ _EXTERN_C_ void dtf_close(const char* filename)
     close_file(fbuf);
 }
 
+//TODO delete this I/O
 /*called inside wait function in pnetcdf*/
 _EXTERN_C_ int dtf_match_ioreqs(const char* filename)
 {

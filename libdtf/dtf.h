@@ -30,6 +30,7 @@ _EXTERN_C_ void dtf_match_multiple(int ncid);
 _EXTERN_C_ void dtf_tstart();
 _EXTERN_C_ void dtf_tend();
 _EXTERN_C_ int  dtf_match_io(const char *filename, int ncid, int intracomp_io_flag );
+_EXTERN_C_ int  dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_flag, int it );
 
 /*Interfaces used by PnetCDF*/
 _EXTERN_C_ void dtf_open(const char* filename, MPI_Comm comm);

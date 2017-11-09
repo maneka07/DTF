@@ -218,9 +218,6 @@ void print_stats()
 
     /*DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: walltime %.3f", walltime);
 
-
-    if(gl_stats.timer_accum > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: library-measured I/O time: %.4f", gl_stats.timer_accum);
     if(gl_stats.accum_comm_time > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: time spent in comm: %.5f: %.4f",
                 gl_stats.accum_comm_time, (gl_stats.accum_comm_time/gl_stats.timer_accum)*100);
@@ -253,8 +250,8 @@ void print_stats()
 //    }
 
     //DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times matched: %u", gl_stats.ndb_match);
-    if(gl_stats.ndb_match > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
+   // if(gl_stats.ndb_match > 0)
+     //   DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
 
    // if(gl_stats.nioreqs > 0)
      //   DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: nreqs: %lu", gl_stats.nioreqs);
@@ -266,6 +263,9 @@ void print_stats()
       //  DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering size: %lu",  gl_stats.accum_dbuff_sz);
    // }
     
+
+    if(gl_stats.timer_accum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: library-measured I/O time: %.4f", gl_stats.timer_accum);
 
 
     /*In scale-letkf the last ranks write mean files not treated by dtf, we don't need
@@ -299,11 +299,12 @@ void print_stats()
             gl_stats.nioreqs = 0;
         }
     }
-
-	rb_print_stats();
+	
+	if(gl_my_rank == 0)
+		rb_print_stats();
 
     /*AVERAGE STATS*/
-    if(gl_stats.iodb_nioreqs > 0){
+    if(gl_stats.iodb_nioreqs > 0 && gl_my_rank == 0){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: nioreqs in iodb %lu", gl_stats.iodb_nioreqs);
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: parse time %.4f (%.3f%%)", gl_stats.parse_ioreq_time, gl_stats.parse_ioreq_time/gl_stats.timer_accum*100);
 	}
@@ -405,13 +406,13 @@ void print_stats()
 
 //    err = MPI_Reduce(&gl_stats.data_msg_sz, &lngsum, 1, MPI_UNSIGNED_LONG, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
 //    CHECK_MPI(err);
-    if(gl_my_rank==0 && gl_stats.data_msg_sz > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: total data sent acrosss ps by rank 0: %lu", gl_stats.data_msg_sz);
-    intsum = 0;
-    err = MPI_Reduce(&(gl_stats.ndata_msg_sent), &intsum, 1, MPI_INT, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
-    CHECK_MPI(err);
-    if(gl_my_rank==0 && intsum > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg num data msg: %d", (int)(intsum/nranks));
+  //  if(gl_my_rank==0 && gl_stats.data_msg_sz > 0)
+    //    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: total data sent acrosss ps by rank 0: %lu", gl_stats.data_msg_sz);
+    //~ intsum = 0;
+    //~ err = MPI_Reduce(&(gl_stats.ndata_msg_sent), &intsum, 1, MPI_INT, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    //~ CHECK_MPI(err);
+    //~ if(gl_my_rank==0 && intsum > 0)
+        //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: Avg num data msg: %d", (int)(intsum/nranks));
 
     //if(gl_stats.master_time > 0){
         //DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: master time %.4f (%.4f%% of libtime)",
@@ -436,6 +437,9 @@ void close_file(file_buffer_t *fbuf)
 		fbuf->is_ready = 1;
 
         if(fbuf->iomode == DTF_IO_MODE_FILE) {
+			
+			//Check for any incoming messages
+			progress_io_matching();
             
             if(gl_my_rank == fbuf->root_writer){
 				if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED)
@@ -482,6 +486,7 @@ void close_file(file_buffer_t *fbuf)
                     err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->mst_info->masters[i], IO_CLOSE_FILE_TAG, gl_comps[fbuf->writer_id].comm);
                     CHECK_MPI(err);
                 }
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Done");
             }
             /*dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
             dtf_free(fbuf->mst_info, sizeof(master_info_t));
@@ -618,10 +623,12 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
             unpack_file_info(bufsz, buf);
             dtf_free(buf, bufsz);
-            fbuf->is_ready = 1;
+          
         	//TODO this is not the same behavior for mem and file modes. is it ok? is it needed?
 			//Notify writer
 notify_writer:
+			fbuf->is_ready = 1;
+			fbuf->done_match_confirm_flag = 1;
 			if(rank == 0){
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root %d readers opened the file", fbuf->root_writer);
 				err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, IO_OPEN_FILE_FLAG, gl_comps[fbuf->writer_id].comm);
@@ -633,8 +640,9 @@ notify_writer:
 		//TODO reinit iodb, allocate stuff for witems and ritems
 		//TODO do not destroy fbuf when file closed, only destroy in finalize
         //do we need it?
-        assert(0);
-        //DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: Writer component (%s) opened file %s instead of creating it", gl_comps[fbuf->writer_id].name, fbuf->file_path);
+		
+      //  assert(0);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: Writer component (%s) opened file %s instead of creating it", gl_comps[fbuf->writer_id].name, fbuf->file_path);
         /*reset all flags*/
     }
 

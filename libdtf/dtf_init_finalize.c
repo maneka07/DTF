@@ -659,7 +659,8 @@ void finalize_files()
 {
     int file_cnt = 0;
     file_buffer_t *fbuf = gl_filebuf_list;
-    
+ 
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize files");
     while(fbuf != NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, close_flag %d, fready_notif_flag %d", fbuf->file_path, fbuf->rdr_closed_flag, fbuf->fready_notify_flag);
         if(fbuf->iomode == DTF_IO_MODE_FILE){
@@ -672,7 +673,7 @@ void finalize_files()
 				file_cnt++;
 			else if( (fbuf->reader_id == gl_my_comp_id) &&
 			         (gl_my_rank == fbuf->root_reader)  &&
-			         (!fbuf->done_match_confirm_flag) )
+			         (!fbuf->done_match_confirm_flag)  )
 			         file_cnt++;
 		}
         

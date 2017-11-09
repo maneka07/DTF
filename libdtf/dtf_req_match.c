@@ -882,8 +882,6 @@ io_req_t *new_ioreq(int id,
 }
 
 //TODO for writing scalar var only one ps will save an ioreq
-
-
 /*The metadata is distributed among masters based on the var id.*/
 void send_ioreqs_by_var(file_buffer_t *fbuf, int intracomp_match)
 {
@@ -1151,9 +1149,11 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
 //                block_range = gl_conf.block_sz_range;
             if(var->shape[var->max_dim] == DTF_UNLIMITED)
                 block_range = DEFAULT_BLOCK_SZ_RANGE;
-            else
+            else{
                 block_range = (MPI_Offset)(var->shape[var->max_dim]/fbuf->mst_info->nmasters);
-
+                if(var->shape[var->max_dim]%fbuf->mst_info->nmasters>0)
+					block_range++;
+			}
             if(block_range == 0)
                 block_range = DEFAULT_BLOCK_SZ_RANGE;
 
@@ -1162,12 +1162,12 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
             shift = 0;
             while(ioreq->start[var->max_dim] + shift < ioreq->start[var->max_dim] + ioreq->count[var->max_dim]){
 
-                if(block_range == 1)
+                if(block_range == DEFAULT_BLOCK_SZ_RANGE)
                     mst = (int)((ioreq->start[var->max_dim] + shift) % fbuf->mst_info->nmasters);
                 else
                     mst = (int)((ioreq->start[var->max_dim] + shift)/block_range);
-
                 DTF_DBG(VERBOSE_DBG_LEVEL, "mst %d", mst);
+                assert(mst < fbuf->mst_info->nmasters);
                 if(bufsz[mst] == 0){
                     sbuf[mst] = dtf_malloc(MAX_FILE_NAME + mlc_chunk);
                     assert(sbuf[mst] != NULL);
@@ -1209,9 +1209,9 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
                 cnt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
                 offt[mst] += var->ndims*sizeof(MPI_Offset);
 
-                DTF_DBG(VERBOSE_ALL_LEVEL, "Will send info to mst %d about block:", mst);
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Will send info to mst %d about block:", mst);
                 for(i = 0; i < var->ndims; i++)
-                    DTF_DBG(VERBOSE_ALL_LEVEL, "%lld  ->  %lld", strt[i], cnt[i]);
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", strt[i], cnt[i]);
                 shift += block_range;
             }
             ioreq->sent_flag = 1;
@@ -1917,6 +1917,7 @@ static void recv_data_rdr(void* buf, int bufsz)
             DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", start[i], count[i]);
 
         int cnt_mismatch = 0;
+        //TODO move reqs to vars
         /*Find the ioreq that has info about this block*/
         ioreq = fbuf->ioreqs;
         while(ioreq != NULL){
@@ -1976,7 +1977,8 @@ static void recv_data_rdr(void* buf, int bufsz)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Getput data:");
         for(i = 0; i < var->ndims; i++){
             nelems *= count[i];
-        }
+        } 
+        assert(nelems <= ioreq->user_buf_sz - ioreq->get_sz);
 
        DTF_DBG(VERBOSE_DBG_LEVEL, "Will get %d elems for var %d", nelems, var->id);
         if(var->ndims == 0){
@@ -2340,6 +2342,8 @@ void progress_io_matching()
 								fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
 								if(fbuf->is_ready) //writer has already closed the file
 									notify_file_ready(fbuf);
+								else
+									DTF_DBG(VERBOSE_DBG_LEVEL, "File not ready yet");
 							} else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 								memcpy(&fbuf->root_reader, (unsigned char*)rbuf+MAX_FILE_NAME, sizeof(int));
 								send_file_info(fbuf, fbuf->root_reader);
