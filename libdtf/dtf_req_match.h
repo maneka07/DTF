@@ -76,7 +76,7 @@ typedef struct master_info{
     unsigned int         nrranks_completed;  /*Number of ranks that completed their read requests
                                               (writer component can also read the file).
                                                Counted only by master 0.*/
-    unsigned int         nranks_opened;     /*Number of writer ranks that opened the file*/
+    unsigned int         nranks_opened;     /*Number of  ranks that opened the file*/
     struct ioreq_db      *iodb;
     int is_master_flag;  /*is this rank a master rank*/
     int nmasters;   /*Number of master nodes that hold data for request matching*/
@@ -121,4 +121,5 @@ void finalize_iodb(file_buffer_t *fbuf);
 void unpack_file_info(MPI_Offset bufsz, void *buf);
 void send_file_info(file_buffer_t *fbuf, int reader_root);
 void notify_complete_multiple(file_buffer_t *fbuf);
+void skip_match(file_buffer_t *fbuf, const char *filename, MPI_Comm comm, int writer_id);
 #endif // dtf_REQ_MATCH_H_INCLUDED

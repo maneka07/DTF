@@ -31,6 +31,7 @@ _EXTERN_C_ void dtf_tstart();
 _EXTERN_C_ void dtf_tend();
 _EXTERN_C_ int  dtf_match_io(const char *filename, int ncid, int intracomp_io_flag );
 _EXTERN_C_ int  dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_flag, int it );
+_EXTERN_C_ void dtf_skip_match(const char *filename, MPI_Comm comm);
 
 /*Interfaces used by PnetCDF*/
 _EXTERN_C_ void dtf_open(const char* filename, MPI_Comm comm);
@@ -67,4 +68,5 @@ void dtf_print_(const char *str);
 void dtf_complete_multiple_(const char *filename, int *ncid);
 void dtf_match_multiple_(int *ncid);
 void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void* data);
+void dtf_skip_match_(const char *filename, MPI_Fint *fcomm);
 #endif // DTF_H_INCLUDED

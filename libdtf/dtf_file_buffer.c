@@ -191,7 +191,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->ioreqs = NULL;
     buf->ncid = -1;
     buf->done_matching_flag = 0;
-    buf->rdr_closed_flag = 0;
+ //   buf->rdr_closed_flag = 0;
     buf->fready_notify_flag = DTF_UNDEFINED;
     buf->done_match_confirm_flag = DTF_UNDEFINED;
     buf->comm = MPI_COMM_NULL;

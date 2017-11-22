@@ -67,7 +67,7 @@ typedef struct file_buffer{
 														  Needed for multi-iterative programs to prevent the reader from sending
 														  * ioreqs from the next iteration before writer finished with previous iteration*/
   int                       is_matching_flag;   /*Set to 1 when process starts matching. Reset to 0 when matching is done.*/
-  int                       rdr_closed_flag;           /*Flag set to 1 when reader closes the file*/
+//  int                       rdr_closed_flag;           /*Flag set to 1 when reader closes the file*/
   int                       fready_notify_flag;   /*flag used to notify the reader that the file is ready for reading.
                                                     Possible values: 0 - the ps does not write to this file
                                                                      1 - the ps writes to this file. The file is not ready yet.

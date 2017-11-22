@@ -154,7 +154,6 @@ static int create_intercomm(int comp_id, char* global_path){
     int err, mode, myrank, l1, l2;
     char portfile_name[MAX_FILE_NAME];
     int wait_timeout;
-    int nranks1, nranks2;
 
     mode = gl_comps[comp_id].connect_mode;
     if(mode == DTF_UNDEFINED) return 0;
@@ -264,13 +263,11 @@ static int create_intercomm(int comp_id, char* global_path){
         CHECK_MPI(err);
     }
     MPI_Comm_set_errhandler(gl_comps[comp_id].comm, MPI_ERRORS_RETURN);
-    /*Check that the number of ranks is the same in both communicators*/
-    MPI_Comm_size(MPI_COMM_WORLD, &nranks1);
-    MPI_Comm_remote_size(gl_comps[comp_id].comm, &nranks2);
-    if(nranks1 != nranks2){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF can only work if the number of processes in all components is the same. Aborting.");
-        return 1;
-    }
+ 
+	//The two components are roughly synched now. Reset 
+	//the start time value
+	gl_stats.walltime = MPI_Wtime();
+ 
     return 0;
 }
 
@@ -662,16 +659,17 @@ void finalize_files()
  
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize files");
     while(fbuf != NULL){
-        DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, close_flag %d, fready_notif_flag %d", fbuf->file_path, fbuf->rdr_closed_flag, fbuf->fready_notify_flag);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, fready_notif_flag %d", fbuf->file_path,  fbuf->fready_notify_flag);
         if(fbuf->iomode == DTF_IO_MODE_FILE){
 			 if( (fbuf->writer_id == gl_my_comp_id) && 
 			     (fbuf->root_writer == gl_my_rank)  &&
 			     (fbuf->fready_notify_flag != RDR_NOTIFIED) )
 				file_cnt++;
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-			if( (fbuf->writer_id == gl_my_comp_id) && !fbuf->rdr_closed_flag )
-				file_cnt++;
-			else if( (fbuf->reader_id == gl_my_comp_id) &&
+			//~ if( (fbuf->writer_id == gl_my_comp_id) && !fbuf->rdr_closed_flag )
+				//~ file_cnt++;
+			//~ else 
+			if( (fbuf->reader_id == gl_my_comp_id) &&
 			         (gl_my_rank == fbuf->root_reader)  &&
 			         (!fbuf->done_match_confirm_flag)  )
 			         file_cnt++;
@@ -681,7 +679,7 @@ void finalize_files()
         fbuf = fbuf->next;
     }
 
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Process has to finalize notifications for %d files", file_cnt);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Process has to finalize notifications for %d files (out of %d files)", file_cnt, gl_stats.nfiles);
     assert(file_cnt <= gl_stats.nfiles);
     
 	file_cnt = 0;
@@ -701,17 +699,18 @@ void finalize_files()
 			 }	 
 			 file_cnt++;
 		} else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-			if(fbuf->writer_id == gl_my_comp_id){
-				while(!fbuf->rdr_closed_flag )
-					progress_io_matching();
-				file_cnt++;
-			}else if(fbuf->reader_id == gl_my_comp_id){
+			//~ if(fbuf->writer_id == gl_my_comp_id){
+				//~ while(!fbuf->rdr_closed_flag )
+					//~ progress_io_matching();
+				//~ file_cnt++;
+			//~ }else 
+			if(fbuf->reader_id == gl_my_comp_id){
 				
 					 if(gl_my_rank == fbuf->root_reader)
 						while(!fbuf->done_match_confirm_flag) 
 							progress_io_matching();
-					 file_cnt++;
 			}
+			file_cnt++;
 		} 
 		fbuf = fbuf->next;	
 	}

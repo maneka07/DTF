@@ -76,6 +76,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.ndb_match = 0;
     gl_stats.walltime = MPI_Wtime();
     gl_stats.accum_comm_time = 0;
+    gl_stats.accum_hdr_time = 0;
     gl_stats.nprogress_call = 0;
     gl_stats.nioreqs = 0;
     gl_stats.nbl = 0;
@@ -186,16 +187,18 @@ _EXTERN_C_ int dtf_finalize()
 //               MPI_Op op, int root, MPI_Comm comm)
     DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalize");
 	
-	if(gl_msg_q != NULL)
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize message queue");
-		
-    while(gl_msg_q != NULL)
-        progress_msg_queue();
-
     /*Send any unsent file notifications
       and delete buf files*/
-
+	while(gl_msg_q != NULL)
+		progress_msg_queue();
+		
     finalize_files();
+    
+    if(gl_msg_q != NULL)
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize message queue");
+	
+    while(gl_msg_q != NULL)
+		progress_msg_queue();
 
     assert(gl_finfo_req_q == NULL);
     //TODO send notification to root 0 when file is closed so that it's deleted from the list
@@ -205,8 +208,7 @@ _EXTERN_C_ int dtf_finalize()
 		dtf_free(finfo, sizeof(file_info_t));
 		finfo = gl_finfo_list;
 	}
-	
-	
+
     print_stats();
 
     finalize_comp_comm();
@@ -293,6 +295,56 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
     return 0;
 }
 
+/*
+ * This function is supposed to be called only by reader component to 
+ * notify the writer component that it does not need the data. 
+ * The function is added specifically for SCALE-LETKF because LETKF 
+ * skips reading the history file when observation data for a given time 
+ * slot is absent.*/
+_EXTERN_C_ void dtf_skip_match(const char *filename, MPI_Comm comm)
+{
+	file_buffer_t *fbuf;
+	if(!lib_initialized) return;
+	
+	if(filename == NULL || strlen(filename)==0){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: undefined file name in dtf_skip_match call");
+		return;
+	}
+	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Call skip match for %s", filename);
+	
+	fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL){
+		//If fbuf doesn't exist this file hasn't been opened/created. 
+		//However, we still need to check if I/O matching is enabled for 
+		//this file and, if it is, notify the other component that we skip.
+		fname_pattern_t *pat = gl_fname_ptrns;
+		while(pat != NULL){
+			if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls)){
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
+				break;
+			}
+			pat = pat->next;
+		} 
+		
+		if(pat != NULL){
+			if(gl_my_comp_id == pat->wrt){
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_skip_match for file %s should not be called by the writer component. Ignore. ", filename);
+				return;
+			}
+			assert(pat->rdr == gl_my_comp_id);
+			
+			if(pat->iomode == DTF_IO_MODE_MEMORY){	
+				assert(comm != MPI_COMM_NULL);
+				skip_match(NULL, filename, comm, pat->wrt);
+			} 	
+		}
+       
+    } else if(fbuf->iomode == DTF_IO_MODE_MEMORY)
+		skip_match(fbuf, filename, comm, -1);
+	
+}
+
 /*Supposed to be called by the writer process.
   Used to match against several dtf_match_io functions on the reader side*/
 _EXTERN_C_ void dtf_match_multiple(int ncid)
@@ -329,6 +381,7 @@ _EXTERN_C_ void dtf_match_multiple(int ncid)
     return;
 }
 
+//TODO remove this?
 /*Used by reader to notify writer that it can complete dtf_match_multiple*/
 _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
 {
@@ -348,7 +401,7 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
         return;
     }
     dtf_tstart();
-    MPI_Barrier(fbuf->comm);
+    //MPI_Barrier(fbuf->comm);
     notify_complete_multiple(fbuf);
     dtf_tend();
 
@@ -370,17 +423,24 @@ _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *hea
         DTF_DBG(VERBOSE_DBG_LEVEL, "Header size for file %s is zero", filename);
         return;
     }
+    double t_st = MPI_Wtime();
     write_hdr(fbuf, hdr_sz, header);
-    return;
+    gl_stats.accum_hdr_time += MPI_Wtime() - t_st;
+
 }
 
 _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
 {
+	MPI_Offset ret;
     if(!lib_initialized) return 0;
+ 
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-    return read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
+    double t_st = MPI_Wtime();
+    ret = read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
+    gl_stats.accum_hdr_time += MPI_Wtime() - t_st;
+    return ret;
 }
 
 _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
@@ -419,14 +479,40 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
     CHECK_MPI(err);
     fbuf->root_writer = root_mst;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
+    //~ if(gl_my_rank == fbuf->root_writer){
+        //~ /*Notify global rank 0 that I am the root master for this file*/
+        //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify global rank 0 that I am master");
+        //~ dtf_msg_t *msg = new_dtf_msg(NULL, 0, ROOT_MST_TAG);
+        //~ err = MPI_Isend(fbuf->file_path, (int)(MAX_FILE_NAME), MPI_CHAR, 0, ROOT_MST_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
+        //~ CHECK_MPI(err);
+        //~ ENQUEUE_ITEM(msg, gl_msg_q);
+    //~ }
+    
     if(gl_my_rank == fbuf->root_writer){
-        /*Notify global rank 0 that I am the root master for this file*/
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify global rank 0 that I am master");
-        dtf_msg_t *msg = new_dtf_msg(NULL, 0, ROOT_MST_TAG);
-        err = MPI_Isend(fbuf->file_path, (int)(MAX_FILE_NAME), MPI_CHAR, 0, ROOT_MST_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
-        CHECK_MPI(err);
-        ENQUEUE_ITEM(msg, gl_msg_q);
-    }
+		int i;
+		FILE *rootf;
+		char *glob = getenv("DTF_GLOBAL_PATH");
+		assert(glob != NULL);
+		char outfname[MAX_FILE_NAME*2];
+		char fname[MAX_FILE_NAME];
+		strcpy(fname, filename);
+		for(i = 0; i <strlen(filename); i++)
+			if(fname[i]=='/' || fname[i]=='\\')
+				fname[i]='_';
+		strcpy(outfname, glob);
+		strcat(outfname, "/");
+		strcat(outfname, fname);
+		strcat(outfname, ".root");
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Will write root to file %s", outfname);
+		//we assume that there are no race conditions
+		rootf = fopen(outfname, "wb");
+		assert(rootf != NULL);
+		if(!fwrite(&fbuf->root_writer, sizeof(int), 1, rootf))
+			assert(0);
+		fclose(rootf);
+		
+	}
+    
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Init masters");
     init_req_match_masters(comm, fbuf->mst_info);
@@ -577,7 +663,7 @@ _EXTERN_C_ void dtf_close(const char* filename)
     }
 //    if(fbuf->reader_id == gl_my_comp_id)
 
-    MPI_Barrier(fbuf->comm);
+    //MPI_Barrier(fbuf->comm);
 
     close_file(fbuf);
 }
@@ -769,6 +855,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
 _EXTERN_C_ void dtf_tstart()
 {
     if(!lib_initialized) return;
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stat start");
     if(gl_stats.timer_start != 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.",
                 gl_stats.timer_start - gl_stats.walltime);
@@ -782,6 +869,7 @@ _EXTERN_C_ void dtf_tend()
     tt = MPI_Wtime() - gl_stats.timer_start;
     gl_stats.timer_accum += tt;
     gl_stats.timer_start = 0;
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stat end (time %.6f)", tt);
  //   DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
 }
 
@@ -810,6 +898,12 @@ void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int 
 {
     *ierr = dtf_match_io(filename, *ncid, *intracomp_io_flag);
 }
+
+void dtf_skip_match_(const char *filename, MPI_Fint *fcomm)
+{
+	return;
+	dtf_skip_match(filename, MPI_Comm_f2c(*fcomm));
+}	
 
 //void dtf_match_io_all_(int *rw_flag)
 //{

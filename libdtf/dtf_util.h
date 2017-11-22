@@ -17,8 +17,8 @@
 #define DONE_MULTIPLE_FLAG  2
 #define IO_DATA_TAG         3       /*writer -> reader*/
 #define READ_DONE_TAG       4
-#define IO_CLOSE_FILE_TAG   5      /*reader->master, master->writers*/
-#define IO_OPEN_FILE_FLAG   6
+#define SKIP_MATCH_TAG   	5      
+//#define SKIP_CONFIRM_TAG    6
 #define FILE_INFO_TAG       7
 #define FILE_INFO_REQ_TAG   8
 #define ROOT_MST_TAG        9
@@ -109,6 +109,7 @@ typedef struct stats{
     double          accum_dbuff_time;
     size_t          accum_dbuff_sz;
     double          accum_comm_time;
+    double          accum_hdr_time;
     double          parse_ioreq_time;
     size_t          data_msg_sz;      /*Accumulated size of messages */
     double          accum_match_time;  /*Total time spent in match_ioreqs*/
@@ -227,4 +228,5 @@ double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datat
 dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int tag);
 void delete_dtf_msg(dtf_msg_t *msg);
 void print_stats();
+int inquire_root(const char *filename);
 #endif

@@ -44,6 +44,8 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 
     dtf_var_t *var = fbuf->vars[varid];
     DTF_DBG(VERBOSE_DBG_LEVEL, "rw call %d for %s (ncid %d) var %d", rw_flag,fbuf->file_path, fbuf->ncid, var->id);
+    for(i = 0; i < var->ndims; i++)
+			DTF_DBG(VERBOSE_DBG_LEVEL, "  %lld --> %lld", start[i], count[i]);
     /*check number of elements to read*/
     nelems = 0;
     if(var->ndims == 0)
@@ -71,10 +73,13 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
     }
     //assert(var->dtype == dtype);
 
-    DTF_DBG(VERBOSE_DBG_LEVEL, "------------IOREQ--------:");
-    for(i = 0; i < var->ndims; i++)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "  %lld --> %lld", start[i], count[i]);
-
+	//~ if(rw_flag == DTF_WRITE){
+		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "------------WRITE IOREQ--------:");
+		
+		//~ for(i = 0; i < nelems; i++)
+			//~ printf("%.2f\t", ((double*)buf)[i]);
+		//~ printf("\n");
+	//~ }
     /*If the process has the data to match a read request completely, then
     copy the data and do not create an I/O request.*/
     int create_ioreq = 1;
