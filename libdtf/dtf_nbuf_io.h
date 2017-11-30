@@ -11,7 +11,6 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
                                const MPI_Offset *imap,
                                MPI_Datatype dtype,
                                void *buf,
-                               int rw_flag,
-                               int *request);
+                               int rw_flag);
 
 #endif /*dtf_NBUF_IO_H_INCLUDED*/

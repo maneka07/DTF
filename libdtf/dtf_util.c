@@ -132,8 +132,8 @@ void print_stats()
     char *s;
     int err, nranks;
     double dblsum = 0, walltime, avglibt;
-    unsigned long data_sz, lngsum;
-    int sclltkf = 0, intsum;
+    unsigned long data_sz;
+    int sclltkf = 0;
     unsigned long unsgn;
     typedef struct{
         double dbl;
@@ -144,41 +144,20 @@ void print_stats()
     
     MPI_Barrier(MPI_COMM_WORLD);
 	
-	if(gl_my_rank == 0){
+	//~ if(gl_my_rank == 0){
 		
-		double start, end, my_end;
-		my_end = MPI_Wtime();
-		//make one component receive message from another to sync them
+		//~ double start;
+		//~ //make one component receive message from another to sync them
 		
-		if(gl_my_comp_id == 0){
-			err = MPI_Recv(&start, 1, MPI_DOUBLE, 0, 0, gl_comps[1].comm, MPI_STATUS_IGNORE);
-			CHECK_MPI(err);
-			//~ err = MPI_Recv(&end, 1, MPI_DOUBLE, 0, 0, gl_comps[1].comm, MPI_STATUS_IGNORE);
+		//~ if(gl_my_comp_id == 0){
+			//~ err = MPI_Recv(&start, 1, MPI_DOUBLE, 0, SYNC_COMP_TAG, gl_comps[1].comm, MPI_STATUS_IGNORE);
 			//~ CHECK_MPI(err);
-			
-			//~ if(start < gl_stats.walltime){
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "Component 2 started earlier");
-			//~ } else {
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "Component 1 started earlier");
-				//~ start = gl_stats.walltime;
-			//~ }
-			
-			//~ if(end > my_end){
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "Component 2 ended later");
-			//~ } else {
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "Component 1 ended later");
-				//~ end = my_end;
-			//~ }
-			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: workflow runtime %.3f", end - start);
-			
-		} else if(gl_my_comp_id == 1){
-			err = MPI_Send(&gl_stats.walltime, 1, MPI_DOUBLE, 0, 0, gl_comps[0].comm);
-			CHECK_MPI(err);
-			//~ err = MPI_Send(&my_end, 1, MPI_DOUBLE, 0, 0, gl_comps[0].comm);
+		//~ } else if(gl_my_comp_id == 1){
+			//~ err = MPI_Send(&gl_stats.walltime, 1, MPI_DOUBLE, 0, SYNC_COMP_TAG, gl_comps[0].comm);
 			//~ CHECK_MPI(err);
-		}
+		//~ }
 			
-	}
+	//~ }
 	
     walltime = MPI_Wtime() - gl_stats.walltime;
     MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &nranks);
@@ -233,7 +212,8 @@ void print_stats()
 
     if(gl_stats.timer_accum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: library-measured I/O time: %.4f", gl_stats.timer_accum);
-
+	if(gl_stats.user_timer_accum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: user-measured I/O time: %.4f", gl_stats.user_timer_accum);
 
     /*In scale-letkf the last ranks write mean files not treated by dtf, we don't need
       stats for that*/
@@ -265,6 +245,7 @@ void print_stats()
             gl_stats.accum_progr_time = 0;
             gl_stats.accum_rw_var = 0;
             gl_stats.nioreqs = 0;
+            gl_stats.user_timer_accum = 0;
         }
     }
 	
@@ -299,6 +280,25 @@ void print_stats()
 
         if(gl_my_rank == 0)
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: lib I/O standard deviation: %.7f", sqrt(dblsum/nranks));
+    }
+    
+    err = MPI_Allreduce(&(gl_stats.user_timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    avglibt = dblsum/nranks;
+    if(gl_my_rank==0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg user-measured I/O time: %.5f", avglibt);
+
+    /*Standard deviation*/
+    {
+        double mydev2;
+        double mean = avglibt;
+        mydev2 = (gl_stats.user_timer_accum - mean)*(gl_stats.user_timer_accum - mean);
+
+        err = MPI_Reduce(&mydev2, &dblsum, 1, MPI_DOUBLE, MPI_SUM,0, gl_comps[gl_my_comp_id].comm);
+        CHECK_MPI(err);
+
+        if(gl_my_rank == 0)
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: lib I/O standard user deviation: %.7f", sqrt(dblsum/nranks));
     }
 
     //dblint_in.dbl = walltime;

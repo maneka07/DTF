@@ -18,7 +18,7 @@
 #define IO_DATA_TAG         3       /*writer -> reader*/
 #define READ_DONE_TAG       4
 #define SKIP_MATCH_TAG   	5      
-//#define SKIP_CONFIRM_TAG    6
+#define SYNC_COMP_TAG       6
 #define FILE_INFO_TAG       7
 #define FILE_INFO_REQ_TAG   8
 #define ROOT_MST_TAG        9
@@ -102,6 +102,7 @@ typedef struct dtf_config{
     int         do_checksum;
 //    MPI_Offset  block_sz_range;  /*the size of the data block in the first dimension*/
     int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
+    int         log_ioreqs;
 }dtf_config_t;
 
 typedef struct stats{
@@ -127,8 +128,10 @@ typedef struct stats{
     unsigned long   iodb_nioreqs;   /*number of blocks in iodb for matching*/
     unsigned        nbl;    /*number of blocks transfered*/
     unsigned        ngetputcall;  /*how many times had to use a subblock extraction function*/
-    double          timer_start;    /*measure I/O time from pnetcdf*/
+    double          timer_start;   
     double          timer_accum;
+    double          user_timer_start;
+    double          user_timer_accum;
     int             nfiles;
 } stats_t;
 
@@ -185,7 +188,6 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm);
 MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord);
 void* dtf_malloc(size_t size);
 void dtf_free(void *ptr, size_t size);
-void process_file_info_req_queue();
 void find_fit_block(int ndims,
 		    int cur_dim,
 		    const MPI_Offset *start,

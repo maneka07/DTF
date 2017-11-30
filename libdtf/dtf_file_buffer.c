@@ -103,7 +103,24 @@ void delete_file_buffer(file_buffer_t* fbuf)
         delete_var(fbuf->vars[i]);
     dtf_free(fbuf->vars, fbuf->nvars*sizeof(dtf_var_t*));
 	
-
+	if(fbuf->ioreq_log != NULL){
+		io_req_log_t *ior = fbuf->ioreq_log;
+		while(ior != NULL){
+			fbuf->ioreq_log = fbuf->ioreq_log->next;
+			
+			if(ior->rw_flag == DTF_READ)
+				fbuf->rreq_cnt--;
+			else
+				fbuf->wreq_cnt--;
+			
+			if(gl_conf.buffered_req_match && (ior->rw_flag == DTF_WRITE)) dtf_free(ior->user_buf, ior->user_buf_sz);
+			if(ior->start != NULL) dtf_free(ior->start, ior->ndims*sizeof(MPI_Offset));
+			if(ior->count != NULL)dtf_free(ior->count, ior->ndims*sizeof(MPI_Offset));
+			dtf_free(ior, sizeof(io_req_log_t));
+			ior = fbuf->ioreq_log;
+		}
+	}
+		
     assert(fbuf->ioreqs == NULL);
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
@@ -160,6 +177,7 @@ fname_pattern_t *new_fname_pattern()
     pat->next = NULL;
     pat->rdr = -1;
     pat->wrt = -1;
+    pat->ignore_io = 0;
     pat->slink_name = NULL;
     return pat;
 }
@@ -189,6 +207,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->rreq_cnt = 0;
     buf->wreq_cnt = 0;
     buf->ioreqs = NULL;
+    buf->ioreq_log = NULL;
     buf->ncid = -1;
     buf->done_matching_flag = 0;
  //   buf->rdr_closed_flag = 0;
@@ -197,6 +216,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->comm = MPI_COMM_NULL;
     buf->root_writer = -1;
     buf->root_reader = -1;
+    
     buf->nwriters = 0;
     buf->mst_info = dtf_malloc(sizeof(master_info_t));
     assert(buf->mst_info != NULL);
@@ -220,6 +240,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 	} else 
 		buf->slink_name = NULL;
 	buf->iomode = pat->iomode;
+	buf->ignore_io = pat->ignore_io;
 	//insert
 	if(gl_filebuf_list == NULL)
 		gl_filebuf_list = buf;

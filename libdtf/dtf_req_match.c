@@ -2084,7 +2084,7 @@ static void recv_data_rdr(void* buf, int bufsz)
 			 
             if(gl_conf.do_checksum){
                 double chsum = compute_checksum(ioreq->user_buf, var->ndims, ioreq->count, ioreq->dtype);
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Chsum for req is %.4f", chsum);
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "Chsum for req %d is %.4f", ioreq->id, chsum);
             }
             //delete this ioreq
             delete_ioreq(fbuf, &ioreq);
@@ -2339,9 +2339,7 @@ void progress_io_matching()
     double t_st;
     double t_start_comm;
     gl_stats.nprogress_call++;
-    /*first check if there are any requests for file info
-      that we can process. */
-    process_file_info_req_queue();
+    
     progress_msg_queue();
 
     for(comp = 0; comp < gl_ncomp; comp++){
@@ -2746,3 +2744,67 @@ int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     return 0;
 }
 
+void log_ioreq(file_buffer_t *fbuf,
+			  int varid, int ndims,
+			  const MPI_Offset *start,
+			  const MPI_Offset *count,
+			  MPI_Datatype dtype,
+			  void *buf,
+			  int rw_flag)
+{
+    int el_sz;
+	io_req_log_t *req = dtf_malloc(sizeof(io_req_log_t));
+	assert(req != NULL);
+	req->var_id = varid;
+	req->ndims = ndims;
+	req->next = NULL;
+	req->id = fbuf->rreq_cnt+fbuf->wreq_cnt;
+	req->rw_flag = rw_flag;
+	req->dtype = dtype;
+	
+	if(rw_flag == DTF_READ)
+		fbuf->rreq_cnt++;
+	else
+		fbuf->wreq_cnt++;
+
+    MPI_Type_size(dtype, &el_sz);
+    
+	if(ndims > 0){
+        int i;
+        req->user_buf_sz = count[0];
+        for(i=1;i<ndims;i++)
+            req->user_buf_sz *= count[i];
+
+        req->start = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
+        assert(req->start != NULL);
+        memcpy((void*)req->start, (void*)start, sizeof(MPI_Offset)*ndims);
+        req->count = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
+        assert(req->count != NULL);
+        memcpy((void*)req->count, (void*)count, sizeof(MPI_Offset)*ndims);
+    } else{
+        req->start = NULL;
+        req->count = NULL;
+        req->user_buf_sz = el_sz;
+    }
+	/*buffering*/
+	if(gl_conf.buffered_req_match && (rw_flag == DTF_WRITE)){
+        req->user_buf = dtf_malloc((size_t)req->user_buf_sz);
+        assert(req->user_buf != NULL);
+        memcpy(req->user_buf, buf, (size_t)req->user_buf_sz);
+    } else
+        req->user_buf = buf;
+    /*checksum*/
+    //~ if( (rw_flag == DTF_WRITE) && gl_conf.do_checksum && (dtype == MPI_DOUBLE || dtype == MPI_FLOAT)){
+        //~ req->checksum = compute_checksum(buf, ndims, count, dtype);
+        //~ DTF_DBG(VERBOSE_DBG_LEVEL, "checksum %.4f", req->checksum);
+    //~ } else
+        //~ req->checksum = 0;    
+        
+	/*Enqueue the request to the head*/
+	if(fbuf->ioreq_log == NULL)
+		fbuf->ioreq_log = req;
+	else{
+		req->next = fbuf->ioreq_log;
+		fbuf->ioreq_log = req;
+	}
+}

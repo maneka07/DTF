@@ -12,8 +12,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
                                const MPI_Offset *imap,
                                MPI_Datatype dtype,
                                void *buf,
-                               int rw_flag,
-                               int *request)
+                               int rw_flag)
 {
     MPI_Offset ret;
     int el_sz;
@@ -192,8 +191,6 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         if(gl_conf.do_checksum && (rw_flag == DTF_WRITE))
             var->checksum += req->checksum;
 
-        if(request != NULL)
-            *request = req->id;
         if(rw_flag == DTF_READ)
             fbuf->rreq_cnt++;
         else

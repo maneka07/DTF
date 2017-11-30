@@ -169,7 +169,7 @@ panic_exit:
  */
 _EXTERN_C_ int dtf_finalize()
 {
-    int mpi_initialized;
+    int mpi_initialized, err;
     file_info_t *finfo;
 
     if(!lib_initialized) return 0;
@@ -208,10 +208,13 @@ _EXTERN_C_ int dtf_finalize()
 		dtf_free(finfo, sizeof(file_info_t));
 		finfo = gl_finfo_list;
 	}
-
-    print_stats();
-
+	
     finalize_comp_comm();
+    print_stats();
+    //destroy inrracomp communicator
+    err = MPI_Comm_free(&gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+
 
     clean_config();
 
@@ -274,7 +277,36 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
             DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
         return 0;
     }
+    if((fbuf->ioreq_log != NULL) && gl_conf.do_checksum){
+		io_req_log_t *ioreq = fbuf->ioreq_log;
+		while(ioreq != NULL){
+			
+			if(ioreq->dtype == MPI_DOUBLE || ioreq->dtype == MPI_FLOAT){
+				double checksum = compute_checksum(ioreq->user_buf, ioreq->ndims, ioreq->count, ioreq->dtype);
+				if(ioreq->rw_flag == DTF_READ)
+					DTF_DBG(VERBOSE_ERROR_LEVEL, "read req %d, checksum %.4f", ioreq->id, checksum);
+				else
+					DTF_DBG(VERBOSE_ERROR_LEVEL, "write req %d, checksum %.4f", ioreq->id, checksum);
+			}
+			
+			//delete
+			fbuf->ioreq_log = ioreq->next;
+			
+			if(ioreq->rw_flag == DTF_READ)
+				fbuf->rreq_cnt--;
+			else
+				fbuf->wreq_cnt--;
+			
+			if(gl_conf.buffered_req_match && (ioreq->rw_flag == DTF_WRITE)) dtf_free(ioreq->user_buf, ioreq->user_buf_sz);
+			if(ioreq->start != NULL) dtf_free(ioreq->start, ioreq->ndims*sizeof(MPI_Offset));
+			if(ioreq->count != NULL)dtf_free(ioreq->count, ioreq->ndims*sizeof(MPI_Offset));
+			dtf_free(ioreq, sizeof(io_req_log_t));
+			ioreq = fbuf->ioreq_log;
+		}
+	}
+	
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
+    if(fbuf->ignore_io) return 0;
     if(!fbuf->explicit_match){
         DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_io but explicit match for file %s not enabled. Ignored.", filename);
         return 0;
@@ -359,6 +391,7 @@ _EXTERN_C_ void dtf_match_multiple(int ncid)
         return;
     }
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+    if(fbuf->ignore_io) return;
     if(!fbuf->explicit_match){
         DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_multiple but explicit match for file \
                 %s not enabled. Ignored.", fbuf->file_path);
@@ -677,6 +710,7 @@ _EXTERN_C_ int dtf_match_ioreqs(const char* filename)
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
+    if(fbuf->ignore_io) return 0;
     /*User will have to explicitly initiate matching*/
     if(fbuf->explicit_match) return 0;
 
@@ -762,8 +796,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
                                           const MPI_Offset *imap,
                                           MPI_Datatype dtype,
                                           void *buf,
-                                          int rw_flag,
-                                          int *request)
+                                          int rw_flag)
 {
     MPI_Offset ret;
 
@@ -784,7 +817,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: rw_flag value incorrect (%d)", rw_flag);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
-    if(rw_flag==DTF_WRITE && fbuf->reader_id == gl_my_comp_id){
+    if(rw_flag==DTF_WRITE && (fbuf->reader_id == gl_my_comp_id || fbuf->ignore_io)){
         int el_sz, i;
         dtf_var_t *var = fbuf->vars[varid];
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: reader component cannot write to the file %s. Ignore I/O call", fbuf->file_path);
@@ -797,14 +830,29 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
 
-     if(request == NULL)
-        ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, NULL);
-     else
-        ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag, request);
-
-    return ret;
+   
+        return nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
 }
 
+
+_EXTERN_C_ void dtf_log_ioreq(const char *filename,
+                                          int varid, int ndims,
+                                          const MPI_Offset *start,
+                                          const MPI_Offset *count,
+                                          MPI_Datatype dtype,
+                                          void *buf,
+                                          int rw_flag)
+{
+	if(!lib_initialized) return;
+	if(!gl_conf.log_ioreqs) return;
+	
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    if(fbuf == NULL) return;
+    if(fbuf->iomode != DTF_IO_MODE_FILE) return;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "log ioreq");
+    log_ioreq(fbuf, varid, ndims, start, count, dtype, buf, rw_flag);
+    
+}
 
 /**
     @brief  Returns the I/O mode for this file
@@ -852,10 +900,11 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     return ret;
 }
 
+/*Library controled timers*/
 _EXTERN_C_ void dtf_tstart()
 {
     if(!lib_initialized) return;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stat start");
+    //DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat start");
     if(gl_stats.timer_start != 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.",
                 gl_stats.timer_start - gl_stats.walltime);
@@ -869,7 +918,29 @@ _EXTERN_C_ void dtf_tend()
     tt = MPI_Wtime() - gl_stats.timer_start;
     gl_stats.timer_accum += tt;
     gl_stats.timer_start = 0;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stat end (time %.6f)", tt);
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stat %.6f", tt);
+ //   DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
+}
+
+/*User controled timers*/
+_EXTERN_C_ void dtf_time_start()
+{
+    if(!lib_initialized) return;
+  
+    if(gl_stats.user_timer_start != 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.",
+                gl_stats.user_timer_start - gl_stats.walltime);
+
+    gl_stats.user_timer_start = MPI_Wtime();
+}
+_EXTERN_C_ void dtf_time_end()
+{
+    double tt;
+    if(!lib_initialized) return;
+    tt = MPI_Wtime() - gl_stats.user_timer_start;
+    gl_stats.user_timer_accum += tt;
+    gl_stats.user_timer_start = 0;
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "user_time_stat  %.6f", tt);
  //   DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
 }
 
@@ -882,6 +953,15 @@ _EXTERN_C_ void dtf_tstart_()
 _EXTERN_C_ void dtf_tend_()
 {
     dtf_tend();
+}
+
+_EXTERN_C_ void dtf_time_start_()
+{
+    dtf_time_start();
+}
+_EXTERN_C_ void dtf_time_end_()
+{
+    dtf_time_end();
 }
 
 void dtf_init_(const char *filename, char *module_name, int* ierr)

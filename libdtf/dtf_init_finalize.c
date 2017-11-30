@@ -130,6 +130,11 @@ static int check_config()
 			}
 		}
 		
+		if(cur_fpat->ignore_io){
+			cur_fpat = cur_fpat->next;
+			continue;
+		}
+		
 		if(cur_fpat->wrt == -1 || cur_fpat->rdr == -1 ){
 			DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Error parsing config file: file reader or writer not set for file %s", cur_fpat->fname);
 			ret = 1;
@@ -367,7 +372,7 @@ int load_config(const char *ini_name, const char *comp_name){
   }
 
 
-
+  gl_conf.log_ioreqs = 0;
   gl_conf.buffered_req_match = 0;
   gl_conf.do_checksum = 0;
   gl_conf.iodb_build_mode = IODB_BUILD_BLOCK; // default
@@ -474,6 +479,11 @@ int load_config(const char *ini_name, const char *comp_name){
             gl_conf.do_checksum = atoi(value);
             assert((gl_conf.do_checksum == 0) || (gl_conf.do_checksum == 1));
 
+        } else if(strcmp(param, "log_ioreqs") == 0){
+
+            gl_conf.log_ioreqs = atoi(value);
+            assert((gl_conf.log_ioreqs == 0) || (gl_conf.log_ioreqs == 1));
+
         }else if(strcmp(param, "explicit_match") == 0){
             assert(cur_fpat != NULL);
             cur_fpat->expl_mtch = atoi(value);
@@ -550,7 +560,11 @@ int load_config(const char *ini_name, const char *comp_name){
 				goto panic_exit;
 			}
 
-        } else {
+        }  else if(strcmp(param, "ignore_io") == 0){
+			cur_fpat->ignore_io = atoi(value);
+			assert(cur_fpat->ignore_io==0 ||  cur_fpat->ignore_io==1);
+			
+		} else {
             DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: unknown parameter %s.", param);
             goto panic_exit;
         }
@@ -583,6 +597,10 @@ int load_config(const char *ini_name, const char *comp_name){
 */
     cur_fpat = gl_fname_ptrns;
     while(cur_fpat != NULL){
+		if(cur_fpat->ignore_io){
+			cur_fpat = cur_fpat->next;
+			continue;
+		}
         if(cur_fpat->wrt == gl_my_comp_id){
             if(gl_comps[ cur_fpat->rdr ].connect_mode == DTF_UNDEFINED )
                gl_comps[ cur_fpat->rdr ].connect_mode = CONNECT_MODE_SERVER; // I am server
@@ -648,8 +666,7 @@ void finalize_comp_comm(){
        destroy_intercomm(gl_comps[i].id);
     }
 
-    err = MPI_Comm_free(&gl_comps[gl_my_comp_id].comm);
-    CHECK_MPI(err);
+    /*Intra-comp communicator will be destroyed in the dtf_finalize() function*/
 }
 
 void finalize_files()

@@ -11,6 +11,22 @@
 #define DTF_DATA_MSG_SIZE_LIMIT 256*1024*1024
 
 
+/*This structure is used for debugging purposes: 
+ * log ioreqs when file i/o is used,
+ * then compute the checksum of the user buffer*/
+typedef struct io_req_log{
+	unsigned        id;
+	int				var_id;
+	int 			ndims;
+	MPI_Datatype 	dtype;
+	int				rw_flag;
+	void 			*user_buf;
+	MPI_Offset      user_buf_sz;
+	MPI_Offset 		*start;
+	MPI_Offset 		*count;
+	struct io_req_log *next;
+}io_req_log_t;
+
 typedef struct io_req{
     unsigned int            id;
     int                     var_id;
@@ -122,4 +138,11 @@ void unpack_file_info(MPI_Offset bufsz, void *buf);
 void send_file_info(file_buffer_t *fbuf, int reader_root);
 void notify_complete_multiple(file_buffer_t *fbuf);
 void skip_match(file_buffer_t *fbuf, const char *filename, MPI_Comm comm, int writer_id);
+void log_ioreq(file_buffer_t *fbuf,
+			  int varid, int ndims,
+			  const MPI_Offset *start,
+			  const MPI_Offset *count,
+			  MPI_Datatype dtype,
+			  void *buf,
+			  int rw_flag);
 #endif // dtf_REQ_MATCH_H_INCLUDED

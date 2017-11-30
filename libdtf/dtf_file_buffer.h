@@ -50,6 +50,7 @@ typedef struct file_buffer{
                                       - finished being written (mode = DTF_IO_MODE_FILE)
                                     */
   int                       iomode;               /*Do normal File I/O or direct data transfer?*/
+  int                       ignore_io;
   /*Data distribution through request matching*/
   int                       root_writer;           /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
   int                       root_reader;
@@ -57,6 +58,7 @@ typedef struct file_buffer{
   int                       nwriters;               /*Number of processes writing to the file*/
   //TODO move ioreqs inside var structure
   struct io_req             *ioreqs;           /*Read or write I/O requests*/
+  struct io_req_log         *ioreq_log;        /*Used for debugging*/
   int                       explicit_match;   /*0 - request matching is initiated from inside of pnetcdf;
                                                 1 - request matching is initiated by the user*/
   unsigned int              rreq_cnt;
@@ -85,6 +87,7 @@ typedef struct fname_pattern{
     int  rdr;
     int  iomode;
     int  expl_mtch;
+    int  ignore_io;				/*disable I/O for this file*/
     struct fname_pattern *next;
 }fname_pattern_t;
 
