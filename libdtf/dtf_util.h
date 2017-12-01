@@ -70,7 +70,7 @@
 
 
 #define DTF_DBG(dbg_level, ...) do{  \
-    if(gl_verbose >= dbg_level){  \
+    if(gl_verbose >= dbg_level && gl_my_rank==1){  \
                 memset(_buff,0,1024);                         \
                 snprintf(_buff,1024,__VA_ARGS__);             \
                 fprintf(stdout, "%s %d [%.3f]: %s\n", gl_my_comp_name, gl_my_rank, MPI_Wtime() - gl_stats.walltime, _buff);  \

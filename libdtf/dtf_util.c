@@ -960,7 +960,7 @@ void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstb
         for(i = 0; i < nelems; i++)
             ((double*)dstbuf)[i] = (double)(((float*)srcbuf)[i]);
     } else if(type1 == MPI_DOUBLE){
-        assert(type2 = MPI_FLOAT);
+        assert(type2 == MPI_FLOAT);
         for(i = 0; i < nelems; i++)
             ((float*)dstbuf)[i] = (float)(((double*)srcbuf)[i]);
     }

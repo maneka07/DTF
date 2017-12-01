@@ -843,13 +843,16 @@ _EXTERN_C_ void dtf_log_ioreq(const char *filename,
                                           void *buf,
                                           int rw_flag)
 {
+	int i;
 	if(!lib_initialized) return;
 	if(!gl_conf.log_ioreqs) return;
 	
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
     if(fbuf->iomode != DTF_IO_MODE_FILE) return;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "log ioreq");
+    DTF_DBG(VERBOSE_DBG_LEVEL, "log ioreq for var %d", varid);
+    for(i=0; i < ndims; i++)
+		DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", start[i], count[i]);
     log_ioreq(fbuf, varid, ndims, start, count, dtype, buf, rw_flag);
     
 }

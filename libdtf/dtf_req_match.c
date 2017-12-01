@@ -874,7 +874,7 @@ io_req_t *new_ioreq(int id,
 
     if( (rw_flag == DTF_WRITE) && gl_conf.do_checksum && (dtype == MPI_DOUBLE || dtype == MPI_FLOAT)){
         ioreq->checksum = compute_checksum(buf, ndims, count, dtype);
-        DTF_DBG(VERBOSE_DBG_LEVEL, "checksum %.4f", ioreq->checksum);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "chsum for req %d is %.4f", ioreq->id, ioreq->checksum);
     } else
         ioreq->checksum = 0;
     gl_stats.nioreqs++;
@@ -1708,7 +1708,6 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
             double chsum = compute_checksum(ioreq->user_buf, var->ndims, ioreq->count, ioreq->dtype);
             if(chsum != ioreq->checksum)
                 DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: ioreq checksum does not match with the old value: new %.4f, old %.4f", chsum, ioreq->checksum);
-
         }
 
         if(var->ndims == 0){
@@ -1849,7 +1848,6 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                 nblocks_written++;
 
                 DTF_DBG(VERBOSE_DBG_LEVEL, "total data to getput %lld (of nelems %lld)", fit_nelems, nelems);
-
                 /*Copy data*/
                 if(var->ndims == 0){
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Copy scalar variable");
@@ -1860,7 +1858,7 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                         if( (new_count[i] != 1) && (new_count[i] < ioreq->count[i]))
                             cnt_mismatch++;
 
-                    if(cnt_mismatch <= 1){ //it's a continious block of memory
+                    if(var->max_dim==0 && cnt_mismatch==0){//it's a continious block of memory
                         int req_el_sz;
                         MPI_Offset start_cpy_offt;
                         MPI_Type_size(ioreq->dtype, &req_el_sz);
@@ -1876,10 +1874,18 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                         }else{
                             memcpy(sbuf+sofft, (unsigned char*)ioreq->user_buf+start_cpy_offt, fit_nelems*def_el_sz);
                         }
+                        if(gl_conf.do_checksum){
+							double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
+							DTF_DBG(VERBOSE_ERROR_LEVEL, "chsum contin for req %d is %.4f", ioreq->id, chsum);
+						}
                     } else {
 
                         get_put_data(var, ioreq->dtype, ioreq->user_buf, ioreq->start,
                                            ioreq->count, new_start, new_count, sbuf+sofft, DTF_READ, type_mismatch);
+                        if(gl_conf.do_checksum){
+							double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
+							DTF_DBG(VERBOSE_ERROR_LEVEL, "chsum getput for req %d is %.4f", ioreq->id, chsum);
+						}
                     }
                 }
 
@@ -2037,32 +2043,36 @@ static void recv_data_rdr(void* buf, int bufsz)
         } 
         assert(nelems <= ioreq->user_buf_sz - ioreq->get_sz);
 
-       DTF_DBG(VERBOSE_DBG_LEVEL, "Will get %d elems for var %d", nelems, var->id);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Will get %d elems for var %d", nelems, var->id);
         if(var->ndims == 0){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Copy scalar variable");
             get_put_data(var, ioreq->dtype, ioreq->user_buf, NULL,
                             NULL, NULL, NULL, data, DTF_WRITE, type_mismatch);
-        } else if(cnt_mismatch <= 1){
+        } else if(var->max_dim==0 && cnt_mismatch==0 ){ //continious block of memory
             MPI_Offset start_cpy_offt;
                 if(bt_bench)
                     start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * def_el_sz;
                 else
-                start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * req_el_sz;
+					start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * req_el_sz;
             if(type_mismatch){
                 convertcpy(var->dtype, ioreq->dtype, data, (unsigned char*)ioreq->user_buf + start_cpy_offt, nelems);
             } else
                 memcpy((unsigned char*)ioreq->user_buf + start_cpy_offt, data, nelems*def_el_sz);
+			//~ if(gl_conf.do_checksum){
+				//~ double chsum = compute_checksum((unsigned char*)ioreq->user_buf + start_cpy_offt, var->ndims, count, ioreq->dtype);
+				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "chsum contin for req %d is %.4f", ioreq->id, chsum);
+			//~ }
         } else{
             /*Copy from rbuf to user buffer*/
             get_put_data(var, ioreq->dtype, ioreq->user_buf, ioreq->start,
-                                       ioreq->count, start, count, data, DTF_WRITE, type_mismatch);
+                                       ioreq->count, start, count, data, DTF_WRITE, type_mismatch);      
         }
         gl_stats.nbl++;
         offt += nelems*def_el_sz +(nelems*def_el_sz)%sizeof(MPI_Offset);
             if(bt_bench)
                 ioreq->get_sz += (MPI_Offset)(nelems*def_el_sz);
             else
-            ioreq->get_sz += (MPI_Offset)(nelems*req_el_sz);
+				ioreq->get_sz += (MPI_Offset)(nelems*req_el_sz);
 
 
         DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, ioreq->var_id, (int)ioreq->get_sz, (int)ioreq->user_buf_sz);
