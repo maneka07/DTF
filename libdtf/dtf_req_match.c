@@ -671,11 +671,6 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
     
     double t_st = MPI_Wtime();
     
-    if( (gl_conf.iodb_build_mode == IODB_BUILD_RANK) && fbuf->done_matching_flag){
-		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: discard new ioreqs from %d because already finished matching", rank);
-		return;
-	}
-    
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start parsing reqs for file %s", fbuf->file_path);
     if(comm == gl_comps[fbuf->reader_id].comm)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Reqs are from reader");
@@ -1400,22 +1395,6 @@ static void reset_fbuf_match(file_buffer_t *fbuf)
     fbuf->is_matching_flag = 0;
     fbuf->mst_info->nrranks_completed = 0;
 }
-
-
-void notify_complete_multiple(file_buffer_t *fbuf)
-{
-    /*Barrier on upper level*/
-    int i;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify writer masters that completed multiple for %s", fbuf->file_path);
-    if(fbuf->root_reader == gl_my_rank){
-        for(i = 0; i < fbuf->mst_info->nmasters; i++){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Notify mst %d", fbuf->mst_info->masters[i]);
-            int err = MPI_Send(fbuf->file_path,MAX_FILE_NAME, MPI_CHAR, fbuf->mst_info->masters[i], DONE_MULTIPLE_FLAG, gl_comps[fbuf->writer_id].comm);
-            CHECK_MPI(err);
-        }
-    }
-}
-
 
 void skip_match(file_buffer_t *fbuf, const char *filename, MPI_Comm comm, int writer_id)
 {
@@ -2261,26 +2240,14 @@ static void print_recv_msg(int tag)
         case IO_DATA_REQ_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_DATA_REQ_TAG");
             break;
-        case DONE_MULTIPLE_FLAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag DONE_MULTIPLE_FLAG");
-            break;
         case READ_DONE_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_TAG");
             break;
-        //~ case IO_CLOSE_FILE_TAG:
-            //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_CLOSE_FILE_TAG");
-            //~ break;
-        //~ case IO_OPEN_FILE_FLAG:
-            //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_OPEN_FILE_FLAG");
-            //~ break;
         case FILE_INFO_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_TAG");
             break;
         case FILE_INFO_REQ_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_REQ_TAG");
-            break;
-        case ROOT_MST_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag ROOT_MST_TAG");
             break;
         case MATCH_DONE_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag MATCH_DONE_TAG");
@@ -2514,24 +2481,6 @@ void progress_io_matching()
                     
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
                     fbuf->done_matching_flag = 1;
-                    if(gl_conf.iodb_build_mode == IODB_BUILD_RANK)
-						cancel_send_ioreqs();
-/*
-//                    if(fbuf->rdr_closed_flag){
-////                        DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up all reqs and dbs");
-//                        assert(fbuf->rreq_cnt == 0);
-//
-//                        delete_ioreqs(fbuf);
-//
-//                        if(fbuf->mst_info->is_master_flag){
-//                            //Check that I don't have any read reqs incompleted
-//                            assert(fbuf->mst_info->iodb->nritems == 0);
-//                            //Clean my iodb
-//                            clean_iodb(fbuf->mst_info->iodb);
-//                        }
-                    //}
-                    */
-
                     break;
                 case READ_DONE_CONFIRM_TAG:
 					err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, READ_DONE_CONFIRM_TAG, gl_comps[comp].comm, &status);
@@ -2541,68 +2490,6 @@ void progress_io_matching()
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Recv done match confirm tag for %s from %d", fbuf->file_path, src);
                     fbuf->done_match_confirm_flag = 1;
 					break;
-                //~ case IO_CLOSE_FILE_TAG:
-                    //~ err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, IO_CLOSE_FILE_TAG, gl_comps[comp].comm, &status);
-                    //~ CHECK_MPI(err);
-                    //~ fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-                    //~ assert(fbuf != NULL);
-                    //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Recv close file tag for %s from %d", fbuf->file_path, src);
-                    //~ //assert(!fbuf->rdr_closed_flag); //check that haven't received that before
-
-                    //~ if(gl_my_rank == fbuf->root_writer){
-                        //~ //DTF_DBG(VERBOSE_DBG_LEVEL, "Notify other masters that readers are closing the file");
-                        //~ //notify_masters(fbuf, IO_CLOSE_FILE_TAG);
-
-                        //~ //TODO for multi-cycle version will need to figure out with these states and notifications
-                        //~ //note: this should be set when opening or creating the file!
-                        //~ //if(fbuf->iomode == DTF_IO_MODE_FILE)
-                          //~ //  fbuf->fready_notify_flag = RDR_HASNT_OPENED;
-                    //~ }
-                    //~ if(fbuf->mst_info->is_master_flag){
-                        //~ t_st = MPI_Wtime();
-                        //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that they can close the file %s", fbuf->file_path);
-                        //~ notify_workgroup(fbuf, IO_CLOSE_FILE_TAG);
-                        //~ gl_stats.master_time += MPI_Wtime() - t_st;
-                    //~ }
-                
-                    //~ fbuf->rdr_closed_flag = 1;
-
-                    //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Close flag set for file %s", fbuf->file_path);
-//~ //                    if(fbuf->done_matching_flag){
-//~ //                        if(fbuf->mst_info->is_master_flag){
-//~ //                            /*Check that I don't have any read reqs incompleted*/
-//~ //                            assert(fbuf->mst_info->iodb->nritems == 0);
-//~ //                            /*Clean my iodb*/
-//~ //                            clean_iodb(fbuf->mst_info->iodb);
-//~ //                        }
-//~ //                         /*Can delete write requests only if all ps-s have finished
-//~ //                         matching.*/
-//~ //                        delete_ioreqs(fbuf);
-//~ //                    }
-                    //~ break;
-                case ROOT_MST_TAG:
-                    src = status.MPI_SOURCE;
-                    err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, ROOT_MST_TAG, gl_comps[comp].comm, &status);
-                    CHECK_MPI(err);
-                    DTF_DBG(VERBOSE_DBG_LEVEL,   "Receive ROOT_MST_TAG notif for %s", filename);
-					
-					{
-						file_info_t *finfo = dtf_malloc(sizeof(file_info_t));
-						assert(finfo != NULL);
-						strcpy(finfo->filename, filename);
-						finfo->root_writer = src;
-						finfo->prev = NULL;
-						finfo->next = NULL;
-						if(gl_finfo_list == NULL)
-							gl_finfo_list = finfo;
-						else{ 
-							finfo->next = gl_finfo_list;
-							finfo->next->prev = finfo;
-							gl_finfo_list = finfo;
-						}
-					}
-					
-                    break;
                 case FILE_READY_TAG:
                     err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, FILE_READY_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(err);
@@ -2612,42 +2499,6 @@ void progress_io_matching()
                     assert(fbuf != NULL);
                     fbuf->is_ready = 1;
                     break;
-                case DONE_MULTIPLE_FLAG:
-                    err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, DONE_MULTIPLE_FLAG, gl_comps[comp].comm, &status);
-                    CHECK_MPI(err);
-                    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-                    assert(fbuf != NULL);
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "Recv done multiple tag for %s from %d", fbuf->file_path, src);
-
-                    if(fbuf->mst_info->is_master_flag){
-                        t_st = MPI_Wtime();
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that multiple matching for %s completed", fbuf->file_path);
-                        /*Tell other writer ranks that they can complete matching*/
-                        notify_workgroup(fbuf, DONE_MULTIPLE_FLAG);
-                        gl_stats.master_time += MPI_Wtime() - t_st;
-                    }
-                    fbuf->done_matching_flag = 1;
-                    fbuf->done_match_multiple_flag = 1;
-                    break;
-                //~ case IO_OPEN_FILE_FLAG:
-                    //~ err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, IO_OPEN_FILE_FLAG, gl_comps[comp].comm, &status);
-                    //~ CHECK_MPI(err);
-                    //~ fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-                    //~ assert(fbuf != NULL);
-                    //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Recv open file tag for %s from %d", fbuf->file_path, src);
-                    //~ fbuf->rdr_closed_flag = 0;
-                    //~ if(fbuf->mst_info->is_master_flag){
-                        //~ t_st = MPI_Wtime();
-                        //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Notify workgroup");
-                        //~ notify_workgroup(fbuf, IO_OPEN_FILE_FLAG);
-
-                        //~ if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
-							//~ fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;									
-						
-                        //~ gl_stats.master_time += MPI_Wtime() - t_st;
-                    //~ }
-                    //~ break;
-                default:
                     DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown tag %d", status.MPI_TAG);
                     assert(0);
             }

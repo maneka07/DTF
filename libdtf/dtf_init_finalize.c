@@ -457,8 +457,6 @@ int load_config(const char *ini_name, const char *comp_name){
                gl_conf.iodb_build_mode = IODB_BUILD_VARID;
             else if(strcmp(value, "range") == 0)
                 gl_conf.iodb_build_mode = IODB_BUILD_BLOCK;
-            else if(strcmp(value, "all") == 0)
-				 gl_conf.iodb_build_mode = IODB_BUILD_RANK;
             else {
                 DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown iodb build mode (%s)", value);
                 MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
@@ -486,6 +484,7 @@ int load_config(const char *ini_name, const char *comp_name){
 
         }else if(strcmp(param, "explicit_match") == 0){
             assert(cur_fpat != NULL);
+            //TODO NOW remove explicit match!!!!!
             cur_fpat->expl_mtch = atoi(value);
             
             if(cur_fpat->expl_mtch != 0 && cur_fpat->expl_mtch != 1){

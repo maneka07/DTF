@@ -14,21 +14,17 @@
 
 #define FILE_READY_TAG      0       /*writer rank -> reader rank*/
 #define IO_DATA_REQ_TAG     1       /*master -> writer*/
-#define DONE_MULTIPLE_FLAG  2
-#define IO_DATA_TAG         3       /*writer -> reader*/
-#define READ_DONE_TAG       4
-#define SKIP_MATCH_TAG   	5      
-#define SYNC_COMP_TAG       6
-#define FILE_INFO_TAG       7
-#define FILE_INFO_REQ_TAG   8
-#define ROOT_MST_TAG        9
-#define MATCH_DONE_TAG      10
-#define IO_REQS_TAG         11
-#define READ_DONE_CONFIRM_TAG	12
+#define IO_DATA_TAG         2       /*writer -> reader*/
+#define READ_DONE_TAG       3
+#define SKIP_MATCH_TAG   	4      
+#define FILE_INFO_TAG       5
+#define FILE_INFO_REQ_TAG   6
+#define MATCH_DONE_TAG      7
+#define IO_REQS_TAG         8
+#define READ_DONE_CONFIRM_TAG	9
 
 #define IODB_BUILD_VARID    0  /*Distribute ioreqs based on var id*/
 #define IODB_BUILD_BLOCK    1  /*Distribute ioreqs by dividing var to blocks*/
-#define IODB_BUILD_RANK     2  /*Each master collects all ioreqs from all writers. Reader sends its reqs to a predefined master.*/
 
 #define ENQUEUE_ITEM(item, queue) do{\
     if(queue == NULL)   \
@@ -55,11 +51,10 @@
 } while(0)
 
 #define VERBOSE_ERROR_LEVEL   0
-#define VERBOSE_WARNING_LEVEL 1
-#define VERBOSE_DBG_LEVEL     2
-#define VERBOSE_ALL_LEVEL     3
+#define VERBOSE_DBG_LEVEL     1
+#define VERBOSE_ALL_LEVEL     2
 
-#define DTF_TIMEOUT       1200 /* it's long because letkf and obs are hanging for a long time before they get data from scale*/
+#define DTF_TIMEOUT       1200 
 #define DTF_UNDEFINED      -1
 
 #include <string.h>
@@ -70,7 +65,7 @@
 
 
 #define DTF_DBG(dbg_level, ...) do{  \
-    if(gl_verbose >= dbg_level && gl_my_rank==1){  \
+    if(gl_verbose >= dbg_level){  \
                 memset(_buff,0,1024);                         \
                 snprintf(_buff,1024,__VA_ARGS__);             \
                 fprintf(stdout, "%s %d [%.3f]: %s\n", gl_my_comp_name, gl_my_rank, MPI_Wtime() - gl_stats.walltime, _buff);  \

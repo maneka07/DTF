@@ -144,21 +144,6 @@ void print_stats()
     
     MPI_Barrier(MPI_COMM_WORLD);
 	
-	//~ if(gl_my_rank == 0){
-		
-		//~ double start;
-		//~ //make one component receive message from another to sync them
-		
-		//~ if(gl_my_comp_id == 0){
-			//~ err = MPI_Recv(&start, 1, MPI_DOUBLE, 0, SYNC_COMP_TAG, gl_comps[1].comm, MPI_STATUS_IGNORE);
-			//~ CHECK_MPI(err);
-		//~ } else if(gl_my_comp_id == 1){
-			//~ err = MPI_Send(&gl_stats.walltime, 1, MPI_DOUBLE, 0, SYNC_COMP_TAG, gl_comps[0].comm);
-			//~ CHECK_MPI(err);
-		//~ }
-			
-	//~ }
-	
     walltime = MPI_Wtime() - gl_stats.walltime;
     MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &nranks);
 
@@ -204,10 +189,10 @@ void print_stats()
 
   //  if(gl_stats.nbl > 0)
     //    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: Out of %u blocks handled %u noncontig blocks", gl_stats.nbl, gl_stats.ngetputcall);
-  //  if(gl_stats.accum_dbuff_sz > 0){
+    if(gl_stats.accum_dbuff_sz > 0){
     //    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering time: %.5f: %.4f", gl_stats.accum_dbuff_time,(gl_stats.accum_dbuff_time/gl_stats.timer_accum)*100);
-      //  DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering size: %lu",  gl_stats.accum_dbuff_sz);
-   // }
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: buffering size: %lu",  gl_stats.accum_dbuff_sz);
+    }
     
 
     if(gl_stats.timer_accum > 0)
@@ -413,29 +398,17 @@ void close_file(file_buffer_t *fbuf)
 
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 			int finalize = 1;
-	
-            /* cannot close file untill the reader closed it as well.
-             then we can clean up all the requests etc. */
-            //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Reader hasn't closed the file yet. Waiting...");
-            //~ while( !fbuf->rdr_closed_flag)
-                //~ progress_io_matching();
             DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
             delete_ioreqs(fbuf, finalize);
             if(fbuf->mst_info->iodb != NULL)
                 finalize_iodb(fbuf);
 
             /*File is opened and closed multiple times in SCALE-LETKF
-              but it's the same set of processes, hence, don't delete the data.
+              but it's the same set of processes, hence, don't delete the master related data.
             */
-            /*dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
-            dtf_free(fbuf->mst_info, sizeof(master_info_t));
-            fbuf->mst_info = NULL;
-            fbuf->root_reader = -1;
-            fbuf->root_writer = -1;*/
+            
         }
     } else if (fbuf->reader_id == gl_my_comp_id){
-        //if((fbuf->iomode == DTF_IO_MODE_MEMORY) && (gl_conf.distr_mode == DISTR_MODE_REQ_MATCH)){
-
             assert(fbuf->rreq_cnt == 0);
             assert(fbuf->wreq_cnt == 0);
 
@@ -444,24 +417,9 @@ void close_file(file_buffer_t *fbuf)
 				while(!fbuf->done_match_confirm_flag){
 					progress_io_matching();
 				}
-                //~ int i;
-                //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer masters readers have closed the file");
-                //~ for(i = 0; i < fbuf->mst_info->nmasters; i++){
-                    //~ /*Notify the root writer I am closing the file*/
-                    //~ err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->mst_info->masters[i], IO_CLOSE_FILE_TAG, gl_comps[fbuf->writer_id].comm);
-                    //~ CHECK_MPI(err);
-                //~ }
+
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Done");
             }
-            /*dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
-            dtf_free(fbuf->mst_info, sizeof(master_info_t));
-            fbuf->mst_info = NULL;
-            fbuf->root_reader = -1;
-            fbuf->root_writer = -1;*/
-//            /*Reader never needs these flags but set them just in case*/
-//            fbuf->fclosed_flag = 1;
-//            fbuf->fclose_notify_flag = 1;
-        //}
     }
     
     //delete_file_buffer(fbuf);

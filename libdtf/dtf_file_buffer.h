@@ -63,7 +63,6 @@ typedef struct file_buffer{
                                                 1 - request matching is initiated by the user*/
   unsigned int              rreq_cnt;
   unsigned int              wreq_cnt;
-  int                       done_match_multiple_flag;   /*Set to 1 when reader notifies writer*/
   int                       done_matching_flag;     	/*Flag used to complete matching requests*/
   int                       done_match_confirm_flag;	/*Is set by the reader when the writer confirms that it finished matching.
 														  Needed for multi-iterative programs to prevent the reader from sending

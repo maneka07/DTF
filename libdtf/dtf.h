@@ -35,6 +35,18 @@ _EXTERN_C_ int  dtf_match_io(const char *filename, int ncid, int intracomp_io_fl
 _EXTERN_C_ int  dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_flag, int it );
 _EXTERN_C_ void dtf_skip_match(const char *filename, MPI_Comm comm);
 
+/*     Fortran interfaces    */
+void dtf_tend_();
+void dtf_tstart_();
+void dtf_time_end_();
+void dtf_time_start_();
+void dtf_init_(const char *filename, char *module_name, int* ierr);
+void dtf_finalize_(int* ierr);
+void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int *ierr);
+void dtf_print_(const char *str);
+void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void* data);
+void dtf_skip_match_(const char *filename, MPI_Fint *fcomm);
+
 /*Interfaces used by PnetCDF*/
 _EXTERN_C_ void dtf_open(const char* filename, MPI_Comm comm);
 _EXTERN_C_ void dtf_close(const char* filename);
@@ -60,23 +72,8 @@ _EXTERN_C_ void dtf_log_ioreq(const char *filename,
                                           void *buf,
                                           int rw_flag);
 _EXTERN_C_ int dtf_match_ioreqs(const char* filename);
-//_EXTERN_C_ void dtf_match_io_all(int rw_flag);
 _EXTERN_C_ void dtf_enddef(const char *filename);
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data);
 _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid);
 
-/*     Fortran interfaces    */
-void dtf_tend_();
-void dtf_tstart_();
-void dtf_time_end_();
-void dtf_time_start_();
-void dtf_init_(const char *filename, char *module_name, int* ierr);
-void dtf_finalize_(int* ierr);
-void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int *ierr);
-//void dtf_match_io_all_(int *rw_flag);
-void dtf_print_(const char *str);
-void dtf_complete_multiple_(const char *filename, int *ncid);
-void dtf_match_multiple_(int *ncid);
-void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void* data);
-void dtf_skip_match_(const char *filename, MPI_Fint *fcomm);
 #endif // DTF_H_INCLUDED

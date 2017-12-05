@@ -3,92 +3,139 @@
 TODO: general description of what the middleware does
 
 
-******************* USAGE *************************
+******************* BASIC USAGE *************************
 
-1) Before running applications set global variable DTF_GLOBAL_PATH to some path accessible by all processes:
+1) Add path to the provided (modified) version of PnetCDF and the DTF library
+   when compiling/linking the library. DTF library is linked as: -L$(PATH_TO_DTF) -ldtf.
+
+* C users:
+   #include "dtf.h" 
+
+* Fortran users: import DTF functions into program using the word "external", e.g.:
+
+  external dtf_init
+
+
+2) Modify each component: 
+   - Include "dtf.h" 
+   - Add dtf_init() and dtf_finalize() (see description in the API description section) in each component. 
+   - add dtf_match_io() in corresponding place in each component
+
+3) Before run set set global variable DTF_GLOBAL_PATH to some path accessible by all processes in all components:
 
 	e.g.:  export DTF_GLOBAL_PATH=/some/path/in/PFS
 
-2) Include the DTF header to your source code:
+******************* ENVIROMENT VARIABLES *************************
 
-	#include "dtf.h"
-
-3) Other params that can be set:
-
-*** DTF_VERBOSE_LEVEL: how much information to print out (default: 1). Note: not to pollute the logs, only rank 0 prints messages. 
+*** DTF_GLOBAL_PATH - should be set to a directory visible to all processes. 
+    Used to establish connection via a port between the components.
+*** DTF_VERBOSE_LEVEL: how much information to print out (default 0). 
 
 	Possible values:
-	0 - no diagnostic messages
-	1 - errors and warnings 
-	2 - debug information
-	3 - everything
+	0 - only errors and warnings
+	1 - debug information
+	2 - extended debug information 
+
+*** DTF_SCALE - special flag for SCALE-LETKF, should be set to 1 for SCALE-LETKF executions (default 0)
+*** SCALE_ENSEMBLE_SZ - number of processes in one ensemble in SCALE-LETKF. Should be set to 
+    corresponding number in order to exclude the last ensemble (mean) from calculating the timing statistics.
+*** DTF_IGNORE_ITER - used in combination with dtf_match_io_v2(). If set, any match function 
+    for iterations up this iteration will be ignored. Used in SCALE-LETKF. 
+*** DTF_INI_FILE - instead of passing the DTF configuration file via dtf_init() user may set 
+    the path to the file using this variable.
+
+*** MAX_WORKGROUP_SIZE - number of processes I/O requests from which are handled by one master 
+    (i.e. number of masters in the execution = number of processes per component / MAX_WORKGROUP_SIZE) (default 64)
 
 *** DTF_DETECT_OVERLAP - should master process detect write overlap by different processes? 1 -yes, 0 (default) - no
 
+******************** USER API *****************************
 
+***   int dtf_init(char* filename, char* module_name)
 
-******************** C API *****************************
-=================APPLICATION API========================
-
->>>>   int dtf_init(char* filename, char* module_name): Library initialization 
-
-PARAMETERS:
-
-	[in] filename - path to the DTF configuration file
-	[in] module_name    - name of the component calling the function. 
-
-RETURN: 
-	0 - successfully initialized, otherwise 1
-NOTE: 
+DESCRIPTION: 
+	Library initialization function. 
 	Every component should call this function. 
         Init function should be called after MPI_Init. 
-	The function is not thread-safe.
 
->>>>  int dtf_finalize(): Library finalization
+PARAMETERS:
+	[in] filename - path to the DTF configuration file
+	[in] module_name - name of the component calling the function. 
+             This name should be listed in the configuration file.              
+RETURN: 
+	0 - successfully initialized, otherwise 1
+
+NOTE:
+	Fortran API has an additional parameter error (integer):
+        call dtf_init('../dtf.ini'//CHAR(0), 'letkf'//CHAR(0), error)	
+
+***  int dtf_finalize():
+
+DESCRIPTION:
+ 	Library finalization. Should be called before MPI_Finalize().
 
 PARAMETERS:
 	None
 RETURN:
 	0 - successfully initialized, otherwise 1
 NOTE: 
-	Every component should call this function. 
-        The function should be called before MPI_Finalize. 
-	The function is not thread-safe.	
+	Fortran API has an additional parameter error (integer):
+        call dtf_finalize(error)	
+
+*** int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )
+    int dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_flag, int it )
+
+DESCRIPTION:
+
+	Data transfer function. Should be called in each component participating in 
+        the data transfer. For performance reasons it is recommended to call this 
+        function as few times as possible, ideally, one time per file right after the 
+        PnetCDF I/O calls but before the file is closed. In case, several files are 
+        transfered between the components, the order in which the matching functions 
+        are called should be the same in both components. I.e., if component 1 first 
+	calls the match function for file A and then, file B, component 2 should call
+	the matching function in the same order. 
+	dtf_match_io_v2() is used in combination with DTF_IGNORE_ITER. Any match functions 
+	for iterations up to the iteration set via DTF_IGNORE_ITER will be ignored (Used
+	in SCALE-LETKF).
 
 
-***************** USAGE IN FORTRAN *******************
+PARAMETERS:
+	[IN] filename - name of the file for which the data transfer should be performed. 
+	     File must be listed in the DTF configuration file.
+	[IN] ncid - file ncid. Not necessary, -1 may be passed. 
+	[IN] intracomp_io_flag - if set to 1, the data transfer is performed not between 
+	     components but within the same component. Used in cases when writer component tries
+	     to read the file it's currently writing to.
+	[IN] it - current iteration
+	
+RETURN:
+	Always 0. If an error occurs, the program aborts.
+NOTE: 
+	Intracomponent data transfer has not been tested for a while, no guaranty 
+	it still works. 
 
-E.g.: 
 
-	call dtf_init('../dtf.ini'//CHAR(0), 'letkf'//CHAR(0), error)
 
-************** SAMPLE CONFIG FILE ************************
-[INFO]
-ncomp=3
-comp_name="scale"
-comp_name="letkf"
-comp_name="obs"            
+*** void dtf_print(const char *str)
 
-[FILE]
-filename='bla.nc'
-writer="scale"
-reader="letkf"
-alias='blah'
-mode="memory"
+DESCRIPTION:
+	Print a message. 
 
-[FILE]
-filename='bla'      
-writer="obs"
-reader="letkf"
-reader="scale"
-alias='blah'
-mode="file"
+PARAMETERS:
+	[IN] str - string to print.
 
-[FILE]
-filename='blah'
-writer="letkf"
-reader="obs"
-mode="memory"
+*** void dtf_time_start()
+    void dtf_time_end()
+
+DESCRIPTION:
+	Timer functions. May be put around whatever code the user wants to time.
+	The value is printed out at the end of the execution. 
+	If used multiple times during the execution, the accumulative time will 
+	be printed in the end. 
+
+
+
 
 
 
