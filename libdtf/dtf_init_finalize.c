@@ -320,7 +320,6 @@ static void destroy_intercomm(int comp_id){
 void clean_config(){
   int i;
   fname_pattern_t *pat = gl_fname_ptrns;
-  //TODO more?
   
   while(pat != NULL){
 	 if(pat->slink_name != NULL)
@@ -481,16 +480,6 @@ int load_config(const char *ini_name, const char *comp_name){
 
             gl_conf.log_ioreqs = atoi(value);
             assert((gl_conf.log_ioreqs == 0) || (gl_conf.log_ioreqs == 1));
-
-        }else if(strcmp(param, "explicit_match") == 0){
-            assert(cur_fpat != NULL);
-            //TODO NOW remove explicit match!!!!!
-            cur_fpat->expl_mtch = atoi(value);
-            
-            if(cur_fpat->expl_mtch != 0 && cur_fpat->expl_mtch != 1){
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: Value for explicit match should be 0 or 1");
-                goto panic_exit;
-            }
 
         } else if(strcmp(param, "filename") == 0){
             assert(cur_fpat != NULL);
@@ -659,7 +648,7 @@ panic_exit:
 
 void finalize_comp_comm(){
 
-    int i, err;
+    int i;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finalizing communicators");
     for(i = 0; i<gl_ncomp; i++){
        destroy_intercomm(gl_comps[i].id);

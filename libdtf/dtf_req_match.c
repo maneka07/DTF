@@ -6,30 +6,18 @@
 
 static void send_data_wrt2rdr(void* buf, int bufsz);
 
-io_req_t *find_io_req(io_req_t *list, int var_id)
-{
-    io_req_t *ioreq = list;
-    while(ioreq != NULL){
-        if(ioreq->var_id == var_id)
-            break;
-        ioreq = ioreq->next;
-    }
-    return ioreq;
-}
-
-
-void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
+void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
 {
 	DTF_DBG(VERBOSE_ALL_LEVEL, "Delete req %d, cur wreqs %d, rreqs %d", (*ioreq)->id,
 			fbuf->wreq_cnt, fbuf->rreq_cnt);
 
-    dtf_var_t *var = fbuf->vars[(*ioreq)->var_id];
+    dtf_var_t *var = fbuf->vars[varid];
     
     if( (*ioreq)->is_buffered)
         dtf_free((*ioreq)->user_buf, (size_t) (*ioreq)->user_buf_sz);
 
-    if(*ioreq == fbuf->ioreqs)
-        fbuf->ioreqs = fbuf->ioreqs->next;
+    if(*ioreq == var->ioreqs)
+        var->ioreqs = var->ioreqs->next;
     if((*ioreq)->next != NULL)
         (*ioreq)->next->prev = (*ioreq)->prev;
     if( (*ioreq)->prev != NULL)
@@ -52,23 +40,28 @@ void delete_ioreq(file_buffer_t *fbuf, io_req_t **ioreq)
 void delete_ioreqs(file_buffer_t *fbuf, int finalize)
 {
     io_req_t *ioreq, *tmp;
+    int varid;
+    dtf_var_t *var;
     DTF_DBG(VERBOSE_ALL_LEVEL, "Delete io requests for file %s", fbuf->file_path);
-
-    ioreq = fbuf->ioreqs;
-    while(ioreq != NULL){
-		if(ioreq->is_permanent && !finalize){
-			ioreq = ioreq->next;
-			continue;
+	for(varid=0; varid < fbuf->nvars; varid++){
+		var = fbuf->vars[varid];
+		ioreq = var->ioreqs;
+		while(ioreq != NULL){
+			if(ioreq->is_permanent && !finalize){
+				ioreq = ioreq->next;
+				continue;
+			}
+			tmp = ioreq->next;
+			delete_ioreq(fbuf, varid, &ioreq);
+			ioreq = tmp; 
 		}
-		tmp = ioreq->next;
-        delete_ioreq(fbuf, &ioreq);
-        ioreq = tmp; //fbuf->ioreqs;
-    }
+		if(finalize)
+			assert(var->ioreqs == NULL);
+	}
 
     if(finalize){
 		assert(fbuf->rreq_cnt == 0);
 		assert(fbuf->wreq_cnt == 0);
-		assert(fbuf->ioreqs == NULL);
 	}
 }
 
@@ -860,7 +853,6 @@ io_req_t *new_ioreq(int id,
     ioreq->next = NULL;
     ioreq->sent_flag = 0;
     ioreq->id = id;
-    ioreq->var_id = var_id;
     ioreq->get_sz = 0;
     ioreq->prev = NULL;
     ioreq->dtype = dtype;
@@ -869,20 +861,19 @@ io_req_t *new_ioreq(int id,
 
     if( (rw_flag == DTF_WRITE) && gl_conf.do_checksum && (dtype == MPI_DOUBLE || dtype == MPI_FLOAT)){
         ioreq->checksum = compute_checksum(buf, ndims, count, dtype);
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "chsum for req %d is %.4f", ioreq->id, ioreq->checksum);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "chsum for req %d is %.4f", ioreq->id, ioreq->checksum);
     } else
         ioreq->checksum = 0;
     gl_stats.nioreqs++;
     return ioreq;
 }
 
-//TODO for writing scalar var only one ps will save an ioreq
 /*The metadata is distributed among masters based on the var id.*/
 void send_ioreqs_by_var(file_buffer_t *fbuf, int intracomp_match)
 {
     dtf_var_t *var = NULL;
     io_req_t *ioreq;
-    int mst = 0;
+    int mst = 0, varid;
     int nrreqs = 0;
     unsigned char **sbuf;
     size_t *bufsz, *offt;
@@ -891,7 +882,7 @@ void send_ioreqs_by_var(file_buffer_t *fbuf, int intracomp_match)
     int idx, err, flag;
     MPI_Request *reqs;
     
-    if(fbuf->ioreqs == NULL)
+    if(fbuf->rreq_cnt == 0 && fbuf->wreq_cnt == 0)
         return;
     reqs = dtf_malloc(nmasters * sizeof(MPI_Request));
     assert(reqs != NULL);
@@ -911,24 +902,28 @@ void send_ioreqs_by_var(file_buffer_t *fbuf, int intracomp_match)
     }
 
     nrreqs = 0;
-    ioreq = fbuf->ioreqs;
-    while(ioreq != NULL){
-        if(ioreq->sent_flag){
-            //All the following reqs should have been sent already
-            break;
-        }
-        data_to_send = 1;
+    for(varid=0; varid < fbuf->nvars; varid++){
+		var = fbuf->vars[varid];
+		ioreq = var->ioreqs;
+		while(ioreq != NULL){
+			if(ioreq->sent_flag){
+				//All the following reqs should have been sent already
+				break;
+			}
+			data_to_send = 1;
 
-        if( (fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ) && intracomp_match)
-            nrreqs++;
-        else if((fbuf->reader_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ))
-            nrreqs++;
+			if( (fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ) && intracomp_match)
+				nrreqs++;
+			else if((fbuf->reader_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ))
+				nrreqs++;
 
-        var = fbuf->vars[ioreq->var_id];
-        mst = ioreq->var_id % fbuf->mst_info->nmasters;
-        bufsz[mst] += sizeof(MPI_Offset)*2 + var->ndims*2*sizeof(MPI_Offset);
-        ioreq = ioreq->next;
-    }
+			
+			mst = varid % fbuf->mst_info->nmasters;
+			bufsz[mst] += sizeof(MPI_Offset)*2 + var->ndims*2*sizeof(MPI_Offset);
+			ioreq = ioreq->next;
+		}
+	}
+	
     if(nrreqs == 0){
         if((gl_my_comp_id == fbuf->writer_id) && intracomp_match){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
@@ -968,26 +963,28 @@ void send_ioreqs_by_var(file_buffer_t *fbuf, int intracomp_match)
         offt[mst] = MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
     }
 
-    ioreq = fbuf->ioreqs;
-    while(ioreq != NULL){
-        if(ioreq->sent_flag){
-            //All the following reqs should have been sent already
-            break;
-        }
-        var = fbuf->vars[ioreq->var_id];
-        mst = ioreq->var_id % fbuf->mst_info->nmasters;
-        /*Store var_id, rw_flag, start[] and count[]*/
-        *(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
-        offt[mst] += sizeof(MPI_Offset);
-        *(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->var_id;
-        offt[mst] += sizeof(MPI_Offset);
-        memcpy(sbuf[mst]+offt[mst], ioreq->start, var->ndims*sizeof(MPI_Offset));
-        offt[mst] += var->ndims*sizeof(MPI_Offset);
-        memcpy(sbuf[mst]+offt[mst], ioreq->count, var->ndims*sizeof(MPI_Offset));
-        offt[mst] += var->ndims*sizeof(MPI_Offset);
-        ioreq->sent_flag = 1;
-        ioreq = ioreq->next;
-    }
+    for(varid=0; varid < fbuf->nvars; varid++){
+		var = fbuf->vars[varid];
+		ioreq = var->ioreqs;
+		while(ioreq != NULL){
+			if(ioreq->sent_flag){
+				//All the following reqs should have been sent already
+				break;
+			}
+			mst = varid % fbuf->mst_info->nmasters;
+			/*Store var_id, rw_flag, start[] and count[]*/
+			*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
+			offt[mst] += sizeof(MPI_Offset);
+			*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)varid;
+			offt[mst] += sizeof(MPI_Offset);
+			memcpy(sbuf[mst]+offt[mst], ioreq->start, var->ndims*sizeof(MPI_Offset));
+			offt[mst] += var->ndims*sizeof(MPI_Offset);
+			memcpy(sbuf[mst]+offt[mst], ioreq->count, var->ndims*sizeof(MPI_Offset));
+			offt[mst] += var->ndims*sizeof(MPI_Offset);
+			ioreq->sent_flag = 1;
+			ioreq = ioreq->next;
+		}
+	}
 
     idx = -1;
 
@@ -1037,6 +1034,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
 {
     dtf_var_t *var = NULL;
     io_req_t *ioreq;
+    int varid;
     int mst = 0;    //only one master for now
     int nrreqs = 0;
     unsigned char **sbuf;
@@ -1048,7 +1046,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
     MPI_Offset block_range, shift;
     MPI_Offset *strt, *cnt;
 
-    if(fbuf->ioreqs == NULL)
+    if(fbuf->rreq_cnt == 0 && fbuf->wreq_cnt==0)
         return;
     sbuf = (unsigned char**)dtf_malloc(nmasters*sizeof(unsigned char*));
     assert(sbuf != NULL);
@@ -1065,21 +1063,23 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
     }
 
     nrreqs = 0;
-    ioreq = fbuf->ioreqs;
-    while(ioreq != NULL){
-        if(ioreq->sent_flag){
-            //All the following reqs should have been sent already
-            break;
-        }
-        data_to_send = 1;
+	for(varid=0; varid < fbuf->nvars; varid++){
+		var = fbuf->vars[varid];
+		ioreq = var->ioreqs;
+		while(ioreq != NULL){
+			if(ioreq->sent_flag){
+				//All the following reqs should have been sent already
+				break;
+			}
+			data_to_send = 1;
 
-        if( (fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ) && intracomp_match)
-            nrreqs++;
-        else if((fbuf->reader_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ))
-            nrreqs++;
-        ioreq = ioreq->next;
-    }
-
+			if( (fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ) && intracomp_match)
+				nrreqs++;
+			else if((fbuf->reader_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ))
+				nrreqs++;
+			ioreq = ioreq->next;
+		}
+	}
     if(nrreqs == 0){
         if((gl_my_comp_id == fbuf->writer_id) && intracomp_match){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
@@ -1105,114 +1105,105 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
     if(!data_to_send)
         goto fn_exit;   //nothing to send
 
-    ioreq = fbuf->ioreqs;
-    while(ioreq != NULL){
-        if(ioreq->sent_flag){
-            break;
-        }
-        var = fbuf->vars[ioreq->var_id];
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Will send ioreq:");
-        for(i = 0; i < var->ndims; i++)
-            DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", ioreq->start[i], ioreq->count[i]);
-
-        if(var->ndims == 0){
-            mst = ioreq->var_id % fbuf->mst_info->nmasters;
-            if(bufsz[mst] == 0){
-                    sbuf[mst] = dtf_malloc(MAX_FILE_NAME + mlc_chunk);
-                    assert(sbuf[mst] != NULL);
-                    bufsz[mst] = MAX_FILE_NAME + mlc_chunk;
-
-                    memcpy(sbuf[mst], fbuf->file_path, MAX_FILE_NAME);
-                    offt[mst] = MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
-            }
-            /*Only save the rw flag and the var id*/
-            *(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
-            offt[mst] += sizeof(MPI_Offset);
-            *(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->var_id;
-            offt[mst] += sizeof(MPI_Offset);
-        } else {
-//            if(gl_conf.block_sz_range == AUTO_BLOCK_SZ_RANGE){ //divide equally among masters by the 1st dimension
-//                //If the first dimension is unlimited then will divide by default blocks
-//                if(var->shape[0] == DTF_UNLIMITED)
-//                    block_range = DEFAULT_BLOCK_SZ_RANGE;
-//                else{
-//                    block_range = (MPI_Offset)(var->shape[0]/fbuf->mst_info->nmasters);
-//                    if(block_range == 0)
-//                        block_range = var->shape[0];
-//                }
-//            } else
-//                block_range = gl_conf.block_sz_range;
-            if(var->shape[var->max_dim] == DTF_UNLIMITED)
-                block_range = DEFAULT_BLOCK_SZ_RANGE;
-            else{
-                block_range = (MPI_Offset)(var->shape[var->max_dim]/fbuf->mst_info->nmasters);
-                if(var->shape[var->max_dim]%fbuf->mst_info->nmasters>0)
-					block_range++;
+    for(varid=0; varid < fbuf->nvars; varid++){
+		var = fbuf->vars[varid];
+		ioreq = var->ioreqs;
+		while(ioreq != NULL){
+			if(ioreq->sent_flag){
+				break;
 			}
-            if(block_range == 0)
-                block_range = DEFAULT_BLOCK_SZ_RANGE;
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Will send ioreq:");
+			for(i = 0; i < var->ndims; i++)
+				DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", ioreq->start[i], ioreq->count[i]);
 
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Var %d, max dim %d, block_range %lld", var->id, var->max_dim, block_range);
+			if(var->ndims == 0){
+				mst = varid % fbuf->mst_info->nmasters;
+				if(bufsz[mst] == 0){
+						sbuf[mst] = dtf_malloc(MAX_FILE_NAME + mlc_chunk);
+						assert(sbuf[mst] != NULL);
+						bufsz[mst] = MAX_FILE_NAME + mlc_chunk;
 
-            shift = 0;
-            while(ioreq->start[var->max_dim] + shift < ioreq->start[var->max_dim] + ioreq->count[var->max_dim]){
+						memcpy(sbuf[mst], fbuf->file_path, MAX_FILE_NAME);
+						offt[mst] = MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
+				}
+				/*Only save the rw flag and the var id*/
+				*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
+				offt[mst] += sizeof(MPI_Offset);
+				*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)varid;
+				offt[mst] += sizeof(MPI_Offset);
+			} else {
+				if(var->shape[var->max_dim] == DTF_UNLIMITED)
+					block_range = DEFAULT_BLOCK_SZ_RANGE;
+				else{
+					block_range = (MPI_Offset)(var->shape[var->max_dim]/fbuf->mst_info->nmasters);
+					if(var->shape[var->max_dim]%fbuf->mst_info->nmasters>0)
+						block_range++;
+				}
+				if(block_range == 0)
+					block_range = DEFAULT_BLOCK_SZ_RANGE;
 
-                if(block_range == DEFAULT_BLOCK_SZ_RANGE)
-                    mst = (int)((ioreq->start[var->max_dim] + shift) % fbuf->mst_info->nmasters);
-                else
-                    mst = (int)((ioreq->start[var->max_dim] + shift)/block_range);
-                DTF_DBG(VERBOSE_DBG_LEVEL, "mst %d", mst);
-                assert(mst < fbuf->mst_info->nmasters);
-                if(bufsz[mst] == 0){
-                    sbuf[mst] = dtf_malloc(MAX_FILE_NAME + mlc_chunk);
-                    assert(sbuf[mst] != NULL);
-                    bufsz[mst] = MAX_FILE_NAME + mlc_chunk;
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Var %d, max dim %d, block_range %lld", var->id, var->max_dim, block_range);
 
-                    memcpy(sbuf[mst], fbuf->file_path, MAX_FILE_NAME);
-                    offt[mst] = MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
-                }
+				shift = 0;
+				while(ioreq->start[var->max_dim] + shift < ioreq->start[var->max_dim] + ioreq->count[var->max_dim]){
 
-                if(var->ndims*sizeof(MPI_Offset)*3+offt[mst] > bufsz[mst]){
-                    size_t ext_sz = mlc_chunk;
-                    while(bufsz[mst]+ext_sz < var->ndims*sizeof(MPI_Offset)*3+offt[mst])
-                        ext_sz += mlc_chunk;
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "bufsz %lu, ext sz %lu", bufsz[mst], ext_sz );
-                    void *tmp = realloc(sbuf[mst], bufsz[mst] + ext_sz);
-                    assert(tmp != NULL);
-                    gl_stats.malloc_size += ext_sz;
-                    bufsz[mst] += ext_sz;
-                }
+					if(block_range == DEFAULT_BLOCK_SZ_RANGE)
+						mst = (int)((ioreq->start[var->max_dim] + shift) % fbuf->mst_info->nmasters);
+					else
+						mst = (int)((ioreq->start[var->max_dim] + shift)/block_range);
+					DTF_DBG(VERBOSE_DBG_LEVEL, "mst %d", mst);
+					assert(mst < fbuf->mst_info->nmasters);
+					if(bufsz[mst] == 0){
+						sbuf[mst] = dtf_malloc(MAX_FILE_NAME + mlc_chunk);
+						assert(sbuf[mst] != NULL);
+						bufsz[mst] = MAX_FILE_NAME + mlc_chunk;
 
-                /*Store var_id, rw_flag, start[] and count[]*/
-                *(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
-                offt[mst] += sizeof(MPI_Offset);
-                *(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->var_id;
-                offt[mst] += sizeof(MPI_Offset);
-                memcpy(sbuf[mst]+offt[mst], ioreq->start, var->ndims*sizeof(MPI_Offset));
+						memcpy(sbuf[mst], fbuf->file_path, MAX_FILE_NAME);
+						offt[mst] = MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
+					}
 
-                /*Adjust corresponding start coordinate*/
-                *(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) = ioreq->start[var->max_dim] + shift;
-                strt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
-                offt[mst] += var->ndims*sizeof(MPI_Offset);
-                memcpy(sbuf[mst]+offt[mst], ioreq->count, var->ndims*sizeof(MPI_Offset));
+					if(var->ndims*sizeof(MPI_Offset)*3+offt[mst] > bufsz[mst]){
+						size_t ext_sz = mlc_chunk;
+						while(bufsz[mst]+ext_sz < var->ndims*sizeof(MPI_Offset)*3+offt[mst])
+							ext_sz += mlc_chunk;
+						DTF_DBG(VERBOSE_DBG_LEVEL, "bufsz %lu, ext sz %lu", bufsz[mst], ext_sz );
+						void *tmp = realloc(sbuf[mst], bufsz[mst] + ext_sz);
+						assert(tmp != NULL);
+						gl_stats.malloc_size += ext_sz;
+						bufsz[mst] += ext_sz;
+					}
 
-                /*Adjust corresponding count*/
-                if(ioreq->count[var->max_dim] - shift > block_range )
-                    *(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) = block_range;
-                else
-                    *(MPI_Offset*)(sbuf[mst]+offt[mst]+var->max_dim*sizeof(MPI_Offset)) = ioreq->count[var->max_dim] - shift;
-                cnt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
-                offt[mst] += var->ndims*sizeof(MPI_Offset);
+					/*Store var_id, rw_flag, start[] and count[]*/
+					*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
+					offt[mst] += sizeof(MPI_Offset);
+					*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)varid;
+					offt[mst] += sizeof(MPI_Offset);
+					memcpy(sbuf[mst]+offt[mst], ioreq->start, var->ndims*sizeof(MPI_Offset));
 
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Will send info to mst %d about block:", mst);
-                for(i = 0; i < var->ndims; i++)
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", strt[i], cnt[i]);
-                shift += block_range;
-            }
-            ioreq->sent_flag = 1;
-        }
-        ioreq = ioreq->next;
-    }
+					/*Adjust corresponding start coordinate*/
+					*(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) = ioreq->start[var->max_dim] + shift;
+					strt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
+					offt[mst] += var->ndims*sizeof(MPI_Offset);
+					memcpy(sbuf[mst]+offt[mst], ioreq->count, var->ndims*sizeof(MPI_Offset));
+
+					/*Adjust corresponding count*/
+					if(ioreq->count[var->max_dim] - shift > block_range )
+						*(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) = block_range;
+					else
+						*(MPI_Offset*)(sbuf[mst]+offt[mst]+var->max_dim*sizeof(MPI_Offset)) = ioreq->count[var->max_dim] - shift;
+					cnt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
+					offt[mst] += var->ndims*sizeof(MPI_Offset);
+
+					DTF_DBG(VERBOSE_DBG_LEVEL, "Will send info to mst %d about block:", mst);
+					for(i = 0; i < var->ndims; i++)
+						DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", strt[i], cnt[i]);
+					shift += block_range;
+				}
+				ioreq->sent_flag = 1;
+			}
+			ioreq = ioreq->next;
+		}
+	}
     idx = -1;
 
     for(mst = 0; mst < fbuf->mst_info->nmasters; mst++){
@@ -1254,36 +1245,36 @@ void send_ioreqs_by_mst(file_buffer_t *fbuf, int intracomp_match)
 {
     dtf_var_t *var = NULL;
     io_req_t *ioreq;
-    int err;
+    int err, varid;
     int nrreqs = 0;
     unsigned char *sbuf = NULL;
     size_t bufsz = 0, offt = 0;
     int data_to_send = 0;
 
-    if(fbuf->ioreqs == NULL)
+    if(fbuf->rreq_cnt == 0 && fbuf->wreq_cnt==0)
         return;   
 
 	//count bufsz to allocate
     bufsz += MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
     nrreqs = 0;
-    ioreq = fbuf->ioreqs;
-    while(ioreq != NULL){
-        if(ioreq->sent_flag){
-            //All the following reqs should have been sent already
-            break;
-        }
-		data_to_send = 1;
-        if( (fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ) && intracomp_match)
-            nrreqs++;
-        else if((fbuf->reader_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ))
-            nrreqs++;
-
-        var = fbuf->vars[ioreq->var_id];
-        
-        bufsz += sizeof(MPI_Offset)*2 + var->ndims*2*sizeof(MPI_Offset);
-        ioreq = ioreq->next;
-    }
-    
+	for(varid=0; varid < fbuf->nvars; varid++){
+		var = fbuf->vars[varid];
+		ioreq = var->ioreqs;
+		while(ioreq != NULL){
+			if(ioreq->sent_flag){
+				//All the following reqs should have been sent already
+				break;
+			}
+			data_to_send = 1;
+			if( (fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ) && intracomp_match)
+				nrreqs++;
+			else if((fbuf->reader_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ))
+				nrreqs++;
+			
+			bufsz += sizeof(MPI_Offset)*2 + var->ndims*2*sizeof(MPI_Offset);
+			ioreq = ioreq->next;
+		}
+	}
     if(nrreqs == 0){
         if((gl_my_comp_id == fbuf->writer_id) && intracomp_match){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
@@ -1318,26 +1309,27 @@ void send_ioreqs_by_mst(file_buffer_t *fbuf, int intracomp_match)
 	offt = MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
     
     //pack ioreqs
-    ioreq = fbuf->ioreqs;
-    while(ioreq != NULL){
-        if(ioreq->sent_flag){
-            //All the following reqs should have been sent already
-            break;
-        }
-        var = fbuf->vars[ioreq->var_id];
-       
-        /*Store var_id, rw_flag, start[] and count[]*/
-        *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->rw_flag;
-        offt += sizeof(MPI_Offset);
-        *(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->var_id;
-        offt += sizeof(MPI_Offset);
-        memcpy(sbuf+offt, ioreq->start, var->ndims*sizeof(MPI_Offset));
-        offt += var->ndims*sizeof(MPI_Offset);
-        memcpy(sbuf+offt, ioreq->count, var->ndims*sizeof(MPI_Offset));
-        offt += var->ndims*sizeof(MPI_Offset);
-        ioreq->sent_flag = 1;
-        ioreq = ioreq->next;
-    }
+	for(varid=0; varid < fbuf->nvars; varid++){
+		var = fbuf->vars[varid];
+		ioreq = var->ioreqs;
+		while(ioreq != NULL){
+			if(ioreq->sent_flag){
+				//All the following reqs should have been sent already
+				break;
+			}
+			/*Store var_id, rw_flag, start[] and count[]*/
+			*(MPI_Offset*)(sbuf + offt) = (MPI_Offset)ioreq->rw_flag;
+			offt += sizeof(MPI_Offset);
+			*(MPI_Offset*)(sbuf + offt) = (MPI_Offset)varid;
+			offt += sizeof(MPI_Offset);
+			memcpy(sbuf+offt, ioreq->start, var->ndims*sizeof(MPI_Offset));
+			offt += var->ndims*sizeof(MPI_Offset);
+			memcpy(sbuf+offt, ioreq->count, var->ndims*sizeof(MPI_Offset));
+			offt += var->ndims*sizeof(MPI_Offset);
+			ioreq->sent_flag = 1;
+			ioreq = ioreq->next;
+		}
+	}
     
 	assert(offt == bufsz);
 
@@ -1464,7 +1456,6 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 //    double t_part3=MPI_Wtime();
     double t_start;
     double t_st;
-    int finalize = 0;
 	t_start = MPI_Wtime();
     DTF_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %s (ncid %d), intracomp %d", fbuf->file_path, fbuf->ncid, intracomp_io_flag);
 
@@ -1472,7 +1463,6 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
         //there should be no unfinished matches
         assert(fbuf->mst_info->nrranks_completed == 0);
     }
-    assert(!fbuf->is_matching_flag);
 
     if(gl_my_comp_id == fbuf->reader_id){
 		/*Reader cannot proceed to a new match for this file until
@@ -1513,7 +1503,6 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 //    t_part1 = MPI_Wtime() - t_part1;
 //    t_part2 = MPI_Wtime();
 
-	//TODO this flag is not really needed?
     fbuf->is_matching_flag = 1;
     //counter = 0;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching phase");
@@ -1539,6 +1528,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 
 	
 	{
+		//TODO need to figure out with scale reading stuff from previous iterations!!!
 		int is_scale = 0;
 		
 		char *c = getenv("DTF_SCALE");
@@ -1549,7 +1539,7 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 			if(fbuf->mst_info->is_master_flag)
 				clean_iodb(fbuf->mst_info->iodb, fbuf->nvars);
 			
-			delete_ioreqs(fbuf,finalize);
+			delete_ioreqs(fbuf,0);
 		}
 	}
 
@@ -1649,9 +1639,9 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
             DTF_DBG(VERBOSE_DBG_LEVEL, "       %lld --> %lld", start[i], count[i]);
 
         /*Find the ioreq that has info about this block*/
-        ioreq = fbuf->ioreqs;
+        ioreq = fbuf->vars[var_id]->ioreqs;
         while(ioreq != NULL){
-            if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_WRITE)){
+            if(ioreq->rw_flag == DTF_WRITE){
                 int match = 0;
 
                 if(var->ndims == 0){
@@ -1855,7 +1845,7 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                         }
                         if(gl_conf.do_checksum){
 							double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
-							DTF_DBG(VERBOSE_ERROR_LEVEL, "chsum contin for req %d is %.4f", ioreq->id, chsum);
+							DTF_DBG(VERBOSE_DBG_LEVEL, "chsum contin for req %d is %.4f", ioreq->id, chsum);
 						}
                     } else {
 
@@ -1863,7 +1853,7 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                                            ioreq->count, new_start, new_count, sbuf+sofft, DTF_READ, type_mismatch);
                         if(gl_conf.do_checksum){
 							double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
-							DTF_DBG(VERBOSE_ERROR_LEVEL, "chsum getput for req %d is %.4f", ioreq->id, chsum);
+							DTF_DBG(VERBOSE_DBG_LEVEL, "chsum getput for req %d is %.4f", ioreq->id, chsum);
 						}
                     }
                 }
@@ -1959,11 +1949,11 @@ static void recv_data_rdr(void* buf, int bufsz)
             DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", start[i], count[i]);
 
         int cnt_mismatch = 0;
-        //TODO move reqs to vars
+
         /*Find the ioreq that has info about this block*/
-        ioreq = fbuf->ioreqs;
+        ioreq = fbuf->vars[var_id]->ioreqs;
         while(ioreq != NULL){
-            if( (ioreq->var_id == var_id) && (ioreq->rw_flag == DTF_READ)){
+            if(ioreq->rw_flag == DTF_READ){
                 int match = 0;
                 if(var->ndims == 0){
                     match = 1;
@@ -2054,7 +2044,7 @@ static void recv_data_rdr(void* buf, int bufsz)
 				ioreq->get_sz += (MPI_Offset)(nelems*req_el_sz);
 
 
-        DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, ioreq->var_id, (int)ioreq->get_sz, (int)ioreq->user_buf_sz);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, var_id, (int)ioreq->get_sz, (int)ioreq->user_buf_sz);
         assert(ioreq->get_sz<=ioreq->user_buf_sz);
         if(ioreq->get_sz == ioreq->user_buf_sz){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Complete req %d (left %d), var %d, ", ioreq->id, fbuf->rreq_cnt-1, var->id);
@@ -2073,10 +2063,10 @@ static void recv_data_rdr(void* buf, int bufsz)
 			 
             if(gl_conf.do_checksum){
                 double chsum = compute_checksum(ioreq->user_buf, var->ndims, ioreq->count, ioreq->dtype);
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "Chsum for req %d is %.4f", ioreq->id, chsum);
+                DTF_DBG(VERBOSE_DBG_LEVEL, "chsum for req %d is %.4f", ioreq->id, chsum);
             }
             //delete this ioreq
-            delete_ioreq(fbuf, &ioreq);
+            delete_ioreq(fbuf, var_id, &ioreq);
 
             if(fbuf->rreq_cnt == 0){
 				int err;
@@ -2104,14 +2094,6 @@ static void recv_data_rdr(void* buf, int bufsz)
 				} else 			
 					ENQUEUE_ITEM(msg, gl_msg_q);
             } 
-            //else {
-				//io_req_t *tmp = fbuf->ioreqs;
-				//DTF_DBG(VERBOSE_DBG_LEVEL, "Left rreqs:");
-				//while(tmp != NULL){
-                    //DTF_DBG(VERBOSE_DBG_LEVEL, "%u (varid %d)", tmp->id, tmp->var_id);
-                    //tmp = tmp->next;
-				//}
-			//}
         }
     } //while(bufsz)
 
@@ -2339,7 +2321,6 @@ void progress_io_matching()
 
             switch(status.MPI_TAG){
                 case FILE_INFO_REQ_TAG:
-					//TODO remove this tag and use OPEN_FILE for everything
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Recv file info req from rank %d (comp %s)", src, gl_comps[comp].name);
                 
                     err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, FILE_INFO_REQ_TAG, gl_comps[comp].comm, &status);

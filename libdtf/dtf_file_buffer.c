@@ -52,6 +52,7 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
 
 void delete_var(dtf_var_t* var)
 {
+	assert(var->ioreqs == NULL);
     dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
     dtf_free(var, sizeof(dtf_var_t));
 }
@@ -121,7 +122,6 @@ void delete_file_buffer(file_buffer_t* fbuf)
 		}
 	}
 		
-    assert(fbuf->ioreqs == NULL);
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
     
@@ -152,6 +152,7 @@ void delete_file_buffer(file_buffer_t* fbuf)
 		if(err)
 			DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: error deleting symbolic link %s", slink);
 	}
+
     
     if(gl_filebuf_list == fbuf)
 		gl_filebuf_list = fbuf->next;
@@ -170,7 +171,6 @@ fname_pattern_t *new_fname_pattern()
     fname_pattern_t *pat = dtf_malloc(sizeof(fname_pattern_t));
     assert(pat != NULL);
 	pat->fname[0]='\0';
-    pat->expl_mtch = 1; //default
     pat->iomode = DTF_UNDEFINED;
     pat->excl_fnames = NULL;
     pat->nexcls = 0;
@@ -184,8 +184,7 @@ fname_pattern_t *new_fname_pattern()
 
 file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 {
-	//TODO move init_masters here
-	
+
 	file_buffer_t *buf;
 	
 	DTF_DBG(VERBOSE_ALL_LEVEL, "Create file buffer for file %s", file_path);
@@ -206,11 +205,9 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->hdr_sz = 0;
     buf->rreq_cnt = 0;
     buf->wreq_cnt = 0;
-    buf->ioreqs = NULL;
     buf->ioreq_log = NULL;
     buf->ncid = -1;
     buf->done_matching_flag = 0;
- //   buf->rdr_closed_flag = 0;
     buf->fready_notify_flag = DTF_UNDEFINED;
     buf->done_match_confirm_flag = DTF_UNDEFINED;
     buf->comm = MPI_COMM_NULL;
@@ -232,7 +229,6 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 	strcpy(buf->file_path, file_path);
 	buf->reader_id = pat->rdr;
 	buf->writer_id = pat->wrt;
-	buf->explicit_match = pat->expl_mtch;
 	if(pat->slink_name != NULL){
 		buf->slink_name = dtf_malloc(MAX_FILE_NAME*sizeof(char));
 		assert(buf->slink_name != NULL);
@@ -273,6 +269,7 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
     var->ndims = ndims;
     var->dtype = dtype;
     var->checksum = 0;
+    var->ioreqs = NULL;
     return var;
 }
 

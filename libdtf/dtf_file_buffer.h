@@ -17,22 +17,22 @@
 #define RDR_NOTIF_POSTED   2
 #define RDR_NOTIFIED       3
 
+struct master_db;
+struct io_req;
+struct master_struc;
 
 typedef struct dtf_var{
     int                     id;         /* varid assigned by pnetcdf*/
     MPI_Datatype            dtype;      /*Datatype of the variable*/
     MPI_Offset              *shape;     /* dim->size of each dim */
     int                     ndims;      /* number of dimensions */
+    struct io_req           *ioreqs;           /*Read or write I/O requests*/
     int                     max_dim;    /*Along what dimension the variable is broken into subblocks?
                                           Each master is responsible for metadata of a predefined subblock.
-                                          */
+                                          */                            
     double                  checksum;   /*to check if what was written to the var is what was read*/
  }dtf_var_t;
 
-
-struct master_db;
-struct io_req;
-struct master_struc;
 
 typedef struct file_buffer{
   char                      file_path[MAX_FILE_NAME];    /* path of the file */
@@ -56,11 +56,7 @@ typedef struct file_buffer{
   int                       root_reader;
   struct master_info       *mst_info;
   int                       nwriters;               /*Number of processes writing to the file*/
-  //TODO move ioreqs inside var structure
-  struct io_req             *ioreqs;           /*Read or write I/O requests*/
   struct io_req_log         *ioreq_log;        /*Used for debugging*/
-  int                       explicit_match;   /*0 - request matching is initiated from inside of pnetcdf;
-                                                1 - request matching is initiated by the user*/
   unsigned int              rreq_cnt;
   unsigned int              wreq_cnt;
   int                       done_matching_flag;     	/*Flag used to complete matching requests*/
@@ -85,7 +81,6 @@ typedef struct fname_pattern{
     int  wrt;
     int  rdr;
     int  iomode;
-    int  expl_mtch;
     int  ignore_io;				/*disable I/O for this file*/
     struct fname_pattern *next;
 }fname_pattern_t;

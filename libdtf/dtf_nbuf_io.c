@@ -27,7 +27,7 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         if(fbuf->reader_id==gl_my_comp_id){
           assert(fbuf->is_ready);
         } else{
-            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: writer process tries to read file %s (var %d)", fbuf->file_path, varid);
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: writer process tries to read file %s (var %d)", fbuf->file_path, varid);
             //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
         }
     }
@@ -98,9 +98,9 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 
             matched_els = 0;
             while(nelems > 0){
-                io_req_t *tmp = fbuf->ioreqs;
+                io_req_t *tmp = var->ioreqs;
                 while(tmp != NULL){
-                    if( (tmp->var_id == varid) && (tmp->rw_flag == DTF_WRITE) ){
+                    if(tmp->rw_flag == DTF_WRITE){
                         match = 0;
                         for(i = 0; i < var->ndims; i++)
                             if( (_start[i] >= tmp->start[i]) && (_start[i] < tmp->start[i] + tmp->count[i]))
@@ -136,9 +136,9 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
             dtf_free(_count, sizeof(MPI_Offset)*var->ndims);
 
         } else {
-            io_req_t *tmp = fbuf->ioreqs;
+            io_req_t *tmp = var->ioreqs;
             while(tmp != NULL){
-                if( (tmp->var_id == varid) && (tmp->rw_flag == DTF_WRITE) ){
+                if(tmp->rw_flag == DTF_WRITE){
 
                         assert(tmp->user_buf_sz == (MPI_Offset)def_el_sz);
                         memcpy(buf, tmp->user_buf, (size_t)def_el_sz);
@@ -185,8 +185,10 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
 
         req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, buffered);
         
-        //TODO what is this?
-        req->is_permanent = 1; //dont delete this req when cleaning the list of ioreqs
+        if( sclltkf && (var->ndims <= 1) && (rw_flag == DTF_WRITE))
+             /*This is specifically for SCALE-LETKF since they overwrite the
+              user buffer in every time frame iteration */
+			req->is_permanent = 1; //dont delete this req when cleaning the list of ioreqs
 
         if(gl_conf.do_checksum && (rw_flag == DTF_WRITE))
             var->checksum += req->checksum;
@@ -197,15 +199,15 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
             fbuf->wreq_cnt++;
 
         /*Enqueue the request to the head*/
-        if(fbuf->ioreqs == NULL)
-            fbuf->ioreqs = req;
+        if(var->ioreqs == NULL)
+            var->ioreqs = req;
         else{
             /*Check if some data is overwritten (just to print out a warning message).
               Becase the new I/O req is pushed to the head of the queue, the
               writer will access the newest data.*/
-            io_req_t *tmpreq = fbuf->ioreqs;
+            io_req_t *tmpreq = var->ioreqs;
             while(tmpreq != NULL){
-                if( (req->rw_flag == DTF_WRITE) && (tmpreq->var_id == req->var_id)){
+                if(req->rw_flag == DTF_WRITE){
                     int overlap = 0;
                     for(i = 0; i < var->ndims; i++ )
                         if( (req->start[i] >= tmpreq->start[i]) && (req->start[i] < tmpreq->start[i] + tmpreq->count[i]))
@@ -221,9 +223,9 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
                 }
                 tmpreq = tmpreq->next;
             }
-            fbuf->ioreqs->prev = req;
-            req->next = fbuf->ioreqs;
-            fbuf->ioreqs = req;
+            var->ioreqs->prev = req;
+            req->next = var->ioreqs;
+            var->ioreqs = req;
         }
     } /*if(create_ioreq)*/
 

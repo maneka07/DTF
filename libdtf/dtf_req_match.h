@@ -29,11 +29,10 @@ typedef struct io_req_log{
 
 typedef struct io_req{
     unsigned int            id;
-    int                     var_id;
     int                     sent_flag;  /*set to 1 if this req has already been forwarded to the master*/
     int                     rw_flag;
     void                    *user_buf;
-    MPI_Datatype            dtype;                /*need to save the type passed in the request
+    MPI_Datatype            dtype;                /*save the type passed in the request
                                                     in case there is mismatch with the type passed
                                                     when the var was defined*/
     MPI_Offset              user_buf_sz;

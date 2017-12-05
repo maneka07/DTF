@@ -202,7 +202,7 @@ _EXTERN_C_ int dtf_finalize()
 		progress_msg_queue();
 
     assert(gl_finfo_req_q == NULL);
-    //TODO send notification to root 0 when file is closed so that it's deleted from the list
+   
 	finfo = gl_finfo_list;
 	while(finfo != NULL){
 		gl_finfo_list = gl_finfo_list->next;
@@ -274,9 +274,9 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
     if(fbuf == NULL){
 
         if( (filename != NULL) && (strlen(filename) == 0) )
-            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file (%s) with ncid %d is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: file (%s) with ncid %d is not treated by DTF (not in configuration file). Matching ignored.", filename, ncid);
         else
-            DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Explicit matching ignored.", filename, ncid);
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Matching ignored.", filename, ncid);
         return 0;
     }
     if((fbuf->ioreq_log != NULL) && gl_conf.do_checksum){
@@ -309,10 +309,6 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
 	
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
     if(fbuf->ignore_io) return 0;
-    if(!fbuf->explicit_match){
-        DTF_DBG(VERBOSE_WARNING_LEVEL, "DTF Warning: calling dtf_match_io but explicit match for file %s not enabled. Ignored.", filename);
-        return 0;
-    }
 
     if( intracomp_io_flag && (gl_my_comp_id != fbuf->writer_id) ){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_io: intracomp_io_flag(%d) can only be set for the writer component", intracomp_io_flag);

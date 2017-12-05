@@ -273,27 +273,26 @@ _EXTERN_C_ void dtf_close(const char* filename)
 /*called inside wait function in pnetcdf*/
 _EXTERN_C_ int dtf_match_ioreqs(const char* filename)
 {
-    int ret;
-    if(!lib_initialized) return 0;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL) return 0;
-    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-    if(fbuf->ignore_io) return 0;
-    /*User will have to explicitly initiate matching*/
-    if(fbuf->explicit_match) return 0;
+	return 0;
+    //~ int ret;
+    //~ if(!lib_initialized) return 0;
+    //~ file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    //~ if(fbuf == NULL) return 0;
+    //~ if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
+    //~ if(fbuf->ignore_io) return 0;
 
-     //Never checked if this function works correctly
-     assert(0);
+     //~ //Never checked if this function works correctly
+     //~ assert(0);
 
-    if(fbuf->is_matching_flag){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_ioreqs is called for file %s, but a matching process has already started before.", fbuf->file_path);
-        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-    }
-    fbuf->is_matching_flag = 1;
-    ret = match_ioreqs(fbuf, 0);
-    fbuf->is_matching_flag = 0;
+    //~ if(fbuf->is_matching_flag){
+        //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_ioreqs is called for file %s, but a matching process has already started before.", fbuf->file_path);
+        //~ MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    //~ }
+    //~ fbuf->is_matching_flag = 1;
+    //~ ret = match_ioreqs(fbuf, 0);
+    //~ fbuf->is_matching_flag = 0;
 
-    return ret;
+    //~ return ret;
 }
 
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data)
