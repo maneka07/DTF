@@ -461,8 +461,8 @@ int inquire_root(const char *filename)
 	}
 	fclose(rootf);
 	
-	if(remove(outfname))
-		DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Warning: couldnt delete the root file %s", outfname);
+//	if(remove(outfname))
+	//	DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Warning: couldnt delete the root file %s", outfname);
 
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root writer is %d", root_writer);

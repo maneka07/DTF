@@ -261,7 +261,7 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
         var->shape = (MPI_Offset*)dtf_malloc(ndims*sizeof(MPI_Offset));
         for(i=0; i<ndims;i++)
             var->shape[i] = shape[i];
-        var->max_dim = shape[ndims-1] > shape[0] ? ndims-1 : 0;
+        var->max_dim = 0; //shape[ndims-1] > shape[0] ? ndims-1 : 0;
     } else {
         var->shape = NULL;
 		var->max_dim = -1;

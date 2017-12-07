@@ -1167,6 +1167,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
 						while(bufsz[mst]+ext_sz < var->ndims*sizeof(MPI_Offset)*3+offt[mst])
 							ext_sz += mlc_chunk;
 						DTF_DBG(VERBOSE_DBG_LEVEL, "bufsz %lu, ext sz %lu", bufsz[mst], ext_sz );
+						//TODO avoid reallocing?
 						void *tmp = realloc(sbuf[mst], bufsz[mst] + ext_sz);
 						assert(tmp != NULL);
 						gl_stats.malloc_size += ext_sz;
@@ -1178,26 +1179,27 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
 					offt[mst] += sizeof(MPI_Offset);
 					*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)varid;
 					offt[mst] += sizeof(MPI_Offset);
+					
 					memcpy(sbuf[mst]+offt[mst], ioreq->start, var->ndims*sizeof(MPI_Offset));
-
 					/*Adjust corresponding start coordinate*/
 					*(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) = ioreq->start[var->max_dim] + shift;
 					strt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
 					offt[mst] += var->ndims*sizeof(MPI_Offset);
+					
 					memcpy(sbuf[mst]+offt[mst], ioreq->count, var->ndims*sizeof(MPI_Offset));
-
 					/*Adjust corresponding count*/
-					if(ioreq->count[var->max_dim] - shift > block_range )
-						*(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) = block_range;
+					if(ioreq->count[var->max_dim] - shift > block_range - (ioreq->start[var->max_dim]+shift-block_range*mst) )
+						*(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) =  block_range - (ioreq->start[var->max_dim]+shift-block_range*mst);
 					else
 						*(MPI_Offset*)(sbuf[mst]+offt[mst]+var->max_dim*sizeof(MPI_Offset)) = ioreq->count[var->max_dim] - shift;
+						
 					cnt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
 					offt[mst] += var->ndims*sizeof(MPI_Offset);
 
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Will send info to mst %d about block:", mst);
 					for(i = 0; i < var->ndims; i++)
 						DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", strt[i], cnt[i]);
-					shift += block_range;
+					shift +=  block_range - (ioreq->start[var->max_dim]+shift-block_range*mst);
 				}
 				ioreq->sent_flag = 1;
 			}
@@ -1559,7 +1561,9 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 			progress_msg_queue();
 		}
 	}
-								
+	
+	char *s = getenv("DTF_SCALE");
+	if(s != NULL)		
 	DTF_DBG(VERBOSE_ERROR_LEVEL, "Stat: Time for matching %.4f", MPI_Wtime() - t_start);
 //    t_part3 = MPI_Wtime() - t_part3;
 //

@@ -392,6 +392,7 @@ _EXTERN_C_ void dtf_time_start()
                 gl_stats.user_timer_start - gl_stats.walltime);
 
     gl_stats.user_timer_start = MPI_Wtime();
+    DTF_DBG(VERBOSE_DBG_LEVEL, "user_time start");
 }
 _EXTERN_C_ void dtf_time_end()
 {
@@ -400,6 +401,8 @@ _EXTERN_C_ void dtf_time_end()
     tt = MPI_Wtime() - gl_stats.user_timer_start;
     gl_stats.user_timer_accum += tt;
     gl_stats.user_timer_start = 0;
+    char *s = getenv("DTF_SCALE");
+    if(s != NULL)
     DTF_DBG(VERBOSE_ERROR_LEVEL, "user_time_stat  %.6f", tt);
  //   DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
 }
