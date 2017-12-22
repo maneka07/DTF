@@ -60,7 +60,7 @@
 #define DTF_UNDEFINED      -1
 
 #define DTF_DBG(dbg_level, ...) do{  \
-    if(gl_verbose >= dbg_level && gl_my_rank==0){  \
+    if(gl_verbose >= dbg_level){  \
                 memset(_buff,0,1024);                         \
                 snprintf(_buff,1024,__VA_ARGS__);             \
                 fprintf(stdout, "%s %d [%.3f]: %s\n", gl_my_comp_name, gl_my_rank, MPI_Wtime() - gl_stats.walltime, _buff);  \
@@ -90,7 +90,7 @@ typedef struct dtf_config{
     int         data_msg_size_limit;
     int         detect_overlap_flag;    /*should master process detect write overlap by different processes?*/
     int         do_checksum;
-//    MPI_Offset  block_sz_range;  /*the size of the data block in the first dimension*/
+    MPI_Offset  iodb_range;  		  /*the size of the data block in the first dimension*/
     int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
     int         log_ioreqs;
 }dtf_config_t;
@@ -123,6 +123,12 @@ typedef struct stats{
     double          user_timer_start;
     double          user_timer_accum;
     int             nfiles;
+    
+    double          st_mtch_hist;
+    double          end_mtch_hist;
+    double          st_mtch_rest;
+    double          end_mtch_rest;
+    double          st_fin;
 } stats_t;
 
 typedef struct dtf_msg{

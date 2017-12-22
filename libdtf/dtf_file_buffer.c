@@ -85,18 +85,18 @@ void delete_file_buffer(file_buffer_t* fbuf)
         dtf_free(fbuf->header, fbuf->hdr_sz);
 
 	{
-		int is_scale = 0;
+		//~ int is_scale = 0;
 		
-		char *c = getenv("DTF_SCALE");
-		if(c != NULL)
-			is_scale = atoi(c);
+		//~ char *c = getenv("DTF_SCALE");
+		//~ if(c != NULL)
+			//~ is_scale = atoi(c);
 			
-		if(is_scale){
-			if(fbuf->mst_info->is_master_flag)
+		//~ if(is_scale){
+			if(fbuf->mst_info->is_master_flag && fbuf->mst_info->iodb != NULL)
 				clean_iodb(fbuf->mst_info->iodb, fbuf->nvars);
 		
 			delete_ioreqs(fbuf,1);
-		}
+		//~ }
 	}
 
     //RBTreeDestroy(fbuf->vars);
@@ -252,16 +252,30 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 {
     int i;
+    int bt_bench;
     dtf_var_t *var = (dtf_var_t*)dtf_malloc(sizeof(dtf_var_t));
     assert(var!=NULL);
-
+	//~ char *s = getenv("BT_BENCH");
+	//~ if(s != NULL)  //HACK
+		//~ bt_bench = 1;
     /*Initialize whatever we can initialize at this stage*/
     var->id = varid;
     if(ndims > 0){ //non scalar
         var->shape = (MPI_Offset*)dtf_malloc(ndims*sizeof(MPI_Offset));
-        for(i=0; i<ndims;i++)
+        int max_dim = 0;
+        
+        for(i=0; i<ndims;i++){
             var->shape[i] = shape[i];
-        var->max_dim = 0; //shape[ndims-1] > shape[0] ? ndims-1 : 0;
+            if(shape[i] > shape[max_dim])
+				max_dim = i;
+		}
+
+        var->max_dim = 0; //max_dim; //0;
+        //~ if(var->shape[0] ==  DTF_UNLIMITED && ndims > 1){
+			//~ var->max_dim = 1;
+		//~ }
+        //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Maxdim for var id %d is %d", varid, var->max_dim);
+       
     } else {
         var->shape = NULL;
 		var->max_dim = -1;

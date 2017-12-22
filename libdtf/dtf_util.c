@@ -127,11 +127,27 @@ void notify_file_ready(file_buffer_t *fbuf)
     
 }
 
+/*Standard deviation*/
+static double stand_devi(double myval, double sum, int nranks)
+{
+	int err;
+	double tmpsum=0;
+	double mean = sum/(double)nranks;
+	double tmp = (myval - mean)*(myval - mean);
+	
+	if(gl_my_rank >=nranks) tmp = 0;
+	err = MPI_Reduce(&tmp, &tmpsum, 1, MPI_DOUBLE, MPI_SUM,0, gl_comps[gl_my_comp_id].comm);
+	CHECK_MPI(err);
+
+    return sqrt(tmpsum/(double)nranks);
+		
+}
+
 void print_stats()
 {
     char *s;
     int err, nranks;
-    double dblsum = 0, walltime, avglibt;
+    double dblsum = 0, walltime, avglibt, dev;
     unsigned long data_sz;
     int sclltkf = 0;
     unsigned long unsgn;
@@ -209,6 +225,14 @@ void print_stats()
         sclltkf = 0;
 
     if(sclltkf){
+		
+		err = MPI_Allreduce(&(gl_stats.st_fin), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
+		CHECK_MPI(err);
+		dev = stand_devi(gl_stats.st_fin, dblsum, nranks);
+		if(gl_my_rank == 0 && dblsum > 0)
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg st_fin, devi: %.4f: %.4f", dblsum/nranks, dev);
+
+		
 		s = getenv("SCALE_ENSEMBLE_SZ");
 		if(s == 0) 
 			DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: SCALE_ENSEMBLE_SZ is not set. Stats will be skewed");
@@ -231,8 +255,49 @@ void print_stats()
             gl_stats.accum_rw_var = 0;
             gl_stats.nioreqs = 0;
             gl_stats.user_timer_accum = 0;
+            gl_stats.st_fin=0;
+            gl_stats.st_mtch_hist=0;
+            gl_stats.st_mtch_rest=0;
+            gl_stats.end_mtch_hist=0;
+            gl_stats.end_mtch_rest=0;
         }
+        
+		dev = 0;
+		
+    	err = MPI_Allreduce(&gl_stats.st_mtch_hist, &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
+		CHECK_MPI(err);
+		
+		dev = stand_devi(gl_stats.st_mtch_hist, dblsum, nranks);
+		
+		if(gl_my_rank == 0 && dblsum > 0)
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg st_mtch_hist, dev: %.4f: %.4f", dblsum/nranks, dev);
+		
+		err = MPI_Allreduce(&gl_stats.end_mtch_hist, &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
+		CHECK_MPI(err);
+		dev = stand_devi(gl_stats.end_mtch_hist, dblsum, nranks);
+		if(gl_my_rank == 0 && dblsum > 0)
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg end_mtch_hist, dev: %.4f: %.4f", dblsum/nranks, dev);
+	   
+		err = MPI_Allreduce(&gl_stats.st_mtch_rest, &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
+		CHECK_MPI(err);
+		dev = stand_devi(gl_stats.st_mtch_rest, dblsum, nranks);
+		if(gl_my_rank == 0 && dblsum > 0)
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg st_mtch_rest, dev: %.4f: %.4f", dblsum/nranks, dev);
+		
+		err = MPI_Allreduce(&gl_stats.end_mtch_rest, &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
+		CHECK_MPI(err);
+		dev = stand_devi(gl_stats.end_mtch_rest, dblsum, nranks);
+		if(gl_my_rank == 0 && dblsum > 0)
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg end_mtch_rest, dev: %.4f: %.4f", dblsum/nranks, dev);
+		
+		//~ err = MPI_Allreduce(&(gl_stats.st_fin), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
+		//~ CHECK_MPI(err);
+		//~ dev = stand_devi(gl_stats.st_fin, dblsum, nranks);
+		//~ if(gl_my_rank == 0 && dblsum > 0)
+			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg st_fin except last ens: %.4f: %.4f", dblsum/nranks, dev);
     }
+    
+    
 	
 	if(gl_my_rank == 0)
 		rb_print_stats();
@@ -251,40 +316,20 @@ void print_stats()
     err = MPI_Allreduce(&(gl_stats.timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     avglibt = dblsum/nranks;
+    dev = stand_devi(gl_stats.timer_accum, dblsum, nranks);
+    
     if(gl_my_rank==0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg library-measured I/O time: %.5f", avglibt);
-
-    /*Standard deviation*/
-    {
-        double mydev2;
-        double mean = avglibt;
-        mydev2 = (gl_stats.timer_accum - mean)*(gl_stats.timer_accum - mean);
-
-        err = MPI_Reduce(&mydev2, &dblsum, 1, MPI_DOUBLE, MPI_SUM,0, gl_comps[gl_my_comp_id].comm);
-        CHECK_MPI(err);
-
-        if(gl_my_rank == 0)
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: lib I/O standard deviation: %.7f", sqrt(dblsum/nranks));
-    }
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg library-measured I/O time: %.5f : %.5f", avglibt, dev);
+	
     
     err = MPI_Allreduce(&(gl_stats.user_timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     avglibt = dblsum/nranks;
+    dev = stand_devi(gl_stats.user_timer_accum, dblsum, nranks);
     if(gl_my_rank==0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg user-measured I/O time: %.5f", avglibt);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg user-measured I/O time: %.5f : %.4f", avglibt, dev);
 
-    /*Standard deviation*/
-    {
-        double mydev2;
-        double mean = avglibt;
-        mydev2 = (gl_stats.user_timer_accum - mean)*(gl_stats.user_timer_accum - mean);
-
-        err = MPI_Reduce(&mydev2, &dblsum, 1, MPI_DOUBLE, MPI_SUM,0, gl_comps[gl_my_comp_id].comm);
-        CHECK_MPI(err);
-
-        if(gl_my_rank == 0)
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: lib I/O standard user deviation: %.7f", sqrt(dblsum/nranks));
-    }
+   
 
     //dblint_in.dbl = walltime;
     //dblint_in.intg = gl_my_rank;
@@ -305,10 +350,10 @@ void print_stats()
     if(gl_my_rank == 0 && dblsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg tot match time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
 
-    err = MPI_Reduce(&(gl_stats.accum_hdr_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
-    CHECK_MPI(err);
-    if(gl_my_rank == 0 && dblsum > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg hdr time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
+    //~ err = MPI_Reduce(&(gl_stats.accum_hdr_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    //~ CHECK_MPI(err);
+    //~ if(gl_my_rank == 0 && dblsum > 0)
+        //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg hdr time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
     //~ if(gl_my_rank == 0 && gl_stats.accum_hdr_time > 0){
         //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: hdr time: %.4f (%.4f%%), idle do match %.4f",
                 //~ gl_stats.accum_do_matching_time, gl_stats.accum_do_matching_time/avglibt*100, gl_stats.idle_do_match_time);
@@ -357,6 +402,7 @@ void print_stats()
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg nioreqs: %u", (unsigned)(unsgn/nranks));
 
+
 //    err = MPI_Reduce(&gl_stats.data_msg_sz, &lngsum, 1, MPI_UNSIGNED_LONG, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
 //    CHECK_MPI(err);
   //  if(gl_my_rank==0 && gl_stats.data_msg_sz > 0)
@@ -376,6 +422,7 @@ void print_stats()
     //CHECK_MPI(err);
     //if(gl_my_rank==0 && dblsum > 0)
       //  DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg buffering size: %lu", (size_t)(lngsum/nranks));
+
 }
 
 
@@ -394,15 +441,27 @@ void close_file(file_buffer_t *fbuf)
             if(gl_my_rank == fbuf->root_writer){
 				if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED)
 					notify_file_ready(fbuf);
-			} 
+			}
+			
+			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
+				//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+				//~ gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+			
+			//~ char *s = getenv("DTF_SCALE");
+			//~ if(s != NULL)
+				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp close file %s", fbuf->file_path);
 
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-			int finalize = 1;
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
-            delete_ioreqs(fbuf, finalize);
-            if(fbuf->mst_info->iodb != NULL)
-                finalize_iodb(fbuf);
-
+			
+			char *s = getenv("DTF_SCALE");
+			 if(s == NULL){			
+				int finalize = 1;
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
+				delete_ioreqs(fbuf, finalize);
+				if(fbuf->mst_info->iodb != NULL)
+					finalize_iodb(fbuf);
+			}
             /*File is opened and closed multiple times in SCALE-LETKF
               but it's the same set of processes, hence, don't delete the master related data.
             */
@@ -419,7 +478,18 @@ void close_file(file_buffer_t *fbuf)
 				}
 
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Done");
-            }
+            } 
+            //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
+				//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
+					//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+				//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+					//~ gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+				//~ char *s = getenv("DTF_SCALE");
+				//~ if(s != NULL)
+					//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp close file %s", fbuf->file_path);
+
+			//~ }
+			
     }
     
     //delete_file_buffer(fbuf);
@@ -486,11 +556,16 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
         CHECK_MPI(err);
 
         if(fbuf->iomode == DTF_IO_MODE_FILE){
+			
+			char *s = getenv("DTF_SCALE");
+			if(s != NULL)
+				DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp open file %s", fbuf->file_path);
+				
             if(fbuf->root_writer == -1){
 				MPI_Request req;
                 if(rank == 0){
 					fbuf->root_writer = inquire_root(fbuf->file_path);
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
+                    DTF_DBG(VERBOSE_ERROR_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
                     err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm, &req);
                     CHECK_MPI(err);
                 }
@@ -501,6 +576,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 					err = MPI_Wait(&req, MPI_STATUS_IGNORE);
 					CHECK_MPI(err);
 				}
+				
             }
             //NOTE: uncomment this for multi-cycle version where we open/close file only once
             //fbuf->is_ready = 0;
@@ -523,6 +599,15 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
             err = MPI_Bcast(&fbuf->is_ready, 1, MPI_INT, 0, comm);
             DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: Waiting to open file %.3f", MPI_Wtime()-t_start);
             CHECK_MPI(err);
+            
+            if(strstr(fbuf->file_path, "hist.d")!=NULL)
+				gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+			else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+				gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+			//char *s = getenv("DTF_SCALE");
+			if(s != NULL)
+				DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp file ready %s", fbuf->file_path);
+
 
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
             /*First, find out who is the root master*/
@@ -582,6 +667,16 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
       //  assert(0);
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: Writer component (%s) opened file %s instead of creating it", gl_comps[fbuf->writer_id].name, fbuf->file_path);
         /*reset all flags*/
+        //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
+			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
+				//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+				//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+			//~ char *s = getenv("DTF_SCALE");
+			//~ if(s != NULL)
+				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp open file %s", fbuf->file_path);
+		
+		//~ }
     }
 
     DTF_DBG(VERBOSE_DBG_LEVEL,   "Exit dtf_open %s", fbuf->file_path);
@@ -818,6 +913,10 @@ void recur_get_put_data(dtf_var_t *var,
                           int convert_flag)
 {
     int i;
+    //~ DTF_DBG(VERBOSE_DBG_LEVEL, "recur getput block:");
+    //~ for(i = 0; i < var->ndims; i++)
+		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "bl: %lld -> %lld, subbl: %lld -> %lld", block_start[i], block_count[i], subbl_start[i], subbl_count[i]);
+    
     if(dim == var->ndims - 1){
         int bl_type_sz, subbl_type_sz;
         MPI_Type_size(dtype, &bl_type_sz);

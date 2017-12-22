@@ -160,7 +160,16 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 
             }
         }
+        
+		if(strstr(fbuf->file_path, "hist.d")!=NULL)
+			gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+		else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+			gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+		//~ char *s = getenv("DTF_SCALE");
+		//~ if(s != NULL)
+			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp open file %s", fbuf->file_path);
     }
+	
     DTF_DBG(VERBOSE_DBG_LEVEL, "Exit create");
 }
 

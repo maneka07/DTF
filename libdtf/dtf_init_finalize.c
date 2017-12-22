@@ -460,7 +460,10 @@ int load_config(const char *ini_name, const char *comp_name){
                 DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown iodb build mode (%s)", value);
                 MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
             }
-        } else if(strcmp(param, "buffered_req_match") == 0){
+        } else if(strcmp(param, "iodb_range") == 0){
+			gl_conf.iodb_range = (MPI_Offset)atoi(value);
+			assert(gl_conf.iodb_range > 0);
+		} else if(strcmp(param, "buffered_req_match") == 0){
 
             gl_conf.buffered_req_match = atoi(value);
             if(gl_conf.buffered_req_match == 0)
