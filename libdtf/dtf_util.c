@@ -350,10 +350,18 @@ void print_stats()
     if(gl_my_rank == 0 && dblsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg tot match time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
 
-    //~ err = MPI_Reduce(&(gl_stats.accum_hdr_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
-    //~ CHECK_MPI(err);
-    //~ if(gl_my_rank == 0 && dblsum > 0)
-        //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg hdr time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
+    
+    err = MPI_Reduce(&(gl_stats.accum_do_matching_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum > 0){
+		char *s=getenv("MAX_WORKGROUP_SIZE");
+		assert(s!=NULL);
+		int nmst = nranks/atoi(s);
+		if (nranks %atoi(s) != 0)
+			nmst++;
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg do match time: %.4f", dblsum/nmst);
+	}
+   
     //~ if(gl_my_rank == 0 && gl_stats.accum_hdr_time > 0){
         //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: hdr time: %.4f (%.4f%%), idle do match %.4f",
                 //~ gl_stats.accum_do_matching_time, gl_stats.accum_do_matching_time/avglibt*100, gl_stats.idle_do_match_time);
@@ -401,7 +409,17 @@ void print_stats()
     CHECK_MPI(err);
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg nioreqs: %u", (unsigned)(unsgn/nranks));
-
+    
+    err = MPI_Reduce(&(gl_stats.iodb_nioreqs), &unsgn, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && gl_stats.iodb_nioreqs> 0){
+		char *s=getenv("MAX_WORKGROUP_SIZE");
+		assert(s!=NULL);
+		int nmst = nranks/atoi(s);
+		if (nranks %atoi(s) != 0)
+			nmst++;
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg iodb nioreqs: %u", (unsigned)(unsgn/nmst));
+	}
 
 //    err = MPI_Reduce(&gl_stats.data_msg_sz, &lngsum, 1, MPI_UNSIGNED_LONG, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
 //    CHECK_MPI(err);
