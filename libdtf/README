@@ -85,7 +85,7 @@ NOTE:
 *** int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )
     int dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_flag, int it )
 
-DESCRIPTION:
+DESCRIPTION: 
 
 	Data transfer function. Should be called in each component participating in 
         the data transfer. For performance reasons it is recommended to call this 
