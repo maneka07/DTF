@@ -82,10 +82,10 @@ static void print_config(){
     }
 
     while(fb != NULL){
-        DTF_DBG(VERBOSE_DBG_LEVEL,   "File pattern %s, writer %s, reader %s ",
-                fb->fname, gl_comps[fb->wrt].name, gl_comps[fb->rdr].name);
+        DTF_DBG(VERBOSE_DBG_LEVEL,   "File pattern %s, component 1 %s, component 2 %s ",
+                fb->fname, gl_comps[fb->comp1].name, gl_comps[fb->comp2].name);
         switch(fb->iomode){
-            case DTF_IO_MODE_UNDEFINED:
+            case DTF_UNDEFINED:
                 DTF_DBG(VERBOSE_DBG_LEVEL,   "I/O mode: undefined ");
                 break;
             case DTF_IO_MODE_FILE:
@@ -114,14 +114,14 @@ static int check_config()
 		if(gl_comps[i].name[0] == '\0'){
 			DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: not all component names defined.");
 			ret = 1;
-		}     
+		}
 
     while(cur_fpat!= NULL){
 		if(cur_fpat->fname[0] == '\0'){
 			DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Error parsing config file: file name not set");
 			ret = 1;
 		}
-		
+
 		if(cur_fpat->slink_name != NULL){
 			char *token = strchr(cur_fpat->slink_name, '%');
 			if(token != NULL){
@@ -129,18 +129,18 @@ static int check_config()
 				ret = 1;
 			}
 		}
-		
+
 		if(cur_fpat->ignore_io){
 			cur_fpat = cur_fpat->next;
 			continue;
 		}
-		
-		if(cur_fpat->wrt == -1 || cur_fpat->rdr == -1 ){
-			DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Error parsing config file: file reader or writer not set for file %s", cur_fpat->fname);
+
+		if(cur_fpat->comp1 == -1 || cur_fpat->comp2 == -1 ){
+			DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Error parsing config file: file components not set for file %s", cur_fpat->fname);
 			ret = 1;
 		}
-		
-        if(cur_fpat->iomode == DTF_IO_MODE_UNDEFINED){
+
+        if(cur_fpat->iomode == DTF_UNDEFINED){
             DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: I/O mode for file %s underfined", cur_fpat->fname);
             ret = 1;
         }
@@ -268,11 +268,11 @@ static int create_intercomm(int comp_id, char* global_path){
         CHECK_MPI(err);
     }
     MPI_Comm_set_errhandler(gl_comps[comp_id].comm, MPI_ERRORS_RETURN);
- 
-	//The two components are roughly synched now. Reset 
+
+	//The two components are roughly synched now. Reset
 	//the start time value
 	gl_stats.walltime = MPI_Wtime();
- 
+
     return 0;
 }
 
@@ -316,28 +316,27 @@ static void destroy_intercomm(int comp_id){
 
 }
 
-
 void clean_config(){
   int i;
   fname_pattern_t *pat = gl_fname_ptrns;
-  
+
   while(pat != NULL){
 	 if(pat->slink_name != NULL)
 		dtf_free(pat->slink_name, MAX_FILE_NAME*sizeof(char));
-		
+
 	 for(i = 0; i < pat->nexcls; i++)
 		dtf_free(pat->excl_fnames[i], sizeof(char)*MAX_FILE_NAME);
 	 if(pat->nexcls > 0)
 		dtf_free(pat->excl_fnames, sizeof(char*)*pat->nexcls);
-		
+
 	 gl_fname_ptrns = gl_fname_ptrns->next;
 	 dtf_free(pat, sizeof(fname_pattern_t));
 	 pat = gl_fname_ptrns;
   }
-  
+
   if(gl_comps != NULL)
 	dtf_free(gl_comps, gl_ncomp*sizeof(component_t));
-		
+
 }
 
 int load_config(const char *ini_name, const char *comp_name){
@@ -399,7 +398,7 @@ int load_config(const char *ini_name, const char *comp_name){
         if (gl_ncomp == 0){
            DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: [file] section defined before [info] section.");
             goto panic_exit;
-        }  
+        }
         cur_fpat = new_fname_pattern();
         assert(cur_fpat != NULL);
 
@@ -495,7 +494,7 @@ int load_config(const char *ini_name, const char *comp_name){
             cur_fpat->slink_name = dtf_malloc(sizeof(char)*MAX_FILE_NAME);
             assert(cur_fpat->slink_name != NULL);
             strcpy(cur_fpat->slink_name, value);
-            
+
          } else if(strcmp(param, "exclude_name") == 0){
             assert(cur_fpat != NULL);
             assert(strlen(value) <= MAX_FILE_NAME);
@@ -507,32 +506,42 @@ int load_config(const char *ini_name, const char *comp_name){
             assert(cur_fpat->excl_fnames[cur_fpat->nexcls] != NULL);
             strcpy(cur_fpat->excl_fnames[cur_fpat->nexcls], value);
             cur_fpat->nexcls++;
-               
-        } else if(strcmp(param, "writer") == 0){
+
+        } else if(strcmp(param, "comp1") == 0){
             assert(cur_fpat != NULL);
             assert(gl_ncomp != 0);
             for(i = 0; i < gl_ncomp; i++){
                 if(strcmp(value, gl_comps[i].name) == 0){
-                    cur_fpat->wrt = i;
+                    cur_fpat->comp1 = i;
                     break;
                 }
             }
 
-        } else if(strcmp(param, "reader") == 0){
+        } else if(strcmp(param, "comp2") == 0){
             assert(cur_fpat != NULL);
             assert(gl_ncomp != 0);
 
-            if(cur_fpat->rdr != -1){
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: File %s cannot have multiple readers (%d)", cur_fpat->fname, cur_fpat->rdr);
+            if(cur_fpat->comp2 != -1){
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: File %s cannot have multiple readers (%d)", cur_fpat->fname, cur_fpat->comp2);
                 goto panic_exit;
             }
             for(i = 0; i < gl_ncomp; i++){
                 if(strcmp(value, gl_comps[i].name) == 0){
-                    cur_fpat->rdr = i;
+                    cur_fpat->comp2 = i;
                     break;
                 }
             }
-
+		} else if(strcmp(param, "creator") == 0){
+            assert(cur_fpat != NULL);
+            assert(gl_ncomp != 0);
+            for(i = 0; i < gl_ncomp; i++){
+                if(strcmp(value, gl_comps[i].name) == 0){
+                    cur_fpat->create_comp_id = i;
+                    break;
+                }
+            }
+            
+            assert( (cur_fpat->create_comp_id == cur_fpat->comp1) || (cur_fpat->create_comp_id == cur_fpat->comp2));
         } else if(strcmp(param, "mode") == 0){
             assert(cur_fpat != NULL);
 
@@ -554,7 +563,7 @@ int load_config(const char *ini_name, const char *comp_name){
         }  else if(strcmp(param, "ignore_io") == 0){
 			cur_fpat->ignore_io = atoi(value);
 			assert(cur_fpat->ignore_io==0 ||  cur_fpat->ignore_io==1);
-			
+
 		} else {
             DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: unknown parameter %s.", param);
             goto panic_exit;
@@ -592,13 +601,13 @@ int load_config(const char *ini_name, const char *comp_name){
 			cur_fpat = cur_fpat->next;
 			continue;
 		}
-        if(cur_fpat->wrt == gl_my_comp_id){
-            if(gl_comps[ cur_fpat->rdr ].connect_mode == DTF_UNDEFINED )
-               gl_comps[ cur_fpat->rdr ].connect_mode = CONNECT_MODE_SERVER; // I am server
+        if(cur_fpat->comp1 == gl_my_comp_id){
+            if(gl_comps[ cur_fpat->comp2 ].connect_mode == DTF_UNDEFINED )
+               gl_comps[ cur_fpat->comp2 ].connect_mode = CONNECT_MODE_SERVER; // I am server
 
-        } else if( gl_comps[ cur_fpat->wrt ].connect_mode == DTF_UNDEFINED){
-            if(cur_fpat->rdr == gl_my_comp_id )
-               gl_comps[ cur_fpat->wrt ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
+        } else if( gl_comps[ cur_fpat->comp1 ].connect_mode == DTF_UNDEFINED){
+            if(cur_fpat->comp2 == gl_my_comp_id )
+               gl_comps[ cur_fpat->comp1 ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
         }
 
         cur_fpat = cur_fpat->next;
@@ -664,66 +673,66 @@ void finalize_files()
 {
     int file_cnt = 0;
     file_buffer_t *fbuf = gl_filebuf_list;
- 
+
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize files");
     while(fbuf != NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, fready_notif_flag %d", fbuf->file_path,  fbuf->fready_notify_flag);
         if(fbuf->iomode == DTF_IO_MODE_FILE){
-			 if( (fbuf->writer_id == gl_my_comp_id) && 
+			 if( (fbuf->writer_id == gl_my_comp_id) &&
 			     (fbuf->root_writer == gl_my_rank)  &&
 			     (fbuf->fready_notify_flag != RDR_NOTIFIED) )
 				file_cnt++;
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 			//~ if( (fbuf->writer_id == gl_my_comp_id) && !fbuf->rdr_closed_flag )
 				//~ file_cnt++;
-			//~ else 
+			//~ else
 			if( (fbuf->reader_id == gl_my_comp_id) &&
 			         (gl_my_rank == fbuf->root_reader)  &&
 			         (!fbuf->done_match_confirm_flag)  )
 			         file_cnt++;
 		}
-        
-        
+
+
         fbuf = fbuf->next;
     }
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Process has to finalize notifications for %d files (out of %d files)", file_cnt, gl_stats.nfiles);
     assert(file_cnt <= gl_stats.nfiles);
-    
+
 	file_cnt = 0;
 	fbuf = gl_filebuf_list;
 	while(fbuf != NULL){
-			
+
 		if(fbuf->iomode == DTF_IO_MODE_FILE){
-			 if( (fbuf->writer_id == gl_my_comp_id) && 
+			 if( (fbuf->writer_id == gl_my_comp_id) &&
 				 (fbuf->root_writer == gl_my_rank)  &&
 				 (fbuf->fready_notify_flag != RDR_NOTIFIED) ){
-				
+
 				if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED)
 					notify_file_ready(fbuf);
-				 
+
 				while(fbuf->fready_notify_flag != RDR_NOTIFIED)
 					progress_io_matching();
-			 }	 
+			 }
 			 file_cnt++;
 		} else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 			//~ if(fbuf->writer_id == gl_my_comp_id){
 				//~ while(!fbuf->rdr_closed_flag )
 					//~ progress_io_matching();
 				//~ file_cnt++;
-			//~ }else 
+			//~ }else
 			if(fbuf->reader_id == gl_my_comp_id){
-				
+
 					 if(gl_my_rank == fbuf->root_reader)
-						while(!fbuf->done_match_confirm_flag) 
+						while(!fbuf->done_match_confirm_flag)
 							progress_io_matching();
 			}
 			file_cnt++;
-		} 
-		fbuf = fbuf->next;	
+		}
+		fbuf = fbuf->next;
 	}
 	assert(file_cnt == gl_stats.nfiles);
-	
+
     //MPI_Barrier(gl_comps[gl_my_comp_id].comm);
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished finalizing notifications. Will delete file bufs");
     /*Now, delete all file buffers*/

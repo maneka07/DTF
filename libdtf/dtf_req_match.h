@@ -11,7 +11,7 @@
 #define DTF_DATA_MSG_SIZE_LIMIT 256*1024*1024
 
 
-/*This structure is used for debugging purposes: 
+/*This structure is used for debugging purposes:
  * log ioreqs when file i/o is used,
  * then compute the checksum of the user buffer*/
 typedef struct io_req_log{
@@ -82,7 +82,7 @@ typedef struct read_db_item{
 typedef struct ioreq_db{
     int                  updated_flag;
     MPI_Offset           nritems;
-    
+
     struct write_db_item **witems;
     struct read_db_item  *ritems;
 }ioreq_db_t;
@@ -130,9 +130,9 @@ void progress_io_matching();
 int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
 //void match_ioreqs_all(int rw_flag);
 int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);
-void init_iodb(file_buffer_t *fbuf);
+void init_iodb(ioreq_db_t *iodb);
 void clean_iodb(ioreq_db_t *iodb, int nvars);
-void finalize_iodb(file_buffer_t *fbuf);
+void finalize_iodb(master_info_t *mst_info, int nvars);
 void unpack_file_info(MPI_Offset bufsz, void *buf);
 void send_file_info(file_buffer_t *fbuf, int reader_root);
 void notify_complete_multiple(file_buffer_t *fbuf);

@@ -9,15 +9,13 @@
 #endif /* __cplusplus */
 #endif /* _EXTERN_C_ */
 
-
-#ifndef DTF_IO_MODE_UNDEFINED
-#define DTF_IO_MODE_UNDEFINED    1
-#define DTF_IO_MODE_FILE         2
-#define DTF_IO_MODE_MEMORY       3
-#endif
+#define DTF_IO_MODE_FILE         1
+#define DTF_IO_MODE_MEMORY       2
 
 #define DTF_READ   1
 #define DTF_WRITE  2
+
+#define DTF_UNDEFINED      -1
 
 #define DTF_UNLIMITED  0L  /*Unlimited dimension*/
 

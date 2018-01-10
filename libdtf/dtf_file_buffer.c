@@ -25,8 +25,8 @@ void var_print(const void *var)
 
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid)
 {
-	/* If a file buffer for this file exists, return it. Otherwise, check if file name 
-	 * matches any file name pattern. If yes, create a new file buffer and return it. 
+	/* If a file buffer for this file exists, return it. Otherwise, check if file name
+	 * matches any file name pattern. If yes, create a new file buffer and return it.
 	 * Otherwise, return NULL*/
     struct file_buffer *ptr = buflist;
 
@@ -45,16 +45,17 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
 
         ptr = ptr->next;
     }
-		
+
 	//DTF_DBG(VERBOSE_DBG_LEVEL, "Return fbuf %p", (void*)ptr);
     return ptr;
 }
 
-void delete_var(dtf_var_t* var)
+void delete_var(file_buffer_t *fbuf, dtf_var_t* var)
 {
 	assert(var->ioreqs == NULL);
     dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
     dtf_free(var, sizeof(dtf_var_t));
+    fbuf->nvars--;
 }
 
 void add_var(file_buffer_t *fbuf, dtf_var_t *var)
@@ -75,6 +76,7 @@ void add_var(file_buffer_t *fbuf, dtf_var_t *var)
 void delete_file_buffer(file_buffer_t* fbuf)
 {
     int i;
+    int nvars=fbuf->nvars;
 
     if(fbuf == NULL)
         return;
@@ -84,36 +86,44 @@ void delete_file_buffer(file_buffer_t* fbuf)
     if(fbuf->header != NULL)
         dtf_free(fbuf->header, fbuf->hdr_sz);
 
-	{
-		//~ int is_scale = 0;
-		
-		//~ char *c = getenv("DTF_SCALE");
-		//~ if(c != NULL)
-			//~ is_scale = atoi(c);
-			
-		//~ if(is_scale){
-			if(fbuf->mst_info->is_master_flag && fbuf->mst_info->iodb != NULL)
-				clean_iodb(fbuf->mst_info->iodb, fbuf->nvars);
-		
-			delete_ioreqs(fbuf,1);
-		//~ }
-	}
+    if(fbuf->my_mst_info != NULL){
 
-    //RBTreeDestroy(fbuf->vars);
-    for(i = 0; i < fbuf->nvars; i++)
-        delete_var(fbuf->vars[i]);
-    dtf_free(fbuf->vars, fbuf->nvars*sizeof(dtf_var_t*));
-	
+        if(fbuf->my_mst_info->iodb != NULL){
+            if(fbuf->my_mst_info->is_master_flag)
+                clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
+            finalize_iodb(fbuf->my_mst_info, nvars);
+        }
+
+        if(fbuf->my_mst_info->masters != NULL)
+            dtf_free(fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
+        if(fbuf->my_mst_info->my_wg != NULL)
+            dtf_free(fbuf->my_mst_info->my_wg,(fbuf->my_mst_info->my_wg_sz - 1)*sizeof(int));
+        dtf_free(fbuf->my_mst_info, sizeof(master_info_t));
+    }
+
+    if(fbuf->cpl_mst_info != NULL){
+        if(fbuf->cpl_mst_info->masters != NULL)
+            dtf_free(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
+        assert(fbuf->cpl_mst_info->my_wg == NULL);
+        dtf_free(fbuf->cpl_mst_info, sizeof(master_info_t));
+    }
+
+    delete_ioreqs(fbuf,1); //TODO this should be done inside close_file
+
+    for(i = 0; i < nvars; i++)
+        delete_var(fbuf, fbuf->vars[i]);
+    dtf_free(fbuf->vars, nvars*sizeof(dtf_var_t*));
+
 	if(fbuf->ioreq_log != NULL){
 		io_req_log_t *ior = fbuf->ioreq_log;
 		while(ior != NULL){
 			fbuf->ioreq_log = fbuf->ioreq_log->next;
-			
+
 			if(ior->rw_flag == DTF_READ)
 				fbuf->rreq_cnt--;
 			else
 				fbuf->wreq_cnt--;
-			
+
 			if(gl_conf.buffered_req_match && (ior->rw_flag == DTF_WRITE)) dtf_free(ior->user_buf, ior->user_buf_sz);
 			if(ior->start != NULL) dtf_free(ior->start, ior->ndims*sizeof(MPI_Offset));
 			if(ior->count != NULL)dtf_free(ior->count, ior->ndims*sizeof(MPI_Offset));
@@ -121,21 +131,12 @@ void delete_file_buffer(file_buffer_t* fbuf)
 			ior = fbuf->ioreq_log;
 		}
 	}
-		
+
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
-    
-    if(fbuf->mst_info->iodb != NULL){
-        finalize_iodb(fbuf);
-    }
-    if(fbuf->mst_info != NULL){
-        if(fbuf->mst_info->masters != NULL)
-            dtf_free(fbuf->mst_info->masters, fbuf->mst_info->nmasters*sizeof(int));
-        if(fbuf->mst_info->my_wg != NULL)
-            dtf_free(fbuf->mst_info->my_wg,(fbuf->mst_info->my_wg_sz - 1)*sizeof(int));
-        dtf_free(fbuf->mst_info, sizeof(master_info_t));
-    }
-    
+
+
+
     if( (fbuf->reader_id == gl_my_comp_id) && (fbuf->root_reader == gl_my_rank) && (fbuf->slink_name != NULL)){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Remove symbolic link %s", fbuf->slink_name);
 		int err;
@@ -153,15 +154,15 @@ void delete_file_buffer(file_buffer_t* fbuf)
 			DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: error deleting symbolic link %s", slink);
 	}
 
-    
+
     if(gl_filebuf_list == fbuf)
 		gl_filebuf_list = fbuf->next;
-	
+
 	if(fbuf->prev != NULL)
 		fbuf->prev->next = fbuf->next;
 	if(fbuf->next != NULL)
 		fbuf->next->prev = fbuf->prev;
-    
+
     dtf_free(fbuf, sizeof(file_buffer_t));
     gl_stats.nfiles--;
 }
@@ -175,20 +176,33 @@ fname_pattern_t *new_fname_pattern()
     pat->excl_fnames = NULL;
     pat->nexcls = 0;
     pat->next = NULL;
-    pat->rdr = -1;
-    pat->wrt = -1;
+    pat->comp1 = -1;
+    pat->comp2 = -1;
+    pat->create_comp_id = -1;
     pat->ignore_io = 0;
     pat->slink_name = NULL;
     return pat;
+}
+
+static void init_mst_info(master_info_t* mst_info)
+{
+    mst_info->masters = NULL;
+    mst_info->is_master_flag = 0;
+    mst_info->my_wg_sz = 0;
+    mst_info->my_wg = NULL;   //TODO remove my_wg, assume that ransk are sequential
+    mst_info->nmasters = 0;
+    mst_info->iodb = NULL;
+    mst_info->nrranks_completed = 0;
+    mst_info->nranks_opened = 0;
 }
 
 file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 {
 
 	file_buffer_t *buf;
-	
+
 	DTF_DBG(VERBOSE_ALL_LEVEL, "Create file buffer for file %s", file_path);
-	
+
 	if(strlen(file_path) > MAX_FILE_NAME){
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: filename %s longer than MAX_FILE_NAME (%d)", file_path, MAX_FILE_NAME);
 		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
@@ -213,27 +227,24 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->comm = MPI_COMM_NULL;
     buf->root_writer = -1;
     buf->root_reader = -1;
-    
-    buf->nwriters = 0;
-    buf->mst_info = dtf_malloc(sizeof(master_info_t));
-    assert(buf->mst_info != NULL);
-    buf->mst_info->masters = NULL;
-    buf->mst_info->is_master_flag = 0;
-    buf->mst_info->my_wg_sz = 0;
-    buf->mst_info->my_wg = NULL;
-    buf->mst_info->nmasters = 0;
-    buf->mst_info->iodb = NULL;
-    buf->mst_info->nrranks_completed = 0;
-    buf->mst_info->nranks_opened = 0;
+    buf->create_comp_id = pat->create_comp_id;
+    buf->cpl_comp_id = (pat->comp1 == gl_my_comp_id) ? pat->comp2 : pat->comp1;
+    buf->my_mst_info = dtf_malloc(sizeof(master_info_t));
+    buf->last_io = DTF_UNDEFINED;
+    assert(buf->my_mst_info != NULL);
+    init_mst_info(buf->my_mst_info);
+    buf->cpl_mst_info = dtf_malloc(sizeof(master_info_t));
+    assert(buf->cpl_mst_info != NULL);
+    init_mst_info(buf->cpl_mst_info);
     buf->is_matching_flag = 0;
 	strcpy(buf->file_path, file_path);
-	buf->reader_id = pat->rdr;
-	buf->writer_id = pat->wrt;
+	buf->reader_id = -1;
+	buf->writer_id = -1;
 	if(pat->slink_name != NULL){
 		buf->slink_name = dtf_malloc(MAX_FILE_NAME*sizeof(char));
 		assert(buf->slink_name != NULL);
 		strcpy(buf->slink_name, pat->slink_name);
-	} else 
+	} else
 		buf->slink_name = NULL;
 	buf->iomode = pat->iomode;
 	buf->ignore_io = pat->ignore_io;
@@ -263,7 +274,7 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
     if(ndims > 0){ //non scalar
         var->shape = (MPI_Offset*)dtf_malloc(ndims*sizeof(MPI_Offset));
         int max_dim = 0;
-        
+
         for(i=0; i<ndims;i++){
             var->shape[i] = shape[i];
             if(shape[i] > shape[max_dim])
@@ -275,7 +286,7 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 			//~ var->max_dim = 1;
 		//~ }
         //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Maxdim for var id %d is %d", varid, var->max_dim);
-       
+
     } else {
         var->shape = NULL;
 		var->max_dim = -1;

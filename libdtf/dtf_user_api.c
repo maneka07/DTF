@@ -362,45 +362,46 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
  * slot is absent.*/
 _EXTERN_C_ void dtf_skip_match(const char *filename, MPI_Comm comm)
 {
-	file_buffer_t *fbuf;
-	if(!lib_initialized) return;
+	assert(0);
+	//~ file_buffer_t *fbuf;
+	//~ if(!lib_initialized) return;
 	
-	if(filename == NULL || strlen(filename)==0){
-		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: undefined file name in dtf_skip_match call");
-		return;
-	}
+	//~ if(filename == NULL || strlen(filename)==0){
+		//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: undefined file name in dtf_skip_match call");
+		//~ return;
+	//~ }
 	
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Call skip match for %s", filename);
+	//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Call skip match for %s", filename);
 	
-	fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL){
-		//If fbuf doesn't exist this file hasn't been opened/created. 
-		//However, we still need to check if I/O matching is enabled for 
-		//this file and, if it is, notify the other component that we skip.
-		fname_pattern_t *pat = gl_fname_ptrns;
-		while(pat != NULL){
-			if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls)){
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
-				break;
-			}
-			pat = pat->next;
-		} 
+	//~ fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    //~ if(fbuf == NULL){
+		//~ //If fbuf doesn't exist this file hasn't been opened/created. 
+		//~ //However, we still need to check if I/O matching is enabled for 
+		//~ //this file and, if it is, notify the other component that we skip.
+		//~ fname_pattern_t *pat = gl_fname_ptrns;
+		//~ while(pat != NULL){
+			//~ if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls)){
+				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
+				//~ break;
+			//~ }
+			//~ pat = pat->next;
+		//~ } 
 		
-		if(pat != NULL){
-			if(gl_my_comp_id == pat->wrt){
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_skip_match for file %s should not be called by the writer component. Ignore. ", filename);
-				return;
-			}
-			assert(pat->rdr == gl_my_comp_id);
+		//~ if(pat != NULL){
+			//~ if(gl_my_comp_id == pat->wrt){
+				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_skip_match for file %s should not be called by the writer component. Ignore. ", filename);
+				//~ return;
+			//~ }
+			//~ assert(pat->rdr == gl_my_comp_id);
 			
-			if(pat->iomode == DTF_IO_MODE_MEMORY){	
-				assert(comm != MPI_COMM_NULL);
-				skip_match(NULL, filename, comm, pat->wrt);
-			} 	
-		}
+			//~ if(pat->iomode == DTF_IO_MODE_MEMORY){	
+				//~ assert(comm != MPI_COMM_NULL);
+				//~ skip_match(NULL, filename, comm, pat->wrt);
+			//~ } 	
+		//~ }
        
-    } else if(fbuf->iomode == DTF_IO_MODE_MEMORY)
-		skip_match(fbuf, filename, comm, -1);
+    //~ } else if(fbuf->iomode == DTF_IO_MODE_MEMORY)
+		//~ skip_match(fbuf, filename, comm, -1);
 	
 }
 

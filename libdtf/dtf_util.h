@@ -28,6 +28,12 @@
 #define IODB_BUILD_VARID    0  /*Distribute ioreqs based on var id*/
 #define IODB_BUILD_BLOCK    1  /*Distribute ioreqs by dividing var to blocks*/
 
+#define VERBOSE_ERROR_LEVEL   0
+#define VERBOSE_DBG_LEVEL     1
+#define VERBOSE_ALL_LEVEL     2
+
+#define DTF_TIMEOUT       60 
+
 #define ENQUEUE_ITEM(item, queue) do{\
     if(queue == NULL)   \
         queue = item;    \
@@ -52,12 +58,7 @@
     DTF_DBG(VERBOSE_DBG_LEVEL, "deq_item %p", (void*)item);    \
 } while(0)
 
-#define VERBOSE_ERROR_LEVEL   0
-#define VERBOSE_DBG_LEVEL     1
-#define VERBOSE_ALL_LEVEL     2
 
-#define DTF_TIMEOUT       1200 
-#define DTF_UNDEFINED      -1
 
 #define DTF_DBG(dbg_level, ...) do{  \
     if(gl_verbose >= dbg_level){  \
