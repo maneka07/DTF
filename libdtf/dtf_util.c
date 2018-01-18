@@ -575,14 +575,11 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
     MPI_Status status;
     int rank; //, notif_open=1;
-
     int err;
+    
+    MPI_Comm_rank(comm, &rank);
 
     if(fbuf->reader_id == gl_my_comp_id){
-        MPI_Comm_rank(comm, &rank);
-       
-        //~ err = MPI_Bcast(&fbuf->root_reader, 1, MPI_INT, 0, comm);
-        //~ CHECK_MPI(err);
         
         if(fbuf->iomode == DTF_IO_MODE_FILE){
 
@@ -591,21 +588,38 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 				DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp open file %s", fbuf->file_path);
 
             if(fbuf->root_writer == -1){
-				MPI_Request req;
-                if(rank == 0){
-					fbuf->root_writer = inquire_root(fbuf->file_path);
-                    DTF_DBG(VERBOSE_ERROR_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
-                    err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm, &req);
-                    CHECK_MPI(err);
-                }
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast root to other readers");
-                err = MPI_Bcast(&fbuf->root_writer, 1, MPI_INT, 0, comm);
-                CHECK_MPI(err);
-                if(rank == 0){
-					err = MPI_Wait(&req, MPI_STATUS_IGNORE);
-					CHECK_MPI(err);
-				}
 
+				fbuf->root_writer = inquire_root(fbuf->file_path);
+               
+                if(rank == 0){
+					//pack my master info and send it to the other component
+					unsigned char *chbuf;
+					size_t sz; 
+					void *buf;
+					MPI_Offset offt = 0;
+					
+					sz = MAX_FILE_NAME+fbuf->my_mst_info->nmasters*sizeof(MPI_Offset)+sizeof(MPI_Offset);
+					sz += sz%sizeof(MPI_Offset);
+					buf = dtf_malloc(sz);
+					assert(buf != NULL);
+					chbuf = (unsigned char*)buf;
+					
+					memcpy(chbuf, fbuf->file_path, MAX_FILE_NAME);
+					offt += MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
+					/*number of masters*/
+					*((MPI_Offset*)(chbuf+offt)) = fbuf->my_mst_info->nmasters;
+					offt += sizeof(MPI_Offset);
+					assert(fbuf->my_mst_info->nmasters>0);
+					DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->my_mst_info->nmasters);
+					/*list of masters*/
+					memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
+					offt += fbuf->my_mst_info->nmasters*sizeof(MPI_Offset); //sizeof(int) + padding for MPI_Offset
+					
+                    DTF_DBG(VERBOSE_ERROR_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
+                    err = MPI_Send(buf, sz, MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm);
+                    CHECK_MPI(err);
+                    dtf_free(buf, sz);
+                }
             }
             //NOTE: uncomment this for multi-cycle version where we open/close file only once
             //fbuf->is_ready = 0;
@@ -649,13 +663,35 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 				readers that opened the file*/
 				if(rank == 0){
 					int nranks;
+					unsigned char *chbuf;
+
+					size_t offt = 0;
+					
 					MPI_Comm_size(comm, &nranks);
                 	fbuf->my_mst_info->nranks_opened = nranks;
 					fbuf->root_writer = inquire_root(fbuf->file_path);
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Ask writer root for file info for %s", fbuf->file_path);
-					err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm);
-					CHECK_MPI(err);
+					//pack my master info and send it to the other component
 
+					
+					bufsz = MAX_FILE_NAME+fbuf->my_mst_info->nmasters*sizeof(int)+sizeof(int);
+					buf = dtf_malloc(bufsz);
+					assert(buf != NULL);
+					chbuf = (unsigned char*)buf;
+					
+					memcpy(chbuf, fbuf->file_path, MAX_FILE_NAME);
+					offt += MAX_FILE_NAME;
+					/*number of masters*/
+					memcpy(chbuf+offt, &(fbuf->my_mst_info->nmasters), sizeof(int));
+					offt += sizeof(int);
+					DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->my_mst_info->nmasters);
+					/*list of masters*/
+					memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
+					
+                    DTF_DBG(VERBOSE_ERROR_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
+                    err = MPI_Send(buf, bufsz, MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm);
+                    CHECK_MPI(err);
+					dtf_free(buf, bufsz);
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Starting to wait for file info for %s", fbuf->file_path);
 					err = MPI_Probe(fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
 					CHECK_MPI(err);
@@ -689,12 +725,8 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
         }
 
     } else if(fbuf->writer_id == gl_my_comp_id){
-		//TODO reinit iodb, allocate stuff for witems and ritems
-		//TODO do not destroy fbuf when file closed, only destroy in finalize
-        //do we need it?
 
-      //  assert(0);
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: Writer component (%s) opened file %s instead of creating it", gl_comps[fbuf->writer_id].name, fbuf->file_path);
+
         /*reset all flags*/
         //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
 			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)

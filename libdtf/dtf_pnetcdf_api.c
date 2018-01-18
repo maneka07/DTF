@@ -258,9 +258,30 @@ _EXTERN_C_ void dtf_open(const char *filename, MPI_Comm comm)
 		fbuf->writer_id = gl_my_comp_id;
 		fbuf->root_writer = fbuf->my_mst_info->masters[0];
 	} else { /*fbuf->last_io == DTF_WRITE*/
+		int err, rank, i;
+		MPI_Comm_rank(comm, &rank);
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast master info about the other component");
+		//root broadcasts master info to others
+		if(rank == 0){
+			assert(fbuf->cpl_mst_info->nmasters>0);
+		}
+		err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
+		CHECK_MPI(err);
+		if(rank != 0){
+			assert(fbuf->cpl_mst_info->masters== NULL);
+			fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+			assert(fbuf->cpl_mst_info->masters != NULL);	
+		}
+		
+		err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
+		CHECK_MPI(err);
+		
+		for(i = 0; i < fbuf->cpl_mst_info->nmasters; i++)
+			DTF_DBG(VERBOSE_DBG_LEVEL, "mst list %d",fbuf->cpl_mst_info->masters[i]); 
+		
 		fbuf->last_io = DTF_READ;
 		fbuf->writer_id = fbuf->reader_id;
-		fbuf->root_writer = fbuf->root_reader;
+		fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
 		fbuf->reader_id = gl_my_comp_id;
 		fbuf->root_reader = fbuf->my_mst_info->masters[0];
 	}
@@ -275,16 +296,6 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     if(fbuf == NULL) return;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
 
-
-	if(fbuf->my_mst_info->is_master_flag){
-		int i;
-		assert(fbuf->my_mst_info->iodb != NULL);
-
-		fbuf->my_mst_info->iodb->witems = dtf_malloc(fbuf->nvars*sizeof(write_db_item_t*));
-		assert(fbuf->my_mst_info->iodb->witems != NULL);
-		for(i = 0; i < fbuf->nvars; i++)
-			fbuf->my_mst_info->iodb->witems[i] = NULL;
-	}
 }
 
 _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
@@ -458,10 +469,9 @@ _EXTERN_C_ int dtf_io_mode(const char* filename)
     if(!lib_initialized) return DTF_UNDEFINED;
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
-		 DTF_DBG(VERBOSE_DBG_LEVEL, "not found");
         return DTF_UNDEFINED;
     }
-    DTF_DBG(VERBOSE_DBG_LEVEL, "found");
+    
     return fbuf->iomode;
 }
 
@@ -470,7 +480,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     int i, ret;
     if(!lib_initialized) return 0;
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    DTF_DBG(VERBOSE_DBG_LEVEL, "boooo");
+   
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 

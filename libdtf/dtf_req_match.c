@@ -739,9 +739,17 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
             ritem->nblocks++;
             DTF_DBG(VERBOSE_DBG_LEVEL, "ritems %d, cur item (r %d) %lld blocks",(int)fbuf->my_mst_info->iodb->nritems, ritem->rank, ritem->nblocks);
         } else { /*DTF_WRITE*/
+			int i;
             write_db_item_t *witem;
             /*Allow write requests only from the writer*/
             assert(comm == gl_comps[fbuf->writer_id].comm);
+            
+            if(fbuf->my_mst_info->iodb->witems == NULL){
+				fbuf->my_mst_info->iodb->witems = dtf_malloc(fbuf->nvars*sizeof(write_db_item_t*));
+				assert(fbuf->my_mst_info->iodb->witems != NULL);
+				for(i = 0; i < fbuf->nvars; i++)
+					fbuf->my_mst_info->iodb->witems[i] = NULL;
+			}
 
             if(fbuf->my_mst_info->iodb->witems[var_id] == NULL){
                 fbuf->my_mst_info->iodb->witems[var_id] = (write_db_item_t*)dtf_malloc(sizeof(write_db_item_t));
@@ -1063,6 +1071,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
         mst_info = fbuf->cpl_mst_info;
 
     nmasters = mst_info->nmasters;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "%d masters, %d is writer, %d is reader", nmasters, fbuf->writer_id, fbuf->reader_id);
 
     sbuf = (unsigned char**)dtf_malloc(nmasters*sizeof(unsigned char*));
     assert(sbuf != NULL);
@@ -1252,7 +1261,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
             int flag;
             MPI_Status status;
             dtf_msg_t *msg = new_dtf_msg(sbuf[mst], bufsz[mst], IO_REQS_TAG);
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Post send ioreqs req to mst %d (bufsz %lu (allcd %lu)", mst_info->masters[mst], offt[mst], bufsz[mst]);
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Post send ioreqs req to mst %d (bufsz %lu (allcd %lu), comp id %d (mine %d)", mst_info->masters[mst], offt[mst], bufsz[mst], fbuf->writer_id, gl_my_comp_id);
             err = MPI_Isend((void*)sbuf[mst], (int)offt[mst], MPI_BYTE, mst_info->masters[mst], IO_REQS_TAG,
                             gl_comps[fbuf->writer_id].comm, &(msg->req));
             CHECK_MPI(err);
@@ -2312,44 +2321,45 @@ static void print_recv_msg(int tag)
 }
 
 /*Check if there are any unfinished sends of ioreqs and cancel them*/
-void cancel_send_ioreqs()
-{
-	dtf_msg_t *msg, *tmp;
-    int flag, err;
-    MPI_Status status;
+//~ void cancel_send_ioreqs()
+//~ {
+	//~ dtf_msg_t *msg, *tmp;
+    //~ int flag, err;
+    //~ MPI_Status status;
 
-    if(gl_msg_q == NULL)
-       return;
-    msg = gl_msg_q;
-    while(msg != NULL){
-        if(msg->tag != IO_REQS_TAG){
-			msg = msg->next;
-			continue;
-		}
-		DTF_DBG(VERBOSE_ERROR_LEVEL, "Try to cancel msg %p", (void*)msg);
-		//try to cancel the request
-		err = MPI_Cancel(&(msg->req));
-		CHECK_MPI(err);
-		err = MPI_Wait(&(msg->req), &status);
-		CHECK_MPI(err);
-	    err = MPI_Test_cancelled( &status, &flag );
-		if (!flag)
-			DTF_DBG(VERBOSE_ERROR_LEVEL," DTF Warning: Failed to cancel an Isend request\n" );
-		else
-			DTF_DBG(VERBOSE_ERROR_LEVEL, "Canceled");
+    //~ if(gl_msg_q == NULL)
+       //~ return;
+    //~ msg = gl_msg_q;
+    //~ while(msg != NULL){
+        //~ if(msg->tag != IO_REQS_TAG){
+			//~ msg = msg->next;
+			//~ continue;
+		//~ }
+		//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "Try to cancel msg %p", (void*)msg);
+		//~ //try to cancel the request
+		//~ err = MPI_Cancel(&(msg->req));
+		//~ CHECK_MPI(err);
+		//~ err = MPI_Wait(&(msg->req), &status);
+		//~ CHECK_MPI(err);
+	    //~ err = MPI_Test_cancelled( &status, &flag );
+		//~ if (!flag)
+			//~ DTF_DBG(VERBOSE_ERROR_LEVEL," DTF Warning: Failed to cancel an Isend request\n" );
+		//~ else
+			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "Canceled");
 
-		tmp = msg->next;
-		DEQUEUE_ITEM(msg, gl_msg_q);
-		delete_dtf_msg(msg);
-		msg = tmp;
-    }
-}
+		//~ tmp = msg->next;
+		//~ DEQUEUE_ITEM(msg, gl_msg_q);
+		//~ delete_dtf_msg(msg);
+		//~ msg = tmp;
+    //~ }
+//~ }
 
 void progress_io_matching()
 {
     MPI_Status status;
     int comp, flag, src, err;
     file_buffer_t *fbuf;
+    size_t offt;
 
     int bufsz;
     void *rbuf;
@@ -2373,7 +2383,8 @@ void progress_io_matching()
             if(!flag){
                 gl_stats.idle_time += MPI_Wtime() - t_st;
                 break;
-            }
+            } 
+           // DTF_DBG(VERBOSE_DBG_LEVEL, "msg in queue from %d tag %d, comm %d", status.MPI_SOURCE, status.MPI_TAG, comp);
             src = status.MPI_SOURCE;
 
             print_recv_msg(status.MPI_TAG);
@@ -2381,16 +2392,31 @@ void progress_io_matching()
             switch(status.MPI_TAG){
                 case FILE_INFO_REQ_TAG:
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Recv file info req from rank %d (comp %s)", src, gl_comps[comp].name);
-
-                    err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, FILE_INFO_REQ_TAG, gl_comps[comp].comm, &status);
+					MPI_Get_count(&status, MPI_BYTE, &bufsz);
+                    rbuf = dtf_malloc(bufsz);
+                    assert(rbuf != NULL);
+                    t_start_comm = MPI_Wtime();
+                    err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, FILE_INFO_REQ_TAG, gl_comps[comp].comm, &status);
                     CHECK_MPI(err);
+                    gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
+                    offt = 0;
+                    memcpy(filename, rbuf, MAX_FILE_NAME);
+                    offt += MAX_FILE_NAME;
 					fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
 					assert(fbuf != NULL);
                     assert(fbuf->root_writer == gl_my_rank);
-
-
-					DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request");
-					fbuf->root_reader = src;
+                    fbuf->root_reader = src;
+				    //parse mst info of the other component
+				    assert(fbuf->cpl_mst_info->nmasters == 0);
+					memcpy(&(fbuf->cpl_mst_info->nmasters), (unsigned char*)rbuf+offt, sizeof(int));
+					assert(fbuf->cpl_mst_info->nmasters > 0);
+					offt+=sizeof(int);
+					fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+					assert(fbuf->cpl_mst_info->masters != NULL);
+					memcpy(fbuf->cpl_mst_info->masters, (unsigned char*)rbuf+offt, fbuf->cpl_mst_info->nmasters*sizeof(int));
+					assert(fbuf->root_reader == fbuf->cpl_mst_info->masters[0]);
+					DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request, root reader %d",fbuf->cpl_mst_info->masters[0] );
+					
 					if(fbuf->iomode == DTF_IO_MODE_FILE){
 						fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
 						if(fbuf->is_ready) //writer has already closed the file
@@ -2398,6 +2424,7 @@ void progress_io_matching()
 					} else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 						send_file_info(fbuf, fbuf->root_reader);
 					}
+					dtf_free(rbuf, bufsz);
                     break;
                 case IO_REQS_TAG:
                     t_st = MPI_Wtime();
