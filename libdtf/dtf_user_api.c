@@ -29,6 +29,7 @@ int gl_my_comp_id;                          /*Id of this compoinent*/
 int gl_ncomp;                               /*Number of components*/
 int gl_verbose;
 int gl_my_rank;                         /*For debug messages*/
+int gl_scale;
 struct dtf_config gl_conf;                 /*Framework settings*/
 struct stats gl_stats;
 char *gl_my_comp_name = NULL;
@@ -111,7 +112,12 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_verbose = VERBOSE_ERROR_LEVEL;
     }
 
-   
+    s = getenv("DTF_SCALE");
+	if(s != NULL)
+		gl_scale = atoi(s);
+	else
+		gl_scale = 0;
+		
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Init DTF");
 
     s = getenv("DTF_DETECT_OVERLAP");
@@ -252,6 +258,7 @@ _EXTERN_C_ int dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_
 	char *s = getenv("DTF_IGNORE_ITER");
 	if(it < 0)
 		return dtf_match_io(filename, ncid, intracomp_io_flag);
+		
 	if(s != NULL){
 		if(it > atoi(s)){
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Match io call for iter %d", it);
@@ -274,7 +281,7 @@ _EXTERN_C_ int dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_
 _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )//, int match_all)
 {
     file_buffer_t *fbuf;
-    char *s;
+
     if(!lib_initialized) return 0;
     DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s (ncid %d), intra flag %d", filename, ncid, intracomp_io_flag);
     if(intracomp_io_flag){
@@ -318,26 +325,8 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
 			ioreq = fbuf->ioreq_log;
 		}
 	}
-	
-	s = getenv("DTF_SCALE");
-	if(fbuf->iomode == DTF_IO_MODE_FILE && s!=NULL){
-		
-		progress_io_matching();
-		    
-		if(gl_my_comp_id==fbuf->writer_id && gl_my_rank == fbuf->root_writer){
-			if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: SCALE-LETKF hack: inside match io function notify letkf that file %s is ready", fbuf->file_path);
-				notify_file_ready(fbuf);
-			}
-		}
-		if(strstr(fbuf->file_path, "hist.d")!=NULL)
-			gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-		else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-			gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-	}
 	 
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-    if(fbuf->ignore_io) return 0;
 
     if( intracomp_io_flag && (gl_my_comp_id != fbuf->writer_id) ){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_io: intracomp_io_flag(%d) can only be set for the writer component", intracomp_io_flag);

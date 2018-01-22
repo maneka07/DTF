@@ -91,7 +91,7 @@ void delete_file_buffer(file_buffer_t* fbuf)
         if(fbuf->my_mst_info->iodb != NULL){
             if(fbuf->my_mst_info->is_master_flag)
                 clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
-            finalize_iodb(fbuf->my_mst_info, nvars);
+            dtf_free(fbuf->my_mst_info->iodb, sizeof(ioreq_db_t));
         }
 
         if(fbuf->my_mst_info->masters != NULL)
@@ -137,22 +137,22 @@ void delete_file_buffer(file_buffer_t* fbuf)
 
 
 
-    if( (fbuf->reader_id == gl_my_comp_id) && (fbuf->root_reader == gl_my_rank) && (fbuf->slink_name != NULL)){
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Remove symbolic link %s", fbuf->slink_name);
-		int err;
-		char *dir = NULL;
-		char wdir[MAX_FILE_NAME]="\0";
-		char slink[MAX_FILE_NAME]="\0";
+    //~ if( (fbuf->reader_id == gl_my_comp_id) && (fbuf->root_reader == gl_my_rank) && (fbuf->slink_name != NULL)){
+		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Remove symbolic link %s", fbuf->slink_name);
+		//~ int err;
+		//~ char *dir = NULL;
+		//~ char wdir[MAX_FILE_NAME]="\0";
+		//~ char slink[MAX_FILE_NAME]="\0";
 
-		dir = getcwd(wdir, MAX_FILE_NAME);
-		assert(dir != NULL);
-		sprintf(slink, "%s/%s", wdir, fbuf->slink_name);
+		//~ dir = getcwd(wdir, MAX_FILE_NAME);
+		//~ assert(dir != NULL);
+		//~ sprintf(slink, "%s/%s", wdir, fbuf->slink_name);
 
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Remove symlink %s", slink);
-		err = unlink(slink);
-		if(err)
-			DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: error deleting symbolic link %s", slink);
-	}
+		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Remove symlink %s", slink);
+		//~ err = unlink(slink);
+		//~ if(err)
+			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: error deleting symbolic link %s", slink);
+	//~ }
 
 
     if(gl_filebuf_list == fbuf)
@@ -178,7 +178,6 @@ fname_pattern_t *new_fname_pattern()
     pat->next = NULL;
     pat->comp1 = -1;
     pat->comp2 = -1;
-    pat->create_comp_id = -1;
     pat->ignore_io = 0;
     pat->slink_name = NULL;
     return pat;
@@ -189,7 +188,7 @@ static void init_mst_info(master_info_t* mst_info)
     mst_info->masters = NULL;
     mst_info->is_master_flag = 0;
     mst_info->my_wg_sz = 0;
-    mst_info->my_wg = NULL;   //TODO remove my_wg, assume that ransk are sequential
+    mst_info->my_wg = NULL;   
     mst_info->nmasters = 0;
     mst_info->iodb = NULL;
     mst_info->nrranks_completed = 0;
@@ -212,7 +211,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     assert( buf != NULL );
     buf->next = NULL;
     buf->prev = NULL;
-    buf->is_ready = 0;   //TODO what to do with this flag when letkf openes the file the second time?
+    buf->is_ready = 0;
     buf->vars = NULL; //RBTreeCreate(var_cmp, var_destroy, NullFunction, var_print, NullFunction);
     buf->nvars = 0;
     buf->header = NULL;
@@ -223,16 +222,17 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->ncid = -1;
     buf->done_matching_flag = 0;
     buf->fready_notify_flag = DTF_UNDEFINED;
-    buf->done_match_confirm_flag = DTF_UNDEFINED;
+    buf->sync_comp_flag = 0;
     buf->comm = MPI_COMM_NULL;
-    buf->root_writer = -1;
-    buf->root_reader = -1;
-    buf->create_comp_id = pat->create_comp_id;
     buf->cpl_comp_id = (pat->comp1 == gl_my_comp_id) ? pat->comp2 : pat->comp1;
+    
     buf->my_mst_info = dtf_malloc(sizeof(master_info_t));
-    buf->last_io = DTF_UNDEFINED;
     assert(buf->my_mst_info != NULL);
-    init_mst_info(buf->my_mst_info);
+    init_mst_info(buf->my_mst_info);    
+	buf->my_mst_info->iodb = dtf_malloc(sizeof(struct ioreq_db));
+	assert(buf->my_mst_info->iodb != NULL);
+	init_iodb(buf->my_mst_info->iodb);
+            
     buf->cpl_mst_info = dtf_malloc(sizeof(master_info_t));
     assert(buf->cpl_mst_info != NULL);
     init_mst_info(buf->cpl_mst_info);
@@ -240,6 +240,9 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 	strcpy(buf->file_path, file_path);
 	buf->reader_id = -1;
 	buf->writer_id = -1;
+	buf->root_writer = -1;
+    buf->root_reader = -1;
+    buf->omode = DTF_UNDEFINED;
 	if(pat->slink_name != NULL){
 		buf->slink_name = dtf_malloc(MAX_FILE_NAME*sizeof(char));
 		assert(buf->slink_name != NULL);
@@ -247,7 +250,6 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 	} else
 		buf->slink_name = NULL;
 	buf->iomode = pat->iomode;
-	buf->ignore_io = pat->ignore_io;
 	//insert
 	if(gl_filebuf_list == NULL)
 		gl_filebuf_list = buf;

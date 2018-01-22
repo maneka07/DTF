@@ -105,7 +105,6 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offse
 
 void notify_file_ready(file_buffer_t *fbuf)
 {
-
     int err;
     char *filename;
     dtf_msg_t *msg;
@@ -124,7 +123,7 @@ void notify_file_ready(file_buffer_t *fbuf)
 	CHECK_MPI(err);
 	ENQUEUE_ITEM(msg, gl_msg_q);
 	fbuf->fready_notify_flag = RDR_NOTIF_POSTED;
-
+	progress_msg_queue();
 }
 
 /*Standard deviation*/
@@ -149,7 +148,6 @@ void print_stats()
     int err, nranks;
     double dblsum = 0, walltime, avglibt, dev;
     unsigned long data_sz;
-    int sclltkf = 0;
     unsigned long unsgn;
     typedef struct{
         double dbl;
@@ -218,13 +216,7 @@ void print_stats()
 
     /*In scale-letkf the last ranks write mean files not treated by dtf, we don't need
       stats for that*/
-    s = getenv("DTF_SCALE");
-    if(s != NULL)
-        sclltkf = atoi(s);
-    else
-        sclltkf = 0;
-
-    if(sclltkf){
+    if(gl_scale){
 
 		err = MPI_Allreduce(&(gl_stats.st_fin), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
 		CHECK_MPI(err);
@@ -457,15 +449,17 @@ void close_file(file_buffer_t *fbuf)
 		fbuf->is_ready = 1;
 
         if(fbuf->iomode == DTF_IO_MODE_FILE) {
-			MPI_Barrier(fbuf->comm);
+			
 			//Check for any incoming messages
 			progress_io_matching();
-
-            if(gl_my_rank == fbuf->root_writer){
-				if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED)
-					notify_file_ready(fbuf);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "boo %d", fbuf->fready_notify_flag);
+            if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
+				assert(fbuf->root_writer == gl_my_rank);
+				while(fbuf->root_reader == -1)
+					progress_io_matching();
+				notify_file_ready(fbuf);
 			}
-
+			
 			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
 				//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
 			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
@@ -477,29 +471,16 @@ void close_file(file_buffer_t *fbuf)
 
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 
-			char *s = getenv("DTF_SCALE");
-			 if(s == NULL){
+			
+			 if(!gl_scale){ //TODO is it still relevant?
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
 				delete_ioreqs(fbuf, 1);
 			}
-            /*File is opened and closed multiple times in SCALE-LETKF
-              but it's the same set of processes, hence, don't delete the master related data.
-            */
 
         }
     } else if (fbuf->reader_id == gl_my_comp_id){
             assert(fbuf->rreq_cnt == 0);
             assert(fbuf->wreq_cnt == 0);
-
-            if(fbuf->root_reader == gl_my_rank && fbuf->iomode == DTF_IO_MODE_MEMORY){
-
-				while(!fbuf->done_match_confirm_flag){
-					progress_io_matching();
-				}
-
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Done");
-
-            }
 
             //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
 				//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
@@ -516,12 +497,13 @@ void close_file(file_buffer_t *fbuf)
 
     if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 
-        if(fbuf->my_mst_info->iodb != NULL){
-            if(fbuf->my_mst_info->is_master_flag)
-                clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
-             finalize_iodb(fbuf->my_mst_info, fbuf->nvars);
-        }
+        if(fbuf->my_mst_info->iodb != NULL && fbuf->my_mst_info->is_master_flag)
+			clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
+        
     }
+    
+    fbuf->is_ready = 0;  //reset flag
+    
     //delete_file_buffer(fbuf);
 }
 
@@ -569,6 +551,34 @@ int inquire_root(const char *filename)
 	return root_writer;
 }
 
+static void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
+{
+	int bufsz;
+    void *buf;
+    unsigned char *chbuf;
+    int err;
+	size_t offt = 0;
+	//pack my master info and send it to the other component
+	bufsz = MAX_FILE_NAME+fbuf->my_mst_info->nmasters*sizeof(int)+sizeof(int);
+	buf = dtf_malloc(bufsz);
+	assert(buf != NULL);
+	chbuf = (unsigned char*)buf;
+	
+	memcpy(chbuf, fbuf->file_path, MAX_FILE_NAME);
+	offt += MAX_FILE_NAME;
+	/*number of masters*/
+	memcpy(chbuf+offt, &(fbuf->my_mst_info->nmasters), sizeof(int));
+	offt += sizeof(int);
+	DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->my_mst_info->nmasters);
+	/*list of masters*/
+	memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
+	
+	DTF_DBG(VERBOSE_ERROR_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
+	err = MPI_Send(buf, bufsz, MPI_BYTE, tgt_root, FILE_INFO_REQ_TAG, gl_comps[tgt_comp].comm);
+	CHECK_MPI(err);
+	dtf_free(buf, bufsz);
+}
+
 void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 {
     DTF_DBG(VERBOSE_DBG_LEVEL,   "Enter dtf_open %s", fbuf->file_path);
@@ -576,7 +586,8 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
     MPI_Status status;
     int rank; //, notif_open=1;
     int err;
-    
+
+	
     MPI_Comm_rank(comm, &rank);
 
     if(fbuf->reader_id == gl_my_comp_id){
@@ -591,46 +602,12 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
 				fbuf->root_writer = inquire_root(fbuf->file_path);
                
-                if(rank == 0){
-					//pack my master info and send it to the other component
-					unsigned char *chbuf;
-					size_t sz; 
-					void *buf;
-					MPI_Offset offt = 0;
-					
-					sz = MAX_FILE_NAME+fbuf->my_mst_info->nmasters*sizeof(MPI_Offset)+sizeof(MPI_Offset);
-					sz += sz%sizeof(MPI_Offset);
-					buf = dtf_malloc(sz);
-					assert(buf != NULL);
-					chbuf = (unsigned char*)buf;
-					
-					memcpy(chbuf, fbuf->file_path, MAX_FILE_NAME);
-					offt += MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
-					/*number of masters*/
-					*((MPI_Offset*)(chbuf+offt)) = fbuf->my_mst_info->nmasters;
-					offt += sizeof(MPI_Offset);
-					assert(fbuf->my_mst_info->nmasters>0);
-					DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->my_mst_info->nmasters);
-					/*list of masters*/
-					memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
-					offt += fbuf->my_mst_info->nmasters*sizeof(MPI_Offset); //sizeof(int) + padding for MPI_Offset
-					
-                    DTF_DBG(VERBOSE_ERROR_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
-                    err = MPI_Send(buf, sz, MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm);
-                    CHECK_MPI(err);
-                    dtf_free(buf, sz);
-                }
+                if(rank == 0)
+					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
+                
             }
-            //NOTE: uncomment this for multi-cycle version where we open/close file only once
-            //fbuf->is_ready = 0;
-            double t_start = MPI_Wtime();
-//            if(fbuf->is_ready){
-//                notif_open = 0; //already notified before
-//                DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: file is already ready");
-//            } else
 
-
-			 if(rank == 0){
+			if(rank == 0){
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Waiting for file to become ready");
 				/*root reader rank will wait until writer finishes writing the file.
 				 then it will broadcast that the file is ready to everyone else*/
@@ -638,60 +615,38 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 				while(!fbuf->is_ready)
 					progress_io_matching();
 			}
-
-            err = MPI_Bcast(&fbuf->is_ready, 1, MPI_INT, 0, comm);
-            DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: Waiting to open file %.3f", MPI_Wtime()-t_start);
-            CHECK_MPI(err);
+			MPI_Barrier(comm);
+            fbuf->is_ready = 1;
 
             if(strstr(fbuf->file_path, "hist.d")!=NULL)
 				gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
 			else if(strstr(fbuf->file_path, "anal.d")!=NULL)
 				gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-			//char *s = getenv("DTF_SCALE");
+			
 			if(s != NULL)
 				DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp file ready %s", fbuf->file_path);
 
 
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-            /*First, find out who is the root master*/
-            int bufsz;
-            void *buf;
+			void *buf;
+			int bufsz;	
+			
+			if(fbuf->my_mst_info->is_master_flag){
+					int nranks;			
+					MPI_Comm_size(comm, &nranks);
+                	fbuf->my_mst_info->nranks_opened = nranks;
+			}
 
             if(fbuf->root_writer == -1){
 				/*Zero rank will inquire the pnetcdf header/dtf vars info/masters info
 				from writer's global zero rank and then broadcast this info to other
 				readers that opened the file*/
 				if(rank == 0){
-					int nranks;
-					unsigned char *chbuf;
+					fbuf->root_writer = inquire_root(fbuf->file_path);					
 
-					size_t offt = 0;
+					if(rank == 0)
+						send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
 					
-					MPI_Comm_size(comm, &nranks);
-                	fbuf->my_mst_info->nranks_opened = nranks;
-					fbuf->root_writer = inquire_root(fbuf->file_path);
-					DTF_DBG(VERBOSE_DBG_LEVEL, "Ask writer root for file info for %s", fbuf->file_path);
-					//pack my master info and send it to the other component
-
-					
-					bufsz = MAX_FILE_NAME+fbuf->my_mst_info->nmasters*sizeof(int)+sizeof(int);
-					buf = dtf_malloc(bufsz);
-					assert(buf != NULL);
-					chbuf = (unsigned char*)buf;
-					
-					memcpy(chbuf, fbuf->file_path, MAX_FILE_NAME);
-					offt += MAX_FILE_NAME;
-					/*number of masters*/
-					memcpy(chbuf+offt, &(fbuf->my_mst_info->nmasters), sizeof(int));
-					offt += sizeof(int);
-					DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->my_mst_info->nmasters);
-					/*list of masters*/
-					memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
-					
-                    DTF_DBG(VERBOSE_ERROR_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
-                    err = MPI_Send(buf, bufsz, MPI_BYTE, fbuf->root_writer, FILE_INFO_REQ_TAG, gl_comps[fbuf->writer_id].comm);
-                    CHECK_MPI(err);
-					dtf_free(buf, bufsz);
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Starting to wait for file info for %s", fbuf->file_path);
 					err = MPI_Probe(fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
 					CHECK_MPI(err);
@@ -702,7 +657,6 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 					err = MPI_Recv(buf, bufsz, MPI_BYTE, fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
 					CHECK_MPI(err);
 				}
-			   // MPI_Barrier(comm);
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Bcast file info to others");
 				err = MPI_Bcast(&bufsz, 1, MPI_INT, 0, comm);
 				CHECK_MPI(err);
@@ -718,15 +672,15 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 				unpack_file_info(bufsz, buf);
 				dtf_free(buf, bufsz);
 			}
-        	//TODO this is not the same behavior for mem and file modes. is it ok? is it needed?
 
 			fbuf->is_ready = 1;
-			fbuf->done_match_confirm_flag = 1;
         }
 
     } else if(fbuf->writer_id == gl_my_comp_id){
 
-
+		if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
+			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+			
         /*reset all flags*/
         //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
 			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)

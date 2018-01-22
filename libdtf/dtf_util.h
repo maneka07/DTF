@@ -23,7 +23,7 @@
 #define FILE_INFO_REQ_TAG   6
 #define MATCH_DONE_TAG      7
 #define IO_REQS_TAG         8
-#define READ_DONE_CONFIRM_TAG	9
+#define COMP_SYNC_TAG	9
 
 #define IODB_BUILD_VARID    0  /*Distribute ioreqs based on var id*/
 #define IODB_BUILD_BLOCK    1  /*Distribute ioreqs by dividing var to blocks*/
@@ -33,6 +33,12 @@
 #define VERBOSE_ALL_LEVEL     2
 
 #define DTF_TIMEOUT       60 
+
+/*NOTE: These two definitions are copied from pnetcdf.h
+ * since I wanted to be able to compile DTF without having 
+ * to link it to pnetcdf.*/
+#define NC_NOWRITE	 0x0000	/**< Set read-only access for nc_open(). */
+#define NC_WRITE    	 0x0001	/**< Set read-write access for nc_open(). */
 
 #define ENQUEUE_ITEM(item, queue) do{\
     if(queue == NULL)   \
@@ -52,10 +58,10 @@
         item->next->prev = item->prev;  \
     if(queue == item){   \
         queue = item->next; \
-        if(queue == NULL)   \
-            DTF_DBG(VERBOSE_DBG_LEVEL, "queue empty");  \
     }   \
     DTF_DBG(VERBOSE_DBG_LEVEL, "deq_item %p", (void*)item);    \
+    if(queue == NULL)   \
+            DTF_DBG(VERBOSE_DBG_LEVEL, "queue empty");  \
 } while(0)
 
 
@@ -161,6 +167,7 @@ extern int gl_my_comp_id;                          /*Id of this compoinent*/
 extern int gl_ncomp;                               /*Number of components*/
 extern int gl_verbose;
 extern int gl_my_rank;                         /*For debug messages*/
+extern int gl_scale;                           /*special flag for scale-letkf execution*/
 extern struct dtf_config gl_conf;                 /*Framework settings*/
 extern struct stats gl_stats;
 extern char *gl_my_comp_name;

@@ -132,7 +132,6 @@ int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
 int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);
 void init_iodb(ioreq_db_t *iodb);
 void clean_iodb(ioreq_db_t *iodb, int nvars);
-void finalize_iodb(master_info_t *mst_info, int nvars);
 void unpack_file_info(MPI_Offset bufsz, void *buf);
 void send_file_info(file_buffer_t *fbuf, int reader_root);
 void notify_complete_multiple(file_buffer_t *fbuf);

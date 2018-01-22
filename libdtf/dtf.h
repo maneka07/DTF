@@ -46,7 +46,7 @@ void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void
 void dtf_skip_match_(const char *filename, MPI_Fint *fcomm);
 
 /*Interfaces used by PnetCDF*/
-_EXTERN_C_ void dtf_open(const char* filename, MPI_Comm comm);
+_EXTERN_C_ void dtf_open(const char* filename, int omode, MPI_Comm comm);
 _EXTERN_C_ void dtf_close(const char* filename);
 _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid);
 _EXTERN_C_ int dtf_io_mode(const char* filename);

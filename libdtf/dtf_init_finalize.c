@@ -531,18 +531,7 @@ int load_config(const char *ini_name, const char *comp_name){
                     break;
                 }
             }
-		} else if(strcmp(param, "creator") == 0){
-            assert(cur_fpat != NULL);
-            assert(gl_ncomp != 0);
-            for(i = 0; i < gl_ncomp; i++){
-                if(strcmp(value, gl_comps[i].name) == 0){
-                    cur_fpat->create_comp_id = i;
-                    break;
-                }
-            }
-            
-            assert( (cur_fpat->create_comp_id == cur_fpat->comp1) || (cur_fpat->create_comp_id == cur_fpat->comp2));
-        } else if(strcmp(param, "mode") == 0){
+		} else if(strcmp(param, "mode") == 0){
             assert(cur_fpat != NULL);
 
             if(strcmp(value, "file") == 0)
@@ -678,20 +667,9 @@ void finalize_files()
     while(fbuf != NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, fready_notif_flag %d", fbuf->file_path,  fbuf->fready_notify_flag);
         if(fbuf->iomode == DTF_IO_MODE_FILE){
-			 if( (fbuf->writer_id == gl_my_comp_id) &&
-			     (fbuf->root_writer == gl_my_rank)  &&
-			     (fbuf->fready_notify_flag != RDR_NOTIFIED) )
+			 if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOTIF_POSTED)
 				file_cnt++;
-        } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-			//~ if( (fbuf->writer_id == gl_my_comp_id) && !fbuf->rdr_closed_flag )
-				//~ file_cnt++;
-			//~ else
-			if( (fbuf->reader_id == gl_my_comp_id) &&
-			         (gl_my_rank == fbuf->root_reader)  &&
-			         (!fbuf->done_match_confirm_flag)  )
-			         file_cnt++;
-		}
-
+        } 
 
         fbuf = fbuf->next;
     }
@@ -704,31 +682,18 @@ void finalize_files()
 	while(fbuf != NULL){
 
 		if(fbuf->iomode == DTF_IO_MODE_FILE){
-			 if( (fbuf->writer_id == gl_my_comp_id) &&
-				 (fbuf->root_writer == gl_my_rank)  &&
-				 (fbuf->fready_notify_flag != RDR_NOTIFIED) ){
 
-				if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED)
-					notify_file_ready(fbuf);
-
-				while(fbuf->fready_notify_flag != RDR_NOTIFIED)
-					progress_io_matching();
-			 }
-			 file_cnt++;
-		} else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-			//~ if(fbuf->writer_id == gl_my_comp_id){
-				//~ while(!fbuf->rdr_closed_flag )
+			//~ if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
+				//~ while(fbuf->root_reader == -1)
 					//~ progress_io_matching();
-				//~ file_cnt++;
-			//~ }else
-			if(fbuf->reader_id == gl_my_comp_id){
-
-					 if(gl_my_rank == fbuf->root_reader)
-						while(!fbuf->done_match_confirm_flag)
-							progress_io_matching();
-			}
-			file_cnt++;
-		}
+				//~ notify_file_ready(fbuf);
+			//~ }
+			if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOTIF_POSTED)
+				while(fbuf->fready_notify_flag != DTF_UNDEFINED)
+					progress_io_matching();
+			 
+		} 
+		file_cnt++;
 		fbuf = fbuf->next;
 	}
 	assert(file_cnt == gl_stats.nfiles);

@@ -54,7 +54,6 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
 _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 {
     file_buffer_t *fbuf;
-    fname_pattern_t *pat;
 
     if(!lib_initialized) return;
 
@@ -64,10 +63,14 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 	}
 
-    pat = gl_fname_ptrns;
+    fname_pattern_t *pat = gl_fname_ptrns;
 	while(pat != NULL){
-		if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls)){
+		if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls) && !pat->ignore_io){
 			fbuf = create_file_buffer(pat, filename);
+			/*Because this component creates the file, we assume that it's the writer*/
+			fbuf->omode = DTF_WRITE; 
+			fbuf->writer_id = gl_my_comp_id;
+			fbuf->reader_id = (gl_my_comp_id == pat->comp1) ? pat->comp2 : pat->comp1;
 			break;
 		}
 		pat = pat->next;
@@ -79,19 +82,13 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
     } else {
         DTF_DBG(VERBOSE_DBG_LEVEL, "Created file %s (ncid %d)", filename, ncid);
     }
-
+	
     fbuf->ncid = ncid;
     fbuf->comm = comm;
-    int root_mst = gl_my_rank;
-    int err = MPI_Bcast(&root_mst, 1, MPI_INT, 0, comm);
-    CHECK_MPI(err);
-	/*Because this component creates the file, we assume that it's the writer*/
-    fbuf->last_io = DTF_WRITE; 
-    fbuf->writer_id = gl_my_comp_id;
-    fbuf->root_writer = root_mst;
-    fbuf->reader_id = (gl_my_comp_id == pat->comp1) ? pat->comp2 : pat->comp1;
-    
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
+	init_req_match_masters(comm, fbuf->my_mst_info);
+	fbuf->root_writer = fbuf->my_mst_info->masters[0];
+	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
 
     if(gl_my_rank == fbuf->root_writer){
 		int i;
@@ -115,56 +112,50 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		if(!fwrite(&fbuf->root_writer, sizeof(int), 1, rootf))
 			assert(0);
 		fclose(rootf);
-
 	}
-
-    init_req_match_masters(comm, fbuf->my_mst_info);
-
+	
     if(fbuf->iomode == DTF_IO_MODE_MEMORY){
         if(fbuf->my_mst_info->is_master_flag){
             int nranks;
             MPI_Comm_size(comm, &nranks);
-
-            assert(fbuf->my_mst_info->iodb == NULL);
-            fbuf->my_mst_info->iodb = dtf_malloc(sizeof(struct ioreq_db));
-            assert(fbuf->my_mst_info->iodb != NULL);
-            init_iodb(fbuf->my_mst_info->iodb);
             fbuf->my_mst_info->nranks_opened = (unsigned int)nranks;
         }
 
     } else if(fbuf->iomode == DTF_IO_MODE_FILE){
-        fbuf->fready_notify_flag = RDR_HASNT_OPENED;
+        if(fbuf->root_writer == gl_my_rank)
+			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
 
         /*Create symlink to this file (needed for SCALE-LETKF since
           there is no way to execute the script to perform all the file
           movement in the middle of the execution)*/
-         if(fbuf->slink_name!=NULL && fbuf->root_writer==gl_my_rank){
-            int err;
-            size_t slen1, slen2;
-            char *dir = NULL;
-            char wdir[MAX_FILE_NAME]="\0";
-            char slink[MAX_FILE_NAME]="\0";
-            char origfile[MAX_FILE_NAME]="\0";
+          //TODO remove symbolic links in both branches
+         //~ if(fbuf->slink_name!=NULL && fbuf->root_writer==gl_my_rank){
+            //~ int err;
+            //~ size_t slen1, slen2;
+            //~ char *dir = NULL;
+            //~ char wdir[MAX_FILE_NAME]="\0";
+            //~ char slink[MAX_FILE_NAME]="\0";
+            //~ char origfile[MAX_FILE_NAME]="\0";
 
-            dir = getcwd(wdir, MAX_FILE_NAME);
-            assert(dir != NULL);
-            slen1 = strlen(wdir);
-            slen2 = strlen(fbuf->slink_name);
-            if(slen1+slen2+1 > MAX_FILE_NAME){
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: symlink name of length %ld exceeds max filename of %d",slen1+slen2+1, MAX_FILE_NAME);
-                MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-            }
+            //~ dir = getcwd(wdir, MAX_FILE_NAME);
+            //~ assert(dir != NULL);
+            //~ slen1 = strlen(wdir);
+            //~ slen2 = strlen(fbuf->slink_name);
+            //~ if(slen1+slen2+1 > MAX_FILE_NAME){
+                //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: symlink name of length %ld exceeds max filename of %d",slen1+slen2+1, MAX_FILE_NAME);
+                //~ MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+            //~ }
 
-            sprintf(slink, "%s/%s", wdir, fbuf->slink_name);
-            sprintf(origfile, "%s/%s", wdir, fbuf->file_path);
+            //~ sprintf(slink, "%s/%s", wdir, fbuf->slink_name);
+            //~ sprintf(origfile, "%s/%s", wdir, fbuf->file_path);
 
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Creating symlink %s to %s (%s)", slink, origfile, fbuf->file_path);
-            err = symlink(origfile, slink);
-            if(err != 0){
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: error creating symlink %s to %s : %s", slink, origfile,  strerror(errno));
+            //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Creating symlink %s to %s (%s)", slink, origfile, fbuf->file_path);
+            //~ err = symlink(origfile, slink);
+            //~ if(err != 0){
+                //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: error creating symlink %s to %s : %s", slink, origfile,  strerror(errno));
 
-            }
-        }
+            //~ }
+        //~ }
         //scale-letkf
 		if(strstr(fbuf->file_path, "hist.d")!=NULL)
 			gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
@@ -185,11 +176,11 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
   @return	void
 
  */
-_EXTERN_C_ void dtf_open(const char *filename, MPI_Comm comm)
+_EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 {
     int nranks;
     file_buffer_t *fbuf;
-
+	
     if(!lib_initialized) return;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
 
@@ -198,9 +189,14 @@ _EXTERN_C_ void dtf_open(const char *filename, MPI_Comm comm)
     if(fbuf == NULL){
 		fname_pattern_t *pat = gl_fname_ptrns;
 		while(pat != NULL){
-			if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls)){
+			if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls) && !pat->ignore_io){
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
 				fbuf = create_file_buffer(pat, filename);
+				/*Assume that this component is the reader*/
+				fbuf->reader_id = gl_my_comp_id;
+				fbuf->writer_id = (gl_my_comp_id == pat->comp1) ? pat->comp2 : pat->comp1;
+				assert( (omode & NC_WRITE) == 0);
+				fbuf->omode = DTF_READ;
 				break;
 			}
 			pat = pat->next;
@@ -223,9 +219,9 @@ _EXTERN_C_ void dtf_open(const char *filename, MPI_Comm comm)
     else
         DTF_DBG(VERBOSE_DBG_LEVEL, "File opened in subcommunicator (%d nprocs)", nranks);
 
-    if(fbuf->my_mst_info->nmasters == 0)
+    if(fbuf->my_mst_info->nmasters == 0){
         init_req_match_masters(comm, fbuf->my_mst_info);
-    else {
+    } else {
 		/*do a simple check that the same set of processes as before opened the file*/
 		int rank;
 		MPI_Comm_rank(comm, &rank);
@@ -233,59 +229,66 @@ _EXTERN_C_ void dtf_open(const char *filename, MPI_Comm comm)
 			assert(gl_my_rank == fbuf->my_mst_info->masters[0]);			
 	}
 
-    if(fbuf->iomode == DTF_IO_MODE_MEMORY && fbuf->my_mst_info->is_master_flag){
-        assert(fbuf->my_mst_info->iodb == NULL);
-        fbuf->my_mst_info->iodb = dtf_malloc(sizeof(struct ioreq_db));
-        assert(fbuf->my_mst_info->iodb != NULL);
-        init_iodb(fbuf->my_mst_info->iodb);
-        fbuf->my_mst_info->nranks_opened = (unsigned int)nranks;
-    }
+	/*Check if the file was opened before and if we need to 
+	 * complete the file-ready notification*/
+	 if(fbuf->fready_notify_flag == RDR_NOTIF_POSTED){
+		assert(fbuf->root_writer == gl_my_rank);
+		while(fbuf->fready_notify_flag != DTF_UNDEFINED)
+			progress_io_matching();
+	 }
 
-	/* If this is the first time the component opens the file, we assume it's the reader.
-	 * Otherwise, we flip the I/O mode (this is SCALE-LETKF-specific since each component 
-	 * opens the file first for reading, next for writing and vice versa for the other 
-	 * component).*/
-	if(fbuf->last_io == DTF_UNDEFINED){
-		assert(fbuf->create_comp_id != gl_my_comp_id);
+	if( omode & NC_WRITE )
+		fbuf->omode = DTF_WRITE;
+	else // NC_NOWRITE 
+		fbuf->omode = DTF_READ;
+
+	/*Set who's the reader and writer component in this session*/
+	int cpl_cmp = (fbuf->reader_id == gl_my_comp_id) ? fbuf->writer_id : fbuf->reader_id; 
+	int cpl_root = (fbuf->reader_id == gl_my_comp_id) ? fbuf->root_writer : fbuf->root_reader;
+	
+	if(fbuf->omode == DTF_READ){
+
+	    /*If the component was the writer in the previous session, the root
+		 * process must have the master info of the coupled component. It
+		 * will broadcast the info.*/
+		if(fbuf->writer_id == gl_my_comp_id){
+			int rank, err;
+			MPI_Comm_rank(comm, &rank);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about the other component");
+			
+			//root broadcasts master info to others
+			if(rank == 0){
+				assert(fbuf->cpl_mst_info->nmasters>0);
+			}
+			err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
+			CHECK_MPI(err);
+			if(rank != 0){
+				assert(fbuf->cpl_mst_info->masters== NULL);
+				fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+				assert(fbuf->cpl_mst_info->masters != NULL);	
+			}
+			
+			err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
+			CHECK_MPI(err);
+			fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
+			
+			//~ for(i = 0; i < fbuf->cpl_mst_info->nmasters; i++)
+				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "mst list %d",fbuf->cpl_mst_info->masters[i]); 
+		} else 
+			fbuf->root_writer = cpl_root;
+		 
 		fbuf->reader_id = gl_my_comp_id;
-		fbuf->writer_id = fbuf->create_comp_id;
 		fbuf->root_reader = fbuf->my_mst_info->masters[0];
-		fbuf->last_io = DTF_READ;
-	} else if(fbuf->last_io == DTF_READ){
-		fbuf->reader_id = fbuf->writer_id;
-		fbuf->root_reader =fbuf->root_writer;
-		fbuf->last_io = DTF_WRITE;
+		fbuf->writer_id = cpl_cmp;
+	} else { /*fbuf->omode == DTF_WRITE*/			
 		fbuf->writer_id = gl_my_comp_id;
 		fbuf->root_writer = fbuf->my_mst_info->masters[0];
-	} else { /*fbuf->last_io == DTF_WRITE*/
-		int err, rank, i;
-		MPI_Comm_rank(comm, &rank);
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast master info about the other component");
-		//root broadcasts master info to others
-		if(rank == 0){
-			assert(fbuf->cpl_mst_info->nmasters>0);
-		}
-		err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
-		CHECK_MPI(err);
-		if(rank != 0){
-			assert(fbuf->cpl_mst_info->masters== NULL);
-			fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-			assert(fbuf->cpl_mst_info->masters != NULL);	
-		}
-		
-		err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
-		CHECK_MPI(err);
-		
-		for(i = 0; i < fbuf->cpl_mst_info->nmasters; i++)
-			DTF_DBG(VERBOSE_DBG_LEVEL, "mst list %d",fbuf->cpl_mst_info->masters[i]); 
-		
-		fbuf->last_io = DTF_READ;
-		fbuf->writer_id = fbuf->reader_id;
-		fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
-		fbuf->reader_id = gl_my_comp_id;
-		fbuf->root_reader = fbuf->my_mst_info->masters[0];
+		fbuf->reader_id = cpl_cmp;	
+		fbuf->root_reader = cpl_root;
 	}
-
+	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %d (root %d), reader %d (root %d), omode %d", fbuf->writer_id, fbuf->root_writer, fbuf->reader_id, fbuf->root_reader, omode);
+    
     open_file(fbuf, comm);
 }
 
@@ -416,7 +419,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: rw_flag value incorrect (%d)", rw_flag);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
-    if(rw_flag==DTF_WRITE && (fbuf->reader_id == gl_my_comp_id || fbuf->ignore_io)){
+    if(rw_flag==DTF_WRITE && fbuf->reader_id == gl_my_comp_id){
         int el_sz, i;
         dtf_var_t *var = fbuf->vars[varid];
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: reader component cannot write to the file %s. Ignore I/O call", fbuf->file_path);

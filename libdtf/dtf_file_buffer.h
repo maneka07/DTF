@@ -12,7 +12,7 @@
  1 - the ps writes to this file. The file is not ready yet.
  2 - The file is ready, reader has been notified
  */
-#define RDR_HASNT_OPENED   0
+ 
 #define RDR_NOT_NOTIFIED   1
 #define RDR_NOTIF_POSTED   2
 #define RDR_NOTIFIED       3
@@ -47,14 +47,12 @@ typedef struct file_buffer{
   int                       reader_id;
   int                       cpl_comp_id;      /*Id of the component with whom this component is
                                                coupled via this file*/
-  int                       create_comp_id;    /*Id of the component that creates and defines the file*/
   int                       is_ready;           /*Used to let the reader know that the file is either
                                       - received from the writer (mode = DTF_IO_MODE_MEMORY)
                                       - finished being written (mode = DTF_IO_MODE_FILE)
                                     */
-  int                       iomode;               /*Do normal File I/O or direct data transfer?*/
-  int                       last_io;     /*read/write/undefined*/           
-  int                       ignore_io;
+  int                       iomode;    /*Do normal File I/O or direct data transfer?*/
+  int                       omode;     /*open mode (read/write/undefined)*/           
 
   int                       root_writer;           /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
   int                       root_reader;
@@ -64,9 +62,7 @@ typedef struct file_buffer{
   unsigned int              rreq_cnt;
   unsigned int              wreq_cnt;
   int                       done_matching_flag;     	/*Flag used to complete matching requests*/
-  int                       done_match_confirm_flag;	/*Is set by the reader when the writer confirms that it finished matching.
-														  Needed for multi-iterative programs to prevent the reader from sending
-														  * ioreqs from the next iteration before writer finished with previous iteration*/
+  int                       sync_comp_flag;		/*Used for syncing two components*/
   int                       is_matching_flag;   /*Set to 1 when process starts matching. Reset to 0 when matching is done.*/
 //  int                       rdr_closed_flag;           /*Flag set to 1 when reader closes the file*/
   int                       fready_notify_flag;   /*flag used to notify the reader that the file is ready for reading.
@@ -84,7 +80,6 @@ typedef struct fname_pattern{
     int  nexcls;                 /*Number of file name patterns to exclude*/
     int  comp1;
     int  comp2;
-    int  create_comp_id;
     int  iomode;
     int  ignore_io;				/*disable I/O for this file*/
     struct fname_pattern *next;
