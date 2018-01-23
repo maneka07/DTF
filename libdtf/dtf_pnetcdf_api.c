@@ -125,37 +125,6 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
         if(fbuf->root_writer == gl_my_rank)
 			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
 
-        /*Create symlink to this file (needed for SCALE-LETKF since
-          there is no way to execute the script to perform all the file
-          movement in the middle of the execution)*/
-          //TODO remove symbolic links in both branches
-         //~ if(fbuf->slink_name!=NULL && fbuf->root_writer==gl_my_rank){
-            //~ int err;
-            //~ size_t slen1, slen2;
-            //~ char *dir = NULL;
-            //~ char wdir[MAX_FILE_NAME]="\0";
-            //~ char slink[MAX_FILE_NAME]="\0";
-            //~ char origfile[MAX_FILE_NAME]="\0";
-
-            //~ dir = getcwd(wdir, MAX_FILE_NAME);
-            //~ assert(dir != NULL);
-            //~ slen1 = strlen(wdir);
-            //~ slen2 = strlen(fbuf->slink_name);
-            //~ if(slen1+slen2+1 > MAX_FILE_NAME){
-                //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: symlink name of length %ld exceeds max filename of %d",slen1+slen2+1, MAX_FILE_NAME);
-                //~ MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-            //~ }
-
-            //~ sprintf(slink, "%s/%s", wdir, fbuf->slink_name);
-            //~ sprintf(origfile, "%s/%s", wdir, fbuf->file_path);
-
-            //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Creating symlink %s to %s (%s)", slink, origfile, fbuf->file_path);
-            //~ err = symlink(origfile, slink);
-            //~ if(err != 0){
-                //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: error creating symlink %s to %s : %s", slink, origfile,  strerror(errno));
-
-            //~ }
-        //~ }
         //scale-letkf
 		if(strstr(fbuf->file_path, "hist.d")!=NULL)
 			gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
@@ -332,38 +301,8 @@ _EXTERN_C_ void dtf_close(const char* filename)
         DTF_DBG(VERBOSE_DBG_LEVEL, "File not treated by dtf");
         return;
     }
-//    if(fbuf->reader_id == gl_my_comp_id)
-
-    //MPI_Barrier(fbuf->comm);
 
     close_file(fbuf);
-}
-
-
-//TODO delete this I/O
-/*called inside wait function in pnetcdf*/
-_EXTERN_C_ int dtf_match_ioreqs(const char* filename)
-{
-	return 0;
-    //~ int ret;
-    //~ if(!lib_initialized) return 0;
-    //~ file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    //~ if(fbuf == NULL) return 0;
-    //~ if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-    //~ if(fbuf->ignore_io) return 0;
-
-     //~ //Never checked if this function works correctly
-     //~ assert(0);
-
-    //~ if(fbuf->is_matching_flag){
-        //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_match_ioreqs is called for file %s, but a matching process has already started before.", fbuf->file_path);
-        //~ MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-    //~ }
-    //~ fbuf->is_matching_flag = 1;
-    //~ ret = match_ioreqs(fbuf, 0);
-    //~ fbuf->is_matching_flag = 0;
-
-    //~ return ret;
 }
 
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data)
@@ -513,7 +452,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
 _EXTERN_C_ void dtf_tstart()
 {
     if(!lib_initialized) return;
-    //DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat start");
+    
     if(gl_stats.timer_start != 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.",
                 gl_stats.timer_start - gl_stats.walltime);
@@ -527,8 +466,8 @@ _EXTERN_C_ void dtf_tend()
     tt = MPI_Wtime() - gl_stats.timer_start;
     gl_stats.timer_accum += tt;
     gl_stats.timer_start = 0;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat %.6f", tt);
- //   DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
+   // DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat %.6f", tt);
+ 
 }
 
 /************************************************  Fortran Interfaces  *********************************************************/

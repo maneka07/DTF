@@ -122,14 +122,6 @@ static int check_config()
 			ret = 1;
 		}
 
-		if(cur_fpat->slink_name != NULL){
-			char *token = strchr(cur_fpat->slink_name, '%');
-			if(token != NULL){
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: pattern symbol %% not allowed in symbolic links (%s)", cur_fpat->slink_name);
-				ret = 1;
-			}
-		}
-
 		if(cur_fpat->ignore_io){
 			cur_fpat = cur_fpat->next;
 			continue;
@@ -321,8 +313,6 @@ void clean_config(){
   fname_pattern_t *pat = gl_fname_ptrns;
 
   while(pat != NULL){
-	 if(pat->slink_name != NULL)
-		dtf_free(pat->slink_name, MAX_FILE_NAME*sizeof(char));
 
 	 for(i = 0; i < pat->nexcls; i++)
 		dtf_free(pat->excl_fnames[i], sizeof(char)*MAX_FILE_NAME);
@@ -488,14 +478,7 @@ int load_config(const char *ini_name, const char *comp_name){
 			assert(strlen(value) <= MAX_FILE_NAME);
 			strcpy(cur_fpat->fname, value);
 
-        } else if(strcmp(param, "slink") == 0){
-            assert(cur_fpat != NULL);
-            assert(strlen(value) <= MAX_FILE_NAME);
-            cur_fpat->slink_name = dtf_malloc(sizeof(char)*MAX_FILE_NAME);
-            assert(cur_fpat->slink_name != NULL);
-            strcpy(cur_fpat->slink_name, value);
-
-         } else if(strcmp(param, "exclude_name") == 0){
+        } else if(strcmp(param, "exclude_name") == 0){
             assert(cur_fpat != NULL);
             assert(strlen(value) <= MAX_FILE_NAME);
             char **tmp = realloc(cur_fpat->excl_fnames, sizeof(char*)*(cur_fpat->nexcls+1));
@@ -540,10 +523,10 @@ int load_config(const char *ini_name, const char *comp_name){
 
                 cur_fpat->iomode = DTF_IO_MODE_MEMORY;
 
-                if(gl_msg_buf == NULL){
-                    gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
-                    assert(gl_msg_buf != NULL);
-                }
+                //~ if(gl_msg_buf == NULL){
+                    //~ gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
+                    //~ assert(gl_msg_buf != NULL);
+                //~ }
             } else {
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown I/O mode: %s.", value);
 				goto panic_exit;

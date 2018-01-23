@@ -452,7 +452,6 @@ void close_file(file_buffer_t *fbuf)
 			
 			//Check for any incoming messages
 			progress_io_matching();
-			DTF_DBG(VERBOSE_DBG_LEVEL, "boo %d", fbuf->fready_notify_flag);
             if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
 				assert(fbuf->root_writer == gl_my_rank);
 				while(fbuf->root_reader == -1)
@@ -472,10 +471,10 @@ void close_file(file_buffer_t *fbuf)
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 
 			
-			 if(!gl_scale){ //TODO is it still relevant?
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
-				delete_ioreqs(fbuf, 1);
-			}
+			 //~ if(!gl_scale){ 
+				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
+				//~ delete_ioreqs(fbuf, 1);
+			//~ }
 
         }
     } else if (fbuf->reader_id == gl_my_comp_id){
@@ -500,6 +499,7 @@ void close_file(file_buffer_t *fbuf)
         if(fbuf->my_mst_info->iodb != NULL && fbuf->my_mst_info->is_master_flag)
 			clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
         
+		delete_ioreqs(fbuf,1); 
     }
     
     fbuf->is_ready = 0;  //reset flag

@@ -172,7 +172,6 @@ MPI_Offset nbuf_read_write_var(file_buffer_t *fbuf,
         if(rw_flag == DTF_READ)
             buffered = 0;
 
-		//TODO figure out with this and is_permanent
         if( gl_scale && (var->ndims <= 1) && (rw_flag == DTF_WRITE))
              /*This is specifically for SCALE-LETKF since they overwrite the
               user buffer in every time frame iteration */

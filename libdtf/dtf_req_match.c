@@ -813,16 +813,7 @@ io_req_t *new_ioreq(int id,
         ioreq->user_buf_sz = count[0];
         for(i=1;i<ndims;i++)
             ioreq->user_buf_sz *= count[i];
-        char *s = getenv("BT_BENCH");
-        int bt_bench = 0;
-        if(s!=NULL)
-            bt_bench = 1;
-        if(bt_bench){
-            int def_el_sz;
-            MPI_Type_size(MPI_DOUBLE, &def_el_sz);
-            ioreq->user_buf_sz *= def_el_sz;
-        } else
-            ioreq->user_buf_sz *= el_sz;
+        ioreq->user_buf_sz *= el_sz;
 
         ioreq->start = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
         assert(ioreq->start != NULL);
@@ -1188,7 +1179,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf, int intracomp_match)
 						while(bufsz[mst]+ext_sz < var->ndims*sizeof(MPI_Offset)*3+offt[mst])
 							ext_sz += mlc_chunk;
 						DTF_DBG(VERBOSE_DBG_LEVEL, "bufsz %lu, ext sz %lu", bufsz[mst], ext_sz );
-						//TODO avoid reallocing?
+						
 						void *tmp = realloc(sbuf[mst], bufsz[mst] + ext_sz);
 						assert(tmp != NULL);
 						gl_stats.malloc_size += ext_sz;
@@ -1418,8 +1409,6 @@ static void reset_fbuf_match(file_buffer_t *fbuf)
     if ((fbuf->writer_id == gl_my_comp_id) && fbuf->my_mst_info->is_master_flag)
         /*Reset flag for future matchings*/
         fbuf->my_mst_info->iodb->updated_flag = 0;
-
-    fbuf->is_matching_flag = 0;
     fbuf->my_mst_info->nrranks_completed = 0;
 }
 
@@ -1552,7 +1541,6 @@ int match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag)
 //    t_part1 = MPI_Wtime() - t_part1;
 //    t_part2 = MPI_Wtime();
 
-    fbuf->is_matching_flag = 1; //TODO this flag not needed?
     //counter = 0;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching phase");
     while(!fbuf->done_matching_flag){
@@ -1652,8 +1640,8 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
 
     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     assert(fbuf != NULL);
-    assert(gl_msg_buf != NULL);
-    sbuf = (unsigned char*)gl_msg_buf;
+    sbuf = dtf_malloc(gl_conf.data_msg_size_limit);//(unsigned char*)gl_msg_buf;
+    assert(sbuf != NULL);
     sbufsz = (int)gl_conf.data_msg_size_limit;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: use data buf of sz %d", (int)sbufsz);
@@ -1828,17 +1816,12 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
             } else {
                 int cnt_mismatch = 0;
                 int type_mismatch = 0;
-                int bt_bench = 0;
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Will copy subblock (strt->cnt):");
                 for(i=0; i < var->ndims; i++)
                     DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld \t orig: \t %lld\t --> %lld)", new_start[i], new_count[i], start[i], count[i]);
 
                 /*Copy the block to send buffer*/
-
-                char *s = getenv("BT_BENCH");
-                if(s != NULL)  //HACK: don't check  for type mismatch for BT benchmark
-                    bt_bench = 1;
-                if(!bt_bench && (var->dtype != ioreq->dtype)){
+                if(var->dtype != ioreq->dtype){
                 //if(var->dtype != ioreq->dtype){
                     /*Will only support conversion from MPI_DOUBLE to MPI_FLOAT*/
                     if(var->dtype == MPI_FLOAT){
@@ -1881,12 +1864,7 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
                         int req_el_sz;
                         MPI_Offset start_cpy_offt;
                         MPI_Type_size(ioreq->dtype, &req_el_sz);
-                        //TODO do not include this in git (special for bt benchmark)
-                        if(bt_bench)
-                            start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, new_start) * def_el_sz;
-                        else
-                            start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, new_start) * req_el_sz;
-
+                        start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, new_start) * req_el_sz;
                         if(type_mismatch){
                             convertcpy(ioreq->dtype, var->dtype, (unsigned char*)ioreq->user_buf+start_cpy_offt,
                                        (void*)(sbuf+sofft), (int)fit_nelems);
@@ -1898,11 +1876,7 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
 							DTF_DBG(VERBOSE_DBG_LEVEL, "chsum contin for req %d is %.4f", ioreq->id, chsum);
 						}
                     } else {
-						if(bt_bench)
-							get_put_data(var, var->dtype, ioreq->user_buf, ioreq->start,
-                                           ioreq->count, new_start, new_count, sbuf+sofft, DTF_READ, type_mismatch);
-						else
-							get_put_data(var, ioreq->dtype, ioreq->user_buf, ioreq->start,
+						get_put_data(var, ioreq->dtype, ioreq->user_buf, ioreq->start,
                                            ioreq->count, new_start, new_count, sbuf+sofft, DTF_READ, type_mismatch);
                         if(gl_conf.do_checksum){
 							double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
@@ -2037,12 +2011,7 @@ static void recv_data_rdr(void* buf, int bufsz)
         MPI_Type_size(var->dtype, &def_el_sz);
 
         type_mismatch = 0;
-        int bt_bench = 0;
-        char *s = getenv("BT_BENCH");
-        if(s != NULL)  //HACK: don't check  for type mismatch for BT benchmark
-            bt_bench = 1;
-        if(!bt_bench && (ioreq->dtype != var->dtype)){
-        //if(ioreq->dtype != var->dtype){
+        if(ioreq->dtype != var->dtype){
             type_mismatch = 1;
             if(var->dtype == MPI_FLOAT){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from float to double");
@@ -2055,7 +2024,6 @@ static void recv_data_rdr(void* buf, int bufsz)
                 assert(0);
             }
         }
-
 
         /*Copy data*/
         nelems = 1;
@@ -2071,11 +2039,7 @@ static void recv_data_rdr(void* buf, int bufsz)
             get_put_data(var, ioreq->dtype, ioreq->user_buf, NULL,
                             NULL, NULL, NULL, data, DTF_WRITE, type_mismatch);
         } else if(var->max_dim==0 && cnt_mismatch==0 ){ //continious block of memory
-            MPI_Offset start_cpy_offt;
-                if(bt_bench)
-                    start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * def_el_sz;
-                else
-					start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * req_el_sz;
+            MPI_Offset start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * req_el_sz;
             if(type_mismatch){
                 convertcpy(var->dtype, ioreq->dtype, data, (unsigned char*)ioreq->user_buf + start_cpy_offt, nelems);
             } else
@@ -2086,19 +2050,12 @@ static void recv_data_rdr(void* buf, int bufsz)
 			//~ }
         } else{
 			/*Copy from rbuf to user buffer*/
-			if(bt_bench)
-				get_put_data(var, var->dtype, ioreq->user_buf, ioreq->start,
-                                       ioreq->count, start, count, data, DTF_WRITE, type_mismatch);
-            else
-				get_put_data(var, ioreq->dtype, ioreq->user_buf, ioreq->start,
+			get_put_data(var, ioreq->dtype, ioreq->user_buf, ioreq->start,
                                        ioreq->count, start, count, data, DTF_WRITE, type_mismatch);
         }
         gl_stats.nbl++;
         offt += nelems*def_el_sz +(nelems*def_el_sz)%sizeof(MPI_Offset);
-            if(bt_bench)
-                ioreq->get_sz += (MPI_Offset)(nelems*def_el_sz);
-            else
-				ioreq->get_sz += (MPI_Offset)(nelems*req_el_sz);
+        ioreq->get_sz += (MPI_Offset)(nelems*req_el_sz);
 
 
         DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, var_id, (int)ioreq->get_sz, (int)ioreq->user_buf_sz);
@@ -2443,8 +2400,7 @@ void progress_io_matching()
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Recved data from %d", src);
                     MPI_Get_count(&status, MPI_BYTE, &bufsz);
                     assert(bufsz>0);
-                    assert(gl_msg_buf != NULL);
-                    rbuf = gl_msg_buf; //dtf_malloc(bufsz);
+                    rbuf = dtf_malloc(bufsz);
                     assert(rbuf != NULL);
                     t_start_comm = MPI_Wtime();
                     err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_DATA_TAG, gl_comps[comp].comm, &status);
@@ -2452,7 +2408,7 @@ void progress_io_matching()
                     gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
                     DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: recv data from %d", src);
                     recv_data_rdr(rbuf, bufsz);
-                   // dtf_free(rbuf, bufsz);
+                    dtf_free(rbuf, bufsz);
                     break;
                 case SKIP_MATCH_TAG:
 					t_st = MPI_Wtime();

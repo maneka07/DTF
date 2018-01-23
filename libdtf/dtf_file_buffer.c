@@ -40,10 +40,7 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
            break;
 	   }
 
-        if(ptr->slink_name!=NULL &&  (strstr(file_path, ptr->slink_name)!=NULL || strstr(ptr->slink_name, file_path)!=NULL) )
-           break;
-
-        ptr = ptr->next;
+       ptr = ptr->next;
     }
 
 	//DTF_DBG(VERBOSE_DBG_LEVEL, "Return fbuf %p", (void*)ptr);
@@ -108,7 +105,7 @@ void delete_file_buffer(file_buffer_t* fbuf)
         dtf_free(fbuf->cpl_mst_info, sizeof(master_info_t));
     }
 
-    delete_ioreqs(fbuf,1); //TODO this should be done inside close_file
+    delete_ioreqs(fbuf,1); 
 
     for(i = 0; i < nvars; i++)
         delete_var(fbuf, fbuf->vars[i]);
@@ -135,26 +132,6 @@ void delete_file_buffer(file_buffer_t* fbuf)
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
 
-
-
-    //~ if( (fbuf->reader_id == gl_my_comp_id) && (fbuf->root_reader == gl_my_rank) && (fbuf->slink_name != NULL)){
-		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Remove symbolic link %s", fbuf->slink_name);
-		//~ int err;
-		//~ char *dir = NULL;
-		//~ char wdir[MAX_FILE_NAME]="\0";
-		//~ char slink[MAX_FILE_NAME]="\0";
-
-		//~ dir = getcwd(wdir, MAX_FILE_NAME);
-		//~ assert(dir != NULL);
-		//~ sprintf(slink, "%s/%s", wdir, fbuf->slink_name);
-
-		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Remove symlink %s", slink);
-		//~ err = unlink(slink);
-		//~ if(err)
-			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: error deleting symbolic link %s", slink);
-	//~ }
-
-
     if(gl_filebuf_list == fbuf)
 		gl_filebuf_list = fbuf->next;
 
@@ -179,7 +156,6 @@ fname_pattern_t *new_fname_pattern()
     pat->comp1 = -1;
     pat->comp2 = -1;
     pat->ignore_io = 0;
-    pat->slink_name = NULL;
     return pat;
 }
 
@@ -206,7 +182,6 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: filename %s longer than MAX_FILE_NAME (%d)", file_path, MAX_FILE_NAME);
 		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 	}
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
 	buf = dtf_malloc(sizeof(struct file_buffer));
     assert( buf != NULL );
     buf->next = NULL;
@@ -236,19 +211,12 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->cpl_mst_info = dtf_malloc(sizeof(master_info_t));
     assert(buf->cpl_mst_info != NULL);
     init_mst_info(buf->cpl_mst_info);
-    buf->is_matching_flag = 0;
 	strcpy(buf->file_path, file_path);
 	buf->reader_id = -1;
 	buf->writer_id = -1;
 	buf->root_writer = -1;
     buf->root_reader = -1;
     buf->omode = DTF_UNDEFINED;
-	if(pat->slink_name != NULL){
-		buf->slink_name = dtf_malloc(MAX_FILE_NAME*sizeof(char));
-		assert(buf->slink_name != NULL);
-		strcpy(buf->slink_name, pat->slink_name);
-	} else
-		buf->slink_name = NULL;
 	buf->iomode = pat->iomode;
 	//insert
 	if(gl_filebuf_list == NULL)
@@ -265,22 +233,20 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 {
     int i;
-    int bt_bench;
+
     dtf_var_t *var = (dtf_var_t*)dtf_malloc(sizeof(dtf_var_t));
     assert(var!=NULL);
-	//~ char *s = getenv("BT_BENCH");
-	//~ if(s != NULL)  //HACK
-		//~ bt_bench = 1;
+
     /*Initialize whatever we can initialize at this stage*/
     var->id = varid;
     if(ndims > 0){ //non scalar
         var->shape = (MPI_Offset*)dtf_malloc(ndims*sizeof(MPI_Offset));
-        int max_dim = 0;
+        //~ int max_dim = 0;
 
         for(i=0; i<ndims;i++){
             var->shape[i] = shape[i];
-            if(shape[i] > shape[max_dim])
-				max_dim = i;
+            //~ if(shape[i] > shape[max_dim])
+				//~ max_dim = i;
 		}
 
         var->max_dim = 0; //max_dim; //0;

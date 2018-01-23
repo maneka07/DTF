@@ -36,7 +36,6 @@ typedef struct dtf_var{
 
 typedef struct file_buffer{
   char                      file_path[MAX_FILE_NAME];    /* path of the file */
-  char                      *slink_name;
   int                       ncid;            /*handler that pnetcdf assigns to a file*/
   MPI_Comm                  comm;            /*MPI_Communicator used to open the file*/
   void                      *header;         /*buffer to store netcdf header*/
@@ -63,8 +62,6 @@ typedef struct file_buffer{
   unsigned int              wreq_cnt;
   int                       done_matching_flag;     	/*Flag used to complete matching requests*/
   int                       sync_comp_flag;		/*Used for syncing two components*/
-  int                       is_matching_flag;   /*Set to 1 when process starts matching. Reset to 0 when matching is done.*/
-//  int                       rdr_closed_flag;           /*Flag set to 1 when reader closes the file*/
   int                       fready_notify_flag;   /*flag used to notify the reader that the file is ready for reading.
                                                     Possible values: 0 - the ps does not write to this file
                                                                      1 - the ps writes to this file. The file is not ready yet.
@@ -75,7 +72,6 @@ typedef struct file_buffer{
 
 typedef struct fname_pattern{
     char fname[MAX_FILE_NAME];   /*File name pattern or the file name*/
-    char *slink_name;
     char **excl_fnames;         /*File name patterns to exclude*/
     int  nexcls;                 /*Number of file name patterns to exclude*/
     int  comp1;
