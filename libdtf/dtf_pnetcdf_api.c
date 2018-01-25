@@ -88,9 +88,20 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 	init_req_match_masters(comm, fbuf->my_mst_info);
 	fbuf->root_writer = fbuf->my_mst_info->masters[0];
 	
+	 /*In scale-letkf we assume completely mirrorer file handling. 
+	 * Hence, will simply duplicate the master structre*/
+	 if(gl_scale){
+		assert(fbuf->cpl_mst_info->nmasters == 0);
+		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
+		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+		assert(fbuf->cpl_mst_info->masters != NULL);
+		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
+		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
+	 }
+	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
 
-    if(gl_my_rank == fbuf->root_writer){
+    if(gl_my_rank == fbuf->root_writer && !gl_scale){
 		int i;
 		FILE *rootf;
 		char *glob = getenv("DTF_GLOBAL_PATH");
@@ -114,14 +125,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		fclose(rootf);
 	}
 	
-    if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-        if(fbuf->my_mst_info->is_master_flag){
-            int nranks;
-            MPI_Comm_size(comm, &nranks);
-            fbuf->my_mst_info->nranks_opened = (unsigned int)nranks;
-        }
-
-    } else if(fbuf->iomode == DTF_IO_MODE_FILE){
+	if(fbuf->iomode == DTF_IO_MODE_FILE){
         if(fbuf->root_writer == gl_my_rank)
 			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
 
@@ -188,8 +192,19 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
     else
         DTF_DBG(VERBOSE_DBG_LEVEL, "File opened in subcommunicator (%d nprocs)", nranks);
 
-    if(fbuf->my_mst_info->nmasters == 0){
+    if(fbuf->my_mst_info->nmasters == 0){ /*Open for the first time*/
         init_req_match_masters(comm, fbuf->my_mst_info);
+        
+        /*In scale-letkf we assume completely mirrorer file handling. 
+         * Hence, will simply duplicate the master structre*/
+         if(gl_scale){
+			assert(fbuf->cpl_mst_info->nmasters == 0);
+			fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
+			fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+			assert(fbuf->cpl_mst_info->masters != NULL);
+			memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
+			fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
+		 }
     } else {
 		/*do a simple check that the same set of processes as before opened the file*/
 		int rank;
@@ -222,23 +237,27 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		 * will broadcast the info.*/
 		if(fbuf->writer_id == gl_my_comp_id){
 			int rank, err;
-			MPI_Comm_rank(comm, &rank);
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about the other component");
 			
-			//root broadcasts master info to others
-			if(rank == 0){
-				assert(fbuf->cpl_mst_info->nmasters>0);
-			}
-			err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
-			CHECK_MPI(err);
-			if(rank != 0){
-				assert(fbuf->cpl_mst_info->masters== NULL);
-				fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-				assert(fbuf->cpl_mst_info->masters != NULL);	
+			if(!gl_scale){
+				MPI_Comm_rank(comm, &rank);
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about the other component");
+				
+				//root broadcasts master info to others
+				if(rank == 0){
+					assert(fbuf->cpl_mst_info->nmasters>0);
+				}
+				err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
+				CHECK_MPI(err);
+				if(rank != 0){
+					assert(fbuf->cpl_mst_info->masters== NULL);
+					fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+					assert(fbuf->cpl_mst_info->masters != NULL);	
+				}
+				
+				err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
+				CHECK_MPI(err);
 			}
 			
-			err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
-			CHECK_MPI(err);
 			fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
 			
 			//~ for(i = 0; i < fbuf->cpl_mst_info->nmasters; i++)

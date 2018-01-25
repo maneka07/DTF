@@ -198,11 +198,9 @@ _EXTERN_C_ int dtf_finalize()
 
 //int MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype,
 //               MPI_Op op, int root, MPI_Comm comm)
-    char *s = getenv("DTF_SCALE");
-    if(s == NULL)
-		DTF_DBG(VERBOSE_DBG_LEVEL,"time_stamp DTF: finalize");
-	else 
-		DTF_DBG(VERBOSE_ERROR_LEVEL,"time_stamp DTF: finalize");
+
+	DTF_DBG(VERBOSE_DBG_LEVEL,"time_stamp DTF: finalize");
+	
     gl_stats.st_fin = MPI_Wtime() - gl_stats.walltime;
 	
     /*Send any unsent file notifications
@@ -275,19 +273,16 @@ _EXTERN_C_ int dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_
     User must specify either filename or ncid.
     intracomp_io_flag - if set to 1, matching of intracomponent io requests will be
     performed. This flag is intended for for situation when the writer component
-    tries to read something from the file it is writing.
+    tries to read something from the file it is writing. NOTE: no more supported
 */
 //TODO rename to dtf_transfer()
-_EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )//, int match_all)
+_EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )
 {
     file_buffer_t *fbuf;
 
     if(!lib_initialized) return 0;
     DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s (ncid %d), intra flag %d", filename, ncid, intracomp_io_flag);
-    if(intracomp_io_flag){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: scale-letkf hack: skip intracomp matching");
-        return 0;
-    }
+    assert(intracomp_io_flag != 1);
 
     fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
     if(fbuf == NULL){
@@ -328,13 +323,8 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
 	 
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 
-    if( intracomp_io_flag && (gl_my_comp_id != fbuf->writer_id) ){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_match_io: intracomp_io_flag(%d) can only be set for the writer component", intracomp_io_flag);
-        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-    }
-
     dtf_tstart();
-    match_ioreqs(fbuf, intracomp_io_flag);
+    match_ioreqs(fbuf);
     dtf_tend();
     return 0;
 }
@@ -351,22 +341,9 @@ _EXTERN_C_ void dtf_time_start()
 {
     if(!lib_initialized) return;
   
-    //~ if(gl_stats.user_timer_start != 0)
-        //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.",
-                //~ gl_stats.user_timer_start - gl_stats.walltime);
-
     gl_stats.user_timer_start = MPI_Wtime();
     DTF_DBG(VERBOSE_DBG_LEVEL, "user_time start");
     
-    
-    //~ char *s = getenv("DTF_SCALE");
-	//~ if(s != NULL){
-		//~ if(st_time_cnt==0){//strstr(fbuf->file_path, "hist.d")!=NULL)
-			//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-		//~ } else if(st_time_cnt==1)//strstr(fbuf->file_path, "anal.d")!=NULL)
-			//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-		//~ st_time_cnt++;
-	//~ }
     
 }
 _EXTERN_C_ void dtf_time_end()
@@ -378,14 +355,6 @@ _EXTERN_C_ void dtf_time_end()
     gl_stats.user_timer_start = 0;
     
 	DTF_DBG(VERBOSE_DBG_LEVEL, "user_time end  %.6f", tt);
-    
-	//~ if(s != NULL){
-		//~ if(end_time_cnt==0){//strstr(fbuf->file_path, "hist.d")!=NULL)
-			//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-		//~ } else if(end_time_cnt==1)//strstr(fbuf->file_path, "anal.d")!=NULL)
-			//~ gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-		//~ end_time_cnt++;
-	//~ }
     
  //   DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
 }

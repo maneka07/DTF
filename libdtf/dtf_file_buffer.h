@@ -17,9 +17,16 @@
 #define RDR_NOTIF_POSTED   2
 #define RDR_NOTIFIED       3
 
-struct master_db;
-struct io_req;
-struct master_struc;
+
+typedef struct master_info{
+    unsigned int         nread_completed;   /*Number of work groups that completed reading file*/
+    struct ioreq_db      *iodb;
+    int my_mst;     /*My master rank*/
+    int nmasters;   /*Number of master nodes that hold data for request matching*/
+    int *masters;   /*Ranks of master nodes on the writer's side*/
+    unsigned int my_wg_sz;
+    int *my_wg;
+} master_info_t;
 
 typedef struct dtf_var{
     int                     id;         /* varid assigned by pnetcdf*/

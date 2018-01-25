@@ -523,10 +523,10 @@ int load_config(const char *ini_name, const char *comp_name){
 
                 cur_fpat->iomode = DTF_IO_MODE_MEMORY;
 
-                //~ if(gl_msg_buf == NULL){
-                    //~ gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
-                    //~ assert(gl_msg_buf != NULL);
-                //~ }
+                if(gl_msg_buf == NULL){
+                    gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
+                    assert(gl_msg_buf != NULL);
+                }
             } else {
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown I/O mode: %s.", value);
 				goto panic_exit;

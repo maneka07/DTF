@@ -156,8 +156,6 @@ void print_stats()
 
     dblint_t dblint_in, dblint_out;
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
     walltime = MPI_Wtime() - gl_stats.walltime;
     MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &nranks);
 
@@ -258,17 +256,27 @@ void print_stats()
 
     	err = MPI_Allreduce(&gl_stats.st_mtch_hist, &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
 		CHECK_MPI(err);
-
 		dev = stand_devi(gl_stats.st_mtch_hist, dblsum, nranks);
-
 		if(gl_my_rank == 0 && dblsum > 0)
 			DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg st_mtch_hist, dev: %.4f: %.4f", dblsum/nranks, dev);
+			
+		err = MPI_Allreduce(&gl_stats.t_open_hist, &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
+		CHECK_MPI(err);
+		dev = stand_devi(gl_stats.t_open_hist, dblsum, nranks);
+		if(gl_my_rank == 0 && dblsum > 0)
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg t_open_hist, dev: %.4f: %.4f", dblsum/nranks, dev);
 
 		err = MPI_Allreduce(&gl_stats.end_mtch_hist, &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
 		CHECK_MPI(err);
 		dev = stand_devi(gl_stats.end_mtch_hist, dblsum, nranks);
 		if(gl_my_rank == 0 && dblsum > 0)
 			DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg end_mtch_hist, dev: %.4f: %.4f", dblsum/nranks, dev);
+
+		err = MPI_Allreduce(&gl_stats.t_open_rest, &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
+		CHECK_MPI(err);
+		dev = stand_devi(gl_stats.t_open_rest, dblsum, nranks);
+		if(gl_my_rank == 0 && dblsum > 0)
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp avg t_open_rest, dev: %.4f: %.4f", dblsum/nranks, dev);
 
 		err = MPI_Allreduce(&gl_stats.st_mtch_rest, &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
 		CHECK_MPI(err);
@@ -496,7 +504,7 @@ void close_file(file_buffer_t *fbuf)
 
     if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 
-        if(fbuf->my_mst_info->iodb != NULL && fbuf->my_mst_info->is_master_flag)
+        if(fbuf->my_mst_info->iodb != NULL)
 			clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
         
 		delete_ioreqs(fbuf,1); 
@@ -573,7 +581,7 @@ static void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
 	/*list of masters*/
 	memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
 	
-	DTF_DBG(VERBOSE_ERROR_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
 	err = MPI_Send(buf, bufsz, MPI_BYTE, tgt_root, FILE_INFO_REQ_TAG, gl_comps[tgt_comp].comm);
 	CHECK_MPI(err);
 	dtf_free(buf, bufsz);
@@ -586,17 +594,16 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
     MPI_Status status;
     int rank; //, notif_open=1;
     int err;
-
+	double t_start;
 	
     MPI_Comm_rank(comm, &rank);
+    
+    t_start = MPI_Wtime();
 
     if(fbuf->reader_id == gl_my_comp_id){
         
         if(fbuf->iomode == DTF_IO_MODE_FILE){
-
-			char *s = getenv("DTF_SCALE");
-			if(s != NULL)
-				DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp open file %s", fbuf->file_path);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp open file %s", fbuf->file_path);
 
             if(fbuf->root_writer == -1){
 
@@ -604,7 +611,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
                
                 if(rank == 0)
 					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
-                
+             //TODO figure out with this and scale   
             }
 
 			if(rank == 0){
@@ -623,29 +630,23 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 			else if(strstr(fbuf->file_path, "anal.d")!=NULL)
 				gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
 			
-			if(s != NULL)
-				DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp file ready %s", fbuf->file_path);
-
+			
+			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp file ready %s", fbuf->file_path);
 
         } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 			void *buf;
 			int bufsz;	
-			
-			if(fbuf->my_mst_info->is_master_flag){
-					int nranks;			
-					MPI_Comm_size(comm, &nranks);
-                	fbuf->my_mst_info->nranks_opened = nranks;
-			}
 
-            if(fbuf->root_writer == -1){
+            if(fbuf->header == NULL){
 				/*Zero rank will inquire the pnetcdf header/dtf vars info/masters info
 				from writer's global zero rank and then broadcast this info to other
 				readers that opened the file*/
 				if(rank == 0){
-					fbuf->root_writer = inquire_root(fbuf->file_path);					
+					if(fbuf->root_writer == -1)
+						fbuf->root_writer = inquire_root(fbuf->file_path);					
 
-					if(rank == 0)
-						send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
+					
+					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
 					
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Starting to wait for file info for %s", fbuf->file_path);
 					err = MPI_Probe(fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
@@ -694,6 +695,11 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 		//~ }
     }
 
+	if(strstr(fbuf->file_path, "hist.d")!=NULL)
+		gl_stats.t_open_hist = MPI_Wtime()-t_start;
+	else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+		gl_stats.t_open_rest = MPI_Wtime()-t_start;
+ 
     DTF_DBG(VERBOSE_DBG_LEVEL,   "Exit dtf_open %s", fbuf->file_path);
 }
 

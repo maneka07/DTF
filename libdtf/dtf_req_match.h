@@ -87,18 +87,6 @@ typedef struct ioreq_db{
     struct read_db_item  *ritems;
 }ioreq_db_t;
 
-typedef struct master_info{
-    unsigned int         nrranks_completed;  /*Number of ranks that completed their read requests
-                                              (writer component can also read the file).
-                                               Counted only by master 0.*/
-    unsigned int         nranks_opened;     /*Number of  ranks that opened the file*/
-    struct ioreq_db      *iodb;
-    int is_master_flag;  /*is this rank a master rank*/
-    int nmasters;   /*Number of master nodes that hold data for request matching*/
-    int *masters;   /*Ranks of master nodes on the writer's side*/
-    unsigned int my_wg_sz;
-    int *my_wg;
-} master_info_t;
 
 typedef struct file_info_req_q{
     char filename[MAX_FILE_NAME];
@@ -127,7 +115,7 @@ void add_ioreq(io_req_t **list, io_req_t *ioreq);
 //void delete_ioreqs(file_buffer_t *fbuf);
 void delete_ioreqs(file_buffer_t *fbuf, int finalize);
 void progress_io_matching();
-int  match_ioreqs(file_buffer_t *fbuf, int intracomp_io_flag);
+int  match_ioreqs(file_buffer_t *fbuf);
 //void match_ioreqs_all(int rw_flag);
 int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);
 void init_iodb(ioreq_db_t *iodb);
@@ -135,7 +123,6 @@ void clean_iodb(ioreq_db_t *iodb, int nvars);
 void unpack_file_info(MPI_Offset bufsz, void *buf);
 void send_file_info(file_buffer_t *fbuf, int reader_root);
 void notify_complete_multiple(file_buffer_t *fbuf);
-void skip_match(file_buffer_t *fbuf, const char *filename, MPI_Comm comm, int writer_id);
 void log_ioreq(file_buffer_t *fbuf,
 			  int varid, int ndims,
 			  const MPI_Offset *start,

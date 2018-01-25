@@ -18,7 +18,7 @@
 #define IO_DATA_REQ_TAG     1       /*master -> writer*/
 #define IO_DATA_TAG         2       /*writer -> reader*/
 #define READ_DONE_TAG       3
-#define SKIP_MATCH_TAG   	4      
+     
 #define FILE_INFO_TAG       5
 #define FILE_INFO_REQ_TAG   6
 #define MATCH_DONE_TAG      7
@@ -136,6 +136,8 @@ typedef struct stats{
     double          st_mtch_rest;
     double          end_mtch_rest;
     double          st_fin;
+    double          t_open_hist;
+    double          t_open_rest;
 } stats_t;
 
 typedef struct dtf_msg{

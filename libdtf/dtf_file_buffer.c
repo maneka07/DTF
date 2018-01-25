@@ -86,8 +86,7 @@ void delete_file_buffer(file_buffer_t* fbuf)
     if(fbuf->my_mst_info != NULL){
 
         if(fbuf->my_mst_info->iodb != NULL){
-            if(fbuf->my_mst_info->is_master_flag)
-                clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
+            clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
             dtf_free(fbuf->my_mst_info->iodb, sizeof(ioreq_db_t));
         }
 
@@ -162,13 +161,12 @@ fname_pattern_t *new_fname_pattern()
 static void init_mst_info(master_info_t* mst_info)
 {
     mst_info->masters = NULL;
-    mst_info->is_master_flag = 0;
+    mst_info->my_mst = -1;
     mst_info->my_wg_sz = 0;
     mst_info->my_wg = NULL;   
     mst_info->nmasters = 0;
     mst_info->iodb = NULL;
-    mst_info->nrranks_completed = 0;
-    mst_info->nranks_opened = 0;
+    mst_info->nread_completed = 0;
 }
 
 file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
