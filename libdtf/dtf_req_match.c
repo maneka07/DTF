@@ -254,6 +254,8 @@ static void do_matching(file_buffer_t *fbuf)
     int n_matched_blocks = 0;
     if(!fbuf->my_mst_info->iodb->updated_flag) //no new info since last time matching was done, ignore
         return;
+    if(fbuf->my_mst_info->iodb->witems == NULL || fbuf->my_mst_info->iodb->ritems == NULL)
+		return;
 
     fbuf->my_mst_info->iodb->updated_flag = 0; //reset
 
@@ -295,7 +297,7 @@ static void do_matching(file_buffer_t *fbuf)
         }
 
         nwriters = 0;
-
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Matching rreq from rank %d", ritem->rank);
         if(ritem->comm == gl_comps[gl_my_comp_id].comm)
             DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in my comp", ritem->rank);
         else
@@ -307,7 +309,8 @@ static void do_matching(file_buffer_t *fbuf)
             ntimes_while++;
             var_id = rblock->var_id;
             t_st = MPI_Wtime();
-
+			assert(fbuf->my_mst_info->iodb->witems != NULL);
+			
             witem = fbuf->my_mst_info->iodb->witems[var_id];
 
 			if(witem == NULL){
@@ -318,7 +321,7 @@ static void do_matching(file_buffer_t *fbuf)
 				gl_stats.idle_do_match_time += MPI_Wtime() - t_st;
 				continue;
 			}
-
+			
             var = fbuf->vars[var_id];
             ndims = var->ndims;
             int nelems_to_match = 1;
@@ -331,6 +334,7 @@ static void do_matching(file_buffer_t *fbuf)
             } else
                 matched_count = NULL;
 
+   
             while(nelems_to_match){
 
                 nelems_matched = 0;
@@ -338,10 +342,11 @@ static void do_matching(file_buffer_t *fbuf)
 					wblock = rb_find_block(witem->dblocks, rblock->start, var->ndims);
 				else
 					wblock = (block_t*)witem->dblocks;
-
+				
                 if(wblock == NULL){
 
                     //didn't find
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "didnt find block for var %d", var_id);
                     gl_stats.idle_time += MPI_Wtime() - t_st;
                     t_idle += MPI_Wtime() - t_st;
                     gl_stats.idle_do_match_time += MPI_Wtime() - t_st;
@@ -766,6 +771,7 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
                 memcpy(info->blck->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
                 offt += var->ndims*sizeof(MPI_Offset);
                 /*add block to the database*/
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Insert block for var %d", var_id);
 				rb_red_blk_node *bl_node = RBTreeInsertBlock(witem->dblocks, info);
 				assert(bl_node != NULL);
 				dtf_free(info, sizeof(insert_info));
@@ -946,6 +952,7 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
 				break;
 			}
 			mst = varid % nmasters;
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Will send ioreq %d (varid %d) to mst %d", ioreq->id, varid, mst); 
 			/*Store var_id, rw_flag, start[] and count[]*/
 			*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
 			offt[mst] += sizeof(MPI_Offset);
@@ -982,6 +989,14 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
         }
     }
     flag = 0;
+    err = MPI_Testall(nmasters, reqs, &flag, MPI_STATUSES_IGNORE);
+    CHECK_MPI(err);
+    
+    if(idx != -1){
+        parse_ioreqs(sbuf[idx], (int)offt[idx], gl_my_rank, gl_comps[gl_my_comp_id].comm);
+        dtf_free(sbuf[idx], bufsz[idx]);
+    }
+    
     while(!flag){
         err = MPI_Testall(nmasters, reqs, &flag, MPI_STATUSES_IGNORE);
         CHECK_MPI(err);
@@ -989,10 +1004,7 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
     }
     //gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
 
-    if(idx != -1){
-        parse_ioreqs(sbuf[idx], (int)offt[idx], gl_my_rank, gl_comps[gl_my_comp_id].comm);
-        dtf_free(sbuf[idx], bufsz[idx]);
-    }
+  
 
 fn_exit:
     dtf_free(reqs, nmasters*sizeof(MPI_Request));
@@ -1455,8 +1467,6 @@ int match_ioreqs(file_buffer_t *fbuf)
         fbuf->my_mst_info->iodb->updated_flag = 0;
     if(fbuf->my_mst_info->my_mst == gl_my_rank)
 		fbuf->my_mst_info->nread_completed = 0;
-    
-    gl_stats.accum_match_time += MPI_Wtime() - t_start;
 
 	//TODO need to figure out with scale reading stuff from previous iterations!!!
 	if(!gl_scale){
@@ -2232,6 +2242,7 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 			case COMP_SYNC_TAG:
 				err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, COMP_SYNC_TAG, gl_comps[comp].comm, &status);
 				CHECK_MPI(err);
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Sync tag for file %s", filename);
 				fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
 				assert(fbuf != NULL);
 				fbuf->sync_comp_flag = 1;

@@ -71,6 +71,7 @@ typedef struct read_dblock{
 
 typedef struct read_db_item{
     int                     rank;
+    /*TODO should comm be left?*/
     MPI_Comm                comm;   /*Both writer and reader may read the file, hence, need to distinguish.*/
     read_dblock_t           *dblocks;
     read_dblock_t           *last_block;

@@ -29,8 +29,8 @@ _EXTERN_C_ void dtf_tstart();
 _EXTERN_C_ void dtf_tend();
 _EXTERN_C_ void dtf_time_start();
 _EXTERN_C_ void dtf_time_tend();
-_EXTERN_C_ int  dtf_match_io(const char *filename, int ncid, int intracomp_io_flag );
-_EXTERN_C_ int  dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_flag, int it );
+_EXTERN_C_ int  dtf_transfer(const char *filename, int ncid );
+_EXTERN_C_ int  dtf_transfer_v2(const char *filename, int ncid, int it );
 
 /*     Fortran interfaces    */
 void dtf_tend_();
@@ -39,7 +39,7 @@ void dtf_time_end_();
 void dtf_time_start_();
 void dtf_init_(const char *filename, char *module_name, int* ierr);
 void dtf_finalize_(int* ierr);
-void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int *ierr);
+void dtf_transfer_(const char *filename, int *ncid, int *ierr);
 void dtf_print_(const char *str);
 void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void* data);
 

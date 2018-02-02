@@ -73,7 +73,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.malloc_size = 0;
     gl_stats.data_msg_sz = 0;
     gl_stats.ndata_msg_sent = 0;
-    gl_stats.accum_match_time = 0;
+    gl_stats.transfer_time = 0;
     gl_stats.ndb_match = 0;
     gl_stats.walltime = MPI_Wtime();
     gl_stats.accum_comm_time = 0;
@@ -200,7 +200,7 @@ _EXTERN_C_ int dtf_finalize()
 //               MPI_Op op, int root, MPI_Comm comm)
 
 	DTF_DBG(VERBOSE_DBG_LEVEL,"time_stamp DTF: finalize");
-	
+	MPI_Barrier(gl_comps[gl_my_comp_id].comm);
     gl_stats.st_fin = MPI_Wtime() - gl_stats.walltime;
 	
     /*Send any unsent file notifications
@@ -251,39 +251,36 @@ _EXTERN_C_ int dtf_finalize()
     return 0;
 }
 
-_EXTERN_C_ int dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_flag, int it )
+_EXTERN_C_ int dtf_transfer_v2(const char *filename, int ncid, int it )
 {
 	char *s = getenv("DTF_IGNORE_ITER");
 	if(it < 0)
-		return dtf_match_io(filename, ncid, intracomp_io_flag);
+		return dtf_transfer(filename, ncid);
 		
 	if(s != NULL){
 		if(it > atoi(s)){
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Match io call for iter %d", it);
-			return dtf_match_io(filename, ncid, intracomp_io_flag);
+			return dtf_transfer(filename, ncid);
 		} else 
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Ignore match io call for iter %d", it);
 	} else 
-		return dtf_match_io(filename, ncid, intracomp_io_flag);
+		return dtf_transfer(filename, ncid);
     return 0;
 }
 
 /*called by user to do explicit matching*/
 /*
     User must specify either filename or ncid.
-    intracomp_io_flag - if set to 1, matching of intracomponent io requests will be
-    performed. This flag is intended for for situation when the writer component
-    tries to read something from the file it is writing. NOTE: no more supported
 */
-//TODO rename to dtf_transfer()
-_EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )
+
+_EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
 {
     file_buffer_t *fbuf;
-
+	double t_start = MPI_Wtime();
+	
     if(!lib_initialized) return 0;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s (ncid %d), intra flag %d", filename, ncid, intracomp_io_flag);
-    assert(intracomp_io_flag != 1);
-
+    DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s (ncid %d)", filename, ncid);
+  
     fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
     if(fbuf == NULL){
 
@@ -320,12 +317,28 @@ _EXTERN_C_ int dtf_match_io(const char *filename, int ncid, int intracomp_io_fla
 			ioreq = fbuf->ioreq_log;
 		}
 	}
+	
+	if(gl_scale && (fbuf->iomode == DTF_IO_MODE_FILE) && (fbuf->writer_id == gl_my_comp_id)){
+
+		fbuf->is_ready = 1;	
+		//Check for any incoming messages
+		progress_io_matching();
+		if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
+			if(fbuf->root_writer == gl_my_rank){
+				while(fbuf->root_reader == -1)
+					progress_io_matching();
+				notify_file_ready(fbuf);
+			}
+		}
+	}
 	 
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 
     dtf_tstart();
     match_ioreqs(fbuf);
     dtf_tend();
+    
+    gl_stats.transfer_time += MPI_Wtime() - t_start;
     return 0;
 }
 
@@ -380,9 +393,9 @@ void dtf_finalize_(int* ierr)
     *ierr = dtf_finalize();
 }
 
-void dtf_match_io_(const char *filename, int *ncid, int *intracomp_io_flag, int *ierr)
+void dtf_transfer_(const char *filename, int *ncid, int *ierr)
 {
-    *ierr = dtf_match_io(filename, *ncid, *intracomp_io_flag);
+    *ierr = dtf_transfer(filename, *ncid);
 }
 
 void dtf_print_(const char *str)

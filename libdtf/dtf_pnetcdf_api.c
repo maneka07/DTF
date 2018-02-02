@@ -31,10 +31,10 @@ _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *hea
         DTF_DBG(VERBOSE_DBG_LEVEL, "Header size for file %s is zero", filename);
         return;
     }
-    double t_st = MPI_Wtime();
+    double t_start = MPI_Wtime();
     write_hdr(fbuf, hdr_sz, header);
-    gl_stats.accum_hdr_time += MPI_Wtime() - t_st;
-
+    gl_stats.accum_hdr_time += MPI_Wtime() - t_start;
+    gl_stats.transfer_time += MPI_Wtime() - t_start;
 }
 
 _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
@@ -45,9 +45,10 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-    double t_st = MPI_Wtime();
+    double t_start = MPI_Wtime();
     ret = read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
-    gl_stats.accum_hdr_time += MPI_Wtime() - t_st;
+    gl_stats.accum_hdr_time += MPI_Wtime() - t_start;
+    gl_stats.transfer_time += MPI_Wtime() - t_start;
     return ret;
 }
 
@@ -365,7 +366,9 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY)
         return 0;
-
+	
+	double t_start = MPI_Wtime();
+	
 	if(varid >= fbuf->nvars){
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: variable with id %d does not exist. Abort.", varid);
 		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
@@ -391,7 +394,9 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     }
 
 
-        return nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
+    ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
+    gl_stats.transfer_time += MPI_Wtime() - t_start;
+    return ret;
 }
 
 
@@ -445,6 +450,8 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     if(fbuf == NULL) return 0;
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 
+	double t_start = MPI_Wtime();
+	
     DTF_DBG(VERBOSE_DBG_LEVEL, "def var %d for ncid %d", varid, fbuf->ncid);
 
     if( (ndims > 0) && (shape[ndims - 1] == DTF_UNLIMITED))
@@ -463,7 +470,8 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     ret = def_var(fbuf, varid, ndims, dtype, shape);
-
+    
+    gl_stats.transfer_time += MPI_Wtime() - t_start;
     return ret;
 }
 

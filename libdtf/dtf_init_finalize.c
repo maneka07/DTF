@@ -519,7 +519,7 @@ int load_config(const char *ini_name, const char *comp_name){
 
             if(strcmp(value, "file") == 0)
                 cur_fpat->iomode = DTF_IO_MODE_FILE;
-            else if(strcmp(value, "memory") == 0){
+            else if(strcmp(value, "transfer") == 0){
 
                 cur_fpat->iomode = DTF_IO_MODE_MEMORY;
 

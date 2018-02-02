@@ -302,6 +302,7 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
 		max_rcoord = info->blck->start[cur_dim] + info->blck->count[cur_dim] - 1;
 		
 		if(cur_dim == ndims - 1){//blocks overlap (overwriting data)
+			int i;
 			//allow only exact same data overwrite
 			if(max_rcoord != ((node_info*)(x->info))->max_node_rcoord){
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: process tries to overwrite data, but the new block only partially overlaps with the previously written block. We don't allow that.");
@@ -311,6 +312,9 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: Process %d overwrites data previously written by process %d", info->blck->rank, ((node_info*)(x->info))->blck->rank);
 				((node_info*)(x->info))->blck->rank = info->blck->rank;
 			}
+			for (i=0; i < info->ndims; i++)
+				DTF_DBG(VERBOSE_DBG_LEVEL, "old: %lld->%lld new: %lld->%lld",((node_info*)(x->info))->blck->start[i], ((node_info*)(x->info))->blck->count[i], info->blck->start[i], info->blck->count[i]); 
+
 		} 
 		
 		if(max_rcoord > ((node_info*)(x->info))->max_node_rcoord )

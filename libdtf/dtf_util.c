@@ -159,49 +159,7 @@ void print_stats()
     walltime = MPI_Wtime() - gl_stats.walltime;
     MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &nranks);
 
-    /*DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: walltime %.3f", walltime);
-
-    if(gl_stats.accum_comm_time > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: time spent in comm: %.5f: %.4f",
-                gl_stats.accum_comm_time, (gl_stats.accum_comm_time/gl_stats.timer_accum)*100);
-
-    if(gl_stats.accum_match_time > 0){
-         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: tot match time: %.5f: %.5f",
-                 gl_stats.accum_match_time, (gl_stats.accum_match_time/gl_stats.timer_accum)*100);
-         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: do match time: %.5f: %.5f",
-                 gl_stats.accum_do_matching_time, (gl_stats.accum_do_matching_time/gl_stats.timer_accum)*100);
-         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: idle do match time: %.5f",
-                 gl_stats.do_match_idle_time);
-    }
-    if(gl_stats.accum_progr_time > 0){
-        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: progr time: %.4f: %.4f", gl_stats.accum_progr_time, (gl_stats.accum_progr_time/gl_stats.timer_accum)*100);
-        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: progr work time: %.4f", gl_stats.progr_work_time);
-    }
-
-    if(gl_stats.accum_send_ioreq_time > 0)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: send ioreqs time: %.4f: %.4f", gl_stats.accum_send_ioreq_time, (gl_stats.accum_send_ioreq_time/gl_stats.timer_accum)*100);
-
-    if(gl_stats.accum_rw_var > 0)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: rw var time: %.4f: %.4f", gl_stats.accum_rw_var, (gl_stats.accum_rw_var/gl_stats.timer_accum)*100);
-*/
-//    if(gl_stats.accum_match_time > 0){
-//          DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: db match time: %.5f: %.5f",
-//                 gl_stats.accum_db_match_time, (gl_stats.accum_db_match_time/gl_stats.timer_accum)*100);
-//         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: db manage time: %.5f: %.5f",
-//                 gl_stats.accum_db_manage_time,  (gl_stats.accum_db_manage_time/gl_stats.timer_accum)*100);
-//
-//    }
-
-    //DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times matched: %u", gl_stats.ndb_match);
-   // if(gl_stats.ndb_match > 0)
-     //   DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: times dbmatched %d, progress call %lu", gl_stats.ndb_match, gl_stats.nprogress_call);
-
-   // if(gl_stats.nioreqs > 0)
-     //   DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: nreqs: %lu", gl_stats.nioreqs);
-
-  //  if(gl_stats.nbl > 0)
-    //    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: Out of %u blocks handled %u noncontig blocks", gl_stats.nbl, gl_stats.ngetputcall);
-    if(gl_stats.accum_dbuff_sz > 0){
+      if(gl_stats.accum_dbuff_sz > 0){
     //    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering time: %.5f: %.4f", gl_stats.accum_dbuff_time,(gl_stats.accum_dbuff_time/gl_stats.timer_accum)*100);
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: buffering size: %lu",  gl_stats.accum_dbuff_sz);
     }
@@ -236,7 +194,7 @@ void print_stats()
             DTF_DBG(VERBOSE_DBG_LEVEL, "will zero stats");
             gl_stats.timer_accum = 0;
             walltime = 0;
-            gl_stats.accum_match_time = 0;
+            gl_stats.transfer_time = 0;
             gl_stats.accum_hdr_time = 0;
             gl_stats.accum_comm_time = 0;
             gl_stats.accum_dbuff_sz = 0;
@@ -319,15 +277,19 @@ void print_stats()
     dev = stand_devi(gl_stats.timer_accum, dblsum, nranks);
 
     if(gl_my_rank==0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg library-measured I/O time: %.5f : %.5f", avglibt, dev);
-
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg pnetcdf time: %.5f : %.5f", avglibt, dev);
 
     err = MPI_Allreduce(&(gl_stats.user_timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     avglibt = dblsum/nranks;
     dev = stand_devi(gl_stats.user_timer_accum, dblsum, nranks);
     if(gl_my_rank==0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg user-measured I/O time: %.5f : %.4f", avglibt, dev);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg user timer time: %.5f : %.4f", avglibt, dev);
+
+    err = MPI_Reduce(&(gl_stats.transfer_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg tot match time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
 
 
 
@@ -344,11 +306,6 @@ void print_stats()
     CHECK_MPI(err);
     if(gl_my_rank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max libtime: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
-
-    err = MPI_Reduce(&(gl_stats.accum_match_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
-    CHECK_MPI(err);
-    if(gl_my_rank == 0 && dblsum > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg tot match time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
 
     {
 		char *s=getenv("MAX_WORKGROUP_SIZE");
