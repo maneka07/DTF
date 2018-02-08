@@ -237,8 +237,8 @@ _EXTERN_C_ int dtf_finalize()
     if(gl_msg_buf != NULL)
         dtf_free(gl_msg_buf, gl_conf.data_msg_size_limit);
 
-    //if(gl_stats.malloc_size != MAX_COMP_NAME )
-      //  DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
+  //  if(gl_stats.malloc_size != MAX_COMP_NAME )
+    //  DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
     assert(gl_finfo_req_q == NULL);
     assert(gl_msg_q == NULL);
 

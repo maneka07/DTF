@@ -1,12 +1,13 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
+
 #include "dtf_init_finalize.h"
 #include "dtf_file_buffer.h"
 #include "dtf_util.h"
 #include "dtf_req_match.h"
 #include "dtf.h"
-
+#include "dtf_io_pattern.h"
 
 int gl_my_comp_id = -1;
 int gl_ncomp = 0;
@@ -136,6 +137,9 @@ static int check_config()
             DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: I/O mode for file %s underfined", cur_fpat->fname);
             ret = 1;
         }
+        
+        if( (cur_fpat->iomode == DTF_IO_MODE_FILE) && cur_fpat->replay_io)
+			cur_fpat->replay_io = 0; 
 
         cur_fpat = cur_fpat->next;
     }
@@ -310,18 +314,35 @@ static void destroy_intercomm(int comp_id){
 
 void clean_config(){
   int i;
-  fname_pattern_t *pat = gl_fname_ptrns;
+  fname_pattern_t *name_pat = gl_fname_ptrns;
+  io_pattern_t *iopat;
+  rank_pattern_t *rpat;
+  void *tmp;
+  
+  while(name_pat != NULL){
 
-  while(pat != NULL){
-
-	 for(i = 0; i < pat->nexcls; i++)
-		dtf_free(pat->excl_fnames[i], sizeof(char)*MAX_FILE_NAME);
-	 if(pat->nexcls > 0)
-		dtf_free(pat->excl_fnames, sizeof(char*)*pat->nexcls);
+	 for(i = 0; i < name_pat->nexcls; i++)
+		dtf_free(name_pat->excl_fnames[i], sizeof(char)*MAX_FILE_NAME);
+	 if(name_pat->nexcls > 0)
+		dtf_free(name_pat->excl_fnames, sizeof(char*)*name_pat->nexcls);
+	
+	iopat = name_pat->io_pats;
+	while(iopat != NULL){
+		rpat = iopat->rank_pats;
+		while(rpat != NULL){
+			dtf_free(rpat->data, rpat->datasz);
+		    tmp = rpat->next;
+		    dtf_free(rpat, sizeof(rank_pattern_t));
+		    rpat = (rank_pattern_t*)tmp;
+		}
+		tmp = iopat->next;
+		dtf_free(iopat, sizeof(io_pattern_t));
+		iopat = (io_pattern_t*)tmp;
+	}
 
 	 gl_fname_ptrns = gl_fname_ptrns->next;
-	 dtf_free(pat, sizeof(fname_pattern_t));
-	 pat = gl_fname_ptrns;
+	 dtf_free(name_pat, sizeof(fname_pattern_t));
+	 name_pat = gl_fname_ptrns;
   }
 
   if(gl_comps != NULL)
@@ -531,7 +552,10 @@ int load_config(const char *ini_name, const char *comp_name){
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown I/O mode: %s.", value);
 				goto panic_exit;
 			}
-
+		}  else if(strcmp(param, "replay_io") == 0){
+			cur_fpat->replay_io = atoi(value);
+			assert(cur_fpat->replay_io==0 ||  cur_fpat->replay_io==1);
+			
         }  else if(strcmp(param, "ignore_io") == 0){
 			cur_fpat->ignore_io = atoi(value);
 			assert(cur_fpat->ignore_io==0 ||  cur_fpat->ignore_io==1);

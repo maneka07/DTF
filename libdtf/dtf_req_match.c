@@ -2,9 +2,7 @@
 #include "dtf_util.h"
 #include "dtf.h"
 #include <unistd.h>
-
-
-static void send_data_wrt2rdr(void* buf, int bufsz);
+#include "dtf_io_pattern.h"
 
 void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
 {
@@ -298,10 +296,10 @@ static void do_matching(file_buffer_t *fbuf)
 
         nwriters = 0;
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Matching rreq from rank %d", ritem->rank);
-        if(ritem->comm == gl_comps[gl_my_comp_id].comm)
-            DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in my comp", ritem->rank);
-        else
-            DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in other comp", ritem->rank);
+        //~ if(ritem->comm == gl_comps[gl_my_comp_id].comm)
+            //~ DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in my comp", ritem->rank);
+        //~ else
+            //~ DTF_DBG(VERBOSE_ALL_LEVEL, "rreq from rank %d in other comp", ritem->rank);
 
 
         rblock = ritem->dblocks;
@@ -512,7 +510,7 @@ static void do_matching(file_buffer_t *fbuf)
 
             if(my_idx != -1){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Parse data req to myself");
-                send_data_wrt2rdr(sbuf[my_idx], offt[my_idx]);
+                send_data(sbuf[my_idx], offt[my_idx]);
                 dtf_free(sbuf[my_idx], bufsz[my_idx]);
             }
             DTF_DBG(VERBOSE_DBG_LEVEL, "Matched rreq for rank %d", ritem->rank);
@@ -671,7 +669,7 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
 
 				ritem = fbuf->my_mst_info->iodb->ritems;
 				while(ritem != NULL){
-					if( (ritem->rank == rank) && (ritem->comm == comm) )
+					if(ritem->rank == rank)
 						break;
 					ritem = ritem->next;
 				}
@@ -680,7 +678,6 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
 					ritem = (read_db_item_t*)dtf_malloc(sizeof(read_db_item_t));
 					assert(ritem != NULL);
 					ritem->rank = rank;
-					ritem->comm = comm;
 					ritem->dblocks = NULL;
 					ritem->nblocks = 0;
 					ritem->last_block = NULL;
@@ -1377,6 +1374,8 @@ void send_ioreqs_by_mst(file_buffer_t *fbuf)
 	dtf_free(sbuf, bufsz);
 }
 
+//TODO allow sending data without synchronization but just keep this data
+//and process it later?
 int match_ioreqs(file_buffer_t *fbuf)
 {
 
@@ -1386,6 +1385,9 @@ int match_ioreqs(file_buffer_t *fbuf)
 //    double t_part3=MPI_Wtime();
     double t_start;
     double t_st;
+    int replay = 0, err;
+    fname_pattern_t *pat = NULL;
+    
 	t_start = MPI_Wtime();
 	DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp Match ioreqs for file %s (ncid %d)", fbuf->file_path, fbuf->ncid);
    
@@ -1400,67 +1402,138 @@ int match_ioreqs(file_buffer_t *fbuf)
         assert(fbuf->my_mst_info->nread_completed == 0);
     }
 
-	/*First, synchronize two components: need to ensure that reader does not start 
-	 * sending ioreqs before writer started matching!*/
-    if(gl_my_comp_id == fbuf->reader_id){
-
-			if(gl_my_rank == fbuf->root_reader){
-				 while(!fbuf->sync_comp_flag)
-				    progress_io_matching();
-				 fbuf->sync_comp_flag = 0;
-			}
-			
-			MPI_Barrier(fbuf->comm);
-		
-	} else { /*Writer*/
-		if(fbuf->root_writer == gl_my_rank)
-			while(fbuf->root_reader == -1)
-				progress_io_matching();
-		MPI_Barrier(fbuf->comm);
-		if(fbuf->root_writer == gl_my_rank){
-			dtf_msg_t *msg = new_dtf_msg(NULL, 0, COMP_SYNC_TAG);
-			int err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, COMP_SYNC_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
-			CHECK_MPI(err);
-			ENQUEUE_ITEM(msg, gl_msg_q);
-			progress_msg_queue();
-		}
+	/*Check if we should do normal matching or replay a previously 
+	 * recorded I/O pattern.*/
+	pat = find_fname_pattern(fbuf->file_path);
+	assert(pat != NULL);
+	if(pat->replay_io){
+		if(fbuf->writer_id == gl_my_comp_id && pat->wrt_recorded == IO_PATTERN_RECORDED)
+			replay = 1;
+		else if(fbuf->reader_id == gl_my_comp_id && pat->rdr_recorded == IO_PATTERN_RECORDED)
+			replay = 1;
 	}
 
+	/*First, synchronize two components*/
+    if(gl_my_comp_id == fbuf->reader_id){
+
+			if(replay){
+				/*Writer will have to sync with reader, so that writer doesn't 
+				 * start sending the data before reader is ready*/
+				MPI_Barrier(fbuf->comm);
+				
+				if(fbuf->root_reader == gl_my_rank){
+					err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, COMP_SYNC_TAG, gl_comps[fbuf->writer_id].comm);
+					CHECK_MPI(err);
+				}
+			} else {
+				/*Reader will have to sync with writer so that reader doesn't 
+				 * start sending its I/O requests before writer is ready*/
+				if(gl_my_rank == fbuf->root_reader){
+					 while(!fbuf->sync_comp_flag)
+						progress_io_matching();
+					 fbuf->sync_comp_flag = 0;
+				}
+				
+				MPI_Barrier(fbuf->comm);
+			}
+		
+	} else { /*Writer*/
+		/*First of all make sure all processes have info about the other component*/
+		if(!fbuf->cpl_info_shared){
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about the other component");
+			 if(fbuf->root_writer == gl_my_rank){
+				while(fbuf->root_reader == -1)
+					progress_io_matching();
+				
+			 }
+			
+			err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, fbuf->comm);
+			CHECK_MPI(err);
+			
+			if(fbuf->root_writer != gl_my_rank){
+				assert(fbuf->cpl_mst_info->masters== NULL);
+				fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+				assert(fbuf->cpl_mst_info->masters != NULL);	
+			}
+			
+			err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, fbuf->comm);
+			CHECK_MPI(err);	
+			
+			fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
+			fbuf->cpl_info_shared = 1;
+		 }
+		
+		if(replay){
+			/*Sync with reader so that we don't start replaying data 
+			 * before reader is ready*/
+			if(gl_my_rank == fbuf->root_writer){
+				 while(!fbuf->sync_comp_flag)
+					progress_io_matching();
+				 fbuf->sync_comp_flag = 0;
+			}
+			MPI_Barrier(fbuf->comm);
+			
+		} else {
+			//MPI_Barrier(fbuf->comm);
+			
+			/*Let the reader know that writer have started matching so reader can start too*/
+			if(fbuf->root_writer == gl_my_rank){
+				err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, COMP_SYNC_TAG, gl_comps[fbuf->reader_id].comm);
+				CHECK_MPI(err);
+			}
+		}
+	
+	}
+	
     fbuf->done_matching_flag = 0;
+	
+	if(replay){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Will replay I/O instead of matching");
+		/*First writer must sync with reader*/
+		if(gl_my_comp_id == fbuf->writer_id) 
+			 replay_io(pat, fbuf->file_path, fbuf->cur_transfer_epoch);
+			
+		while(!fbuf->done_matching_flag){
+			t_st = MPI_Wtime();
+			progress_io_matching();
+			gl_stats.accum_progr_time += MPI_Wtime() - t_st;
+		}
+			
+	} else {
+		
+		/*If a writer process doesn't have any io requests, it still has to
+		  wait for the master process to let it complete.
+		  If a reader process does not have any read requests,
+		  it notifies the master that it completed matching and returns.*/
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs", fbuf->rreq_cnt, fbuf->wreq_cnt);
+		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
+			send_ioreqs_by_var(fbuf);
+		else if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
+			send_ioreqs_by_block(fbuf);
+		else
+			send_ioreqs_by_mst(fbuf);
 
-    /*If a writer process doesn't have any io requests, it still has to
-      wait for the master process to let it complete.
-      If a reader process does not have any read requests,
-      it notifies the master that it completed matching and returns.*/
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs", fbuf->rreq_cnt, fbuf->wreq_cnt);
-    if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
-        send_ioreqs_by_var(fbuf);
-    else if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
-        send_ioreqs_by_block(fbuf);
-    else
-		send_ioreqs_by_mst(fbuf);
+	//    t_part1 = MPI_Wtime() - t_part1;
+	//    t_part2 = MPI_Wtime();
 
-//    t_part1 = MPI_Wtime() - t_part1;
-//    t_part2 = MPI_Wtime();
-
-    //counter = 0;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching phase");
-    while(!fbuf->done_matching_flag){
-            //counter++;
-           // if(counter % 500 == 0){
-                t_st = MPI_Wtime();
-                progress_io_matching();
-               // counter = 0;
-                gl_stats.accum_progr_time += MPI_Wtime() - t_st;
-                t_st = MPI_Wtime();
-                if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->my_mst_info->my_mst == gl_my_rank)  ){
-                    do_matching(fbuf);
-                    gl_stats.accum_do_matching_time += MPI_Wtime() - t_st;
-                } else
-                    gl_stats.idle_time += MPI_Wtime() - t_st;
-            //}
-    }
-
+		//counter = 0;
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching phase");
+		while(!fbuf->done_matching_flag){
+				//counter++;
+			   // if(counter % 500 == 0){
+					t_st = MPI_Wtime();
+					progress_io_matching();
+				   // counter = 0;
+					gl_stats.accum_progr_time += MPI_Wtime() - t_st;
+					t_st = MPI_Wtime();
+					if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->my_mst_info->my_mst == gl_my_rank)  ){
+						do_matching(fbuf);
+						gl_stats.accum_do_matching_time += MPI_Wtime() - t_st;
+					} else
+						gl_stats.idle_time += MPI_Wtime() - t_st;
+				//}
+		}
+	}
 	/*Reset flags*/
 	if (fbuf->writer_id == gl_my_comp_id)
         /*Reset flag for future matchings*/
@@ -1468,7 +1541,6 @@ int match_ioreqs(file_buffer_t *fbuf)
     if(fbuf->my_mst_info->my_mst == gl_my_rank)
 		fbuf->my_mst_info->nread_completed = 0;
 
-	//TODO need to figure out with scale reading stuff from previous iterations!!!
 	if(!gl_scale){
 		if(fbuf->my_mst_info->my_mst == gl_my_rank)
 			clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
@@ -1476,13 +1548,30 @@ int match_ioreqs(file_buffer_t *fbuf)
 		delete_ioreqs(fbuf,0);
 	}
 	
-
+	/*Synchronize finishing the matching*/
+    if(gl_my_comp_id == fbuf->writer_id){
+		MPI_Barrier(fbuf->comm);
+		if(fbuf->root_writer == gl_my_rank){
+			err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, READ_DONE_CONFIRM_TAG, gl_comps[fbuf->reader_id].comm);
+			CHECK_MPI(err);
+		}
+	} else { /*reader*/
+		if(fbuf->root_reader == gl_my_rank){
+			char filename[MAX_FILE_NAME];
+			
+			err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, READ_DONE_CONFIRM_TAG, gl_comps[fbuf->writer_id].comm, MPI_STATUS_IGNORE);
+			CHECK_MPI(err);
+			assert(strcmp(filename, fbuf->file_path) == 0);
+		}
+		MPI_Barrier(fbuf->comm);
+	}
+	
 //    t_part2 = MPI_Wtime() - t_part2;
 //    t_part3 = MPI_Wtime();
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
 
-	if(gl_scale)
+	//if(gl_scale)
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp Stat: Time for matching %.4f", MPI_Wtime() - t_start);
 	if(strstr(fbuf->file_path, "hist.d")!=NULL)
 		gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
@@ -1496,12 +1585,14 @@ int match_ioreqs(file_buffer_t *fbuf)
 //    DTF_DBG(VERBOSE_DBG_LEVEL, "statsss: part1: %.4f: %.4f: p2: %.4f: %.4f:prog: %.4f: %.4f: dom: %.4f: %.4f: p3: %.4f:%.4f: all: %.4f",
 //            t_part1, (t_part1/t_all)*100, t_part2, (t_part2/t_all)*100, t_progress, (t_progress/t_part2)*100, t_dom, (t_dom/t_part2)*100, t_part3, (t_part3/t_all)*100, t_all);
 
+	fbuf->cur_transfer_epoch++;
+
     return 0;
 }
 
 
 /*writer->reader || writer->writer*/
-static void send_data_wrt2rdr(void* buf, int bufsz)
+void send_data(void* buf, int bufsz)
 {
     int var_id, rdr_rank, err, i;
     io_req_t *ioreq = NULL;
@@ -1811,6 +1902,10 @@ static void send_data_wrt2rdr(void* buf, int bufsz)
         gl_stats.data_msg_sz += sofft;
     }
 
+	/*Record the pattern if needed*/
+	record_io_pat(fbuf->file_path, rdr_rank, buf, bufsz, fbuf->cur_transfer_epoch);
+	
+		
     free(new_start);
     free(new_count);
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished sending the data");
@@ -2008,31 +2103,52 @@ void send_file_info(file_buffer_t *fbuf, int reader_root)
 }
 
 
-static void notify_masters(file_buffer_t *fbuf, int msgtag)
+static void notify_masters(file_buffer_t *fbuf, void *msg, int msgsz, int msgtag)
 {
     int i, err;
-    assert(fbuf->my_mst_info != NULL);
+    MPI_Request *reqs = dtf_malloc(fbuf->my_mst_info->nmasters * sizeof(MPI_Request));
+    assert(reqs != NULL);
+    
     assert(gl_my_rank == fbuf->root_writer);
+    
     for(i = 0; i < fbuf->my_mst_info->nmasters; i++) {
-        if(fbuf->my_mst_info->masters[i] == gl_my_rank)
+        if(fbuf->my_mst_info->masters[i] == gl_my_rank){
+			reqs[i] = MPI_REQUEST_NULL;
             continue;
-        err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->masters[i], msgtag, gl_comps[gl_my_comp_id].comm);
+		}
+		if(msgsz == 0)
+			err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->masters[i], msgtag, gl_comps[gl_my_comp_id].comm, &reqs[i]);
+		else 
+			err = MPI_Isend(msg, msgsz, MPI_BYTE, fbuf->my_mst_info->masters[i], msgtag, gl_comps[gl_my_comp_id].comm, &reqs[i]);
         CHECK_MPI(err);
     }
+    err = MPI_Waitall(fbuf->my_mst_info->nmasters, reqs, MPI_STATUSES_IGNORE);
+    CHECK_MPI(err);
+    
+    dtf_free(reqs, fbuf->my_mst_info->nmasters);
 }
 
 /*Function executed by master writers to notify other writers
-  about something defined by mpitag (match completion or file close)*/
-static void notify_workgroup(file_buffer_t *fbuf, int msgtag)
+  about something defined by mpitag*/
+static void notify_workgroup(file_buffer_t *fbuf,  void *msg, int msgsz, int msgtag)
 {
     int i, err;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Mst %d will notify workgroup (msgtag %d) for %s", gl_my_rank, msgtag, fbuf->file_path);
     assert(fbuf->my_mst_info->my_mst == gl_my_rank);
-	//TODO replace with waitall
+    MPI_Request *reqs = dtf_malloc((fbuf->my_mst_info->my_wg_sz - 1)*sizeof(MPI_Request));
+    assert(reqs != NULL);
     for(i = 0; i < fbuf->my_mst_info->my_wg_sz - 1; i++){
-        err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_wg[i], msgtag, gl_comps[gl_my_comp_id].comm);
+        if(msgsz == 0)
+			err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_wg[i], msgtag, gl_comps[gl_my_comp_id].comm, &reqs[i]);
+		else 
+			err = MPI_Isend(msg, msgsz, MPI_BYTE, fbuf->my_mst_info->my_wg[i], msgtag, gl_comps[gl_my_comp_id].comm, &reqs[i]);
+        CHECK_MPI(err);
         CHECK_MPI(err);
     }
+    err = MPI_Waitall(fbuf->my_mst_info->my_wg_sz - 1, reqs, MPI_STATUSES_IGNORE);
+    CHECK_MPI(err);
+    
+    dtf_free(reqs, (fbuf->my_mst_info->my_wg_sz - 1)*sizeof(MPI_Request));
 }
 
 void progress_msg_queue()
@@ -2084,6 +2200,9 @@ static void print_recv_msg(int tag)
         case READ_DONE_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_TAG");
             break;
+        case READ_DONE_CONFIRM_TAG:
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_CONFIRM_TAG");
+            break;
         case FILE_INFO_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_TAG");
             break;
@@ -2134,7 +2253,17 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 				fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
 				assert(fbuf != NULL);
 				assert(fbuf->root_writer == gl_my_rank);
-				if(!gl_scale){
+				
+				if(gl_scale){
+					assert(fbuf->root_reader == src);
+				} else {
+					//~ /*First, forward the info to other processes in component*/
+					//~ if(fbuf->root_writer == gl_my_comp_id)	
+						//~ notify_masters(fbuf, rbuf, bufsz, FILE_INFO_REQ_TAG);
+					
+					//~ if(fbuf->my_mst_info->my_mst == gl_my_rank)
+						//~ notify_workgroup(fbuf, rbuf, bufsz, FILE_INFO_REQ_TAG);
+					
 					fbuf->root_reader = src;
 					//parse mst info of the other component
 					assert(fbuf->cpl_mst_info->nmasters == 0);
@@ -2146,11 +2275,13 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 					memcpy(fbuf->cpl_mst_info->masters, (unsigned char*)rbuf+offt, fbuf->cpl_mst_info->nmasters*sizeof(int));
 					assert(fbuf->root_reader == fbuf->cpl_mst_info->masters[0]);
 				}
-				DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request, root reader %d",fbuf->cpl_mst_info->masters[0] );
 				
-				if(fbuf->iomode == DTF_IO_MODE_MEMORY){
+				DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request, root reader %d",
+						fbuf->cpl_mst_info->masters[0] );
+			
+				if(fbuf->iomode == DTF_IO_MODE_MEMORY) 
 					send_file_info(fbuf, fbuf->root_reader);
-				}
+				
 				dtf_free(rbuf, bufsz);
 				break;
 			case IO_REQS_TAG:
@@ -2174,7 +2305,7 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 				err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_DATA_REQ_TAG, gl_comps[comp].comm, &status);
 				CHECK_MPI(err);
 				gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
-				send_data_wrt2rdr(rbuf, bufsz);
+				send_data(rbuf, bufsz);
 				dtf_free(rbuf, bufsz);
 				break;
 
@@ -2207,8 +2338,8 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 					assert(comp == fbuf->reader_id);
 					assert(gl_my_rank == fbuf->root_writer);
 					if(fbuf->my_mst_info->nread_completed == fbuf->cpl_mst_info->nmasters){
-						notify_masters(fbuf, MATCH_DONE_TAG);
-						notify_workgroup(fbuf, MATCH_DONE_TAG);
+						notify_masters(fbuf, NULL, 0, MATCH_DONE_TAG);
+						notify_workgroup(fbuf, NULL, 0, MATCH_DONE_TAG);
 						fbuf->done_matching_flag = 1;
 						DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE, Done matching at %.3f", MPI_Wtime()-gl_stats.walltime);
 					}
@@ -2235,7 +2366,7 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 				fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
 				assert(fbuf != NULL);
 				if(fbuf->my_mst_info->my_mst == gl_my_rank)
-					notify_workgroup(fbuf, MATCH_DONE_TAG);
+					notify_workgroup(fbuf, NULL, 0, MATCH_DONE_TAG);
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
 				fbuf->done_matching_flag = 1;
 				break;

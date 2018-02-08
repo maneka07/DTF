@@ -71,8 +71,6 @@ typedef struct read_dblock{
 
 typedef struct read_db_item{
     int                     rank;
-    /*TODO should comm be left?*/
-    MPI_Comm                comm;   /*Both writer and reader may read the file, hence, need to distinguish.*/
     read_dblock_t           *dblocks;
     read_dblock_t           *last_block;
     MPI_Offset              nblocks;
@@ -131,4 +129,5 @@ void log_ioreq(file_buffer_t *fbuf,
 			  MPI_Datatype dtype,
 			  void *buf,
 			  int rw_flag);
+void send_data(void* buf, int bufsz);
 #endif // dtf_REQ_MATCH_H_INCLUDED

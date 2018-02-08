@@ -19,71 +19,6 @@
 extern file_info_req_q_t *gl_finfo_req_q;
 extern dtf_msg_t *gl_msg_q;
 
-static int match_str(char *pattern, const char *filename)
-{
-	char *next_token, *cur_token;
-    int pos, strpos;
-    int ret = 0;
-
-    next_token = strchr(pattern, '%');
-
-	if(next_token == NULL){
-		//not a name pattern, just check for inclusion
-		if(strstr(pattern, filename)!=NULL || strstr(filename, pattern)!=NULL)
-			ret = 1;
-	} else {
-		strpos = 0;
-		cur_token = &pattern[strpos];
-
-		while( next_token != NULL){
-			pos = next_token-pattern;
-			pattern[pos] = '\0';
-
-			if(pos - strpos > 0){ //check for inclusion
-				//printf("token %s\n", cur_token);
-				if(strstr(filename, cur_token) == NULL){
-					ret = 0;
-					pattern[pos] = '%';
-					//printf("->not found\n");
-					break;
-				} else {
-					ret = 1;
-					//printf("->found\n");
-				}
-			}
-			pattern[pos] = '%';
-
-			strpos = pos+1;
-			cur_token = &pattern[strpos];
-			next_token = strchr(cur_token, '%');
-		}
-		if( ret && (strpos != strlen(pattern))){
-			//printf("token %s\n", cur_token);
-			//check the last token
-			if(strstr(filename, cur_token) == NULL){
-				ret = 0;
-				//printf("->not found\n");
-			} else {
-				//printf("->found\n");
-			}
-		}
-	}
-	return ret;
-}
-
-int match_ptrn(char* pattern, const char* filename, char** excl_fnames, int nexcls)
-{
-	int i;
-    if(strlen(pattern)== 0 || strlen(filename)==0)
-        return 0;
-
-    /*First see if the filename matches against any of the exclude patterns*/
-    for(i = 0; i < nexcls; i++)
-		if(match_str(excl_fnames[i], filename)) return 0;
-
-    return match_str(pattern, filename);
-}
-
 MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord)
 {
       int i, j;
@@ -109,7 +44,7 @@ void notify_file_ready(file_buffer_t *fbuf)
     char *filename;
     dtf_msg_t *msg;
     if(fbuf->iomode != DTF_IO_MODE_FILE) return;
-    if(gl_my_rank != fbuf->root_writer) return;
+    assert(gl_my_rank == fbuf->root_writer);
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Inside notify_file_ready");
 	assert(fbuf->root_reader != -1);
@@ -562,16 +497,12 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
         if(fbuf->iomode == DTF_IO_MODE_FILE){
 			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp open file %s", fbuf->file_path);
 
-            if(fbuf->root_writer == -1){
-
-				fbuf->root_writer = inquire_root(fbuf->file_path);
-               
-                if(rank == 0)
-					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
-             //TODO figure out with this and scale   
-            }
-
 			if(rank == 0){
+				if(fbuf->root_writer == -1){
+					fbuf->root_writer = inquire_root(fbuf->file_path);
+					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
+				}
+				
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Waiting for file to become ready");
 				/*root reader rank will wait until writer finishes writing the file.
 				 then it will broadcast that the file is ready to everyone else*/
@@ -629,11 +560,14 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
 				unpack_file_info(bufsz, buf);
 				dtf_free(buf, bufsz);
+				
 			}
 
 			fbuf->is_ready = 1;
         }
-
+        
+		fbuf->cpl_info_shared = 1;
+    
     } else if(fbuf->writer_id == gl_my_comp_id){
 
 		if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
@@ -771,9 +705,9 @@ void shift_coord(int ndims, const MPI_Offset *bl_start,
             if(subbl_count[i] > 1)
                   subbl_start[i] += subbl_count[i];
     }
-    DTF_DBG(VERBOSE_DBG_LEVEL, "New start before adjustment:");
+    DTF_DBG(VERBOSE_ALL_LEVEL, "New start before adjustment:");
     for(i = 0; i < ndims; i++)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", subbl_start[i]);
+        DTF_DBG(VERBOSE_ALL_LEVEL, "\t %lld", subbl_start[i]);
 
     for(i = ndims - 1; i > 0; i--)
         if(subbl_start[i] == bl_start[i] + bl_count[i]){
@@ -784,9 +718,9 @@ void shift_coord(int ndims, const MPI_Offset *bl_start,
         } else
             break;
 
-    DTF_DBG(VERBOSE_DBG_LEVEL, "New start after adjustment:");
+    DTF_DBG(VERBOSE_ALL_LEVEL, "New start after adjustment:");
     for(i = 0; i < ndims; i++)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "\t %lld", subbl_start[i]);
+        DTF_DBG(VERBOSE_ALL_LEVEL, "\t %lld", subbl_start[i]);
 
 
 //    DTF_DBG(VERBOSE_DBG_LEVEL, "Copied subblock. Shift start:");

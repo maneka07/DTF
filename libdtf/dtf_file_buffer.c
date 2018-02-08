@@ -152,9 +152,13 @@ fname_pattern_t *new_fname_pattern()
     pat->excl_fnames = NULL;
     pat->nexcls = 0;
     pat->next = NULL;
-    pat->comp1 = -1;
-    pat->comp2 = -1;
+    pat->comp1 = DTF_UNDEFINED;
+    pat->comp2 = DTF_UNDEFINED;
     pat->ignore_io = 0;
+    pat->replay_io = DTF_UNDEFINED;
+    pat->rdr_recorded = DTF_UNDEFINED;
+    pat->wrt_recorded = DTF_UNDEFINED;
+    pat->io_pats = NULL;
     return pat;
 }
 
@@ -197,8 +201,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->fready_notify_flag = DTF_UNDEFINED;
     buf->sync_comp_flag = 0;
     buf->comm = MPI_COMM_NULL;
-    buf->cpl_comp_id = (pat->comp1 == gl_my_comp_id) ? pat->comp2 : pat->comp1;
-    
+    buf->cpl_info_shared = 0;
     buf->my_mst_info = dtf_malloc(sizeof(master_info_t));
     assert(buf->my_mst_info != NULL);
     init_mst_info(buf->my_mst_info);    
@@ -216,6 +219,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->root_reader = -1;
     buf->omode = DTF_UNDEFINED;
 	buf->iomode = pat->iomode;
+	buf->cur_transfer_epoch = 0;
 	//insert
 	if(gl_filebuf_list == NULL)
 		gl_filebuf_list = buf;
@@ -297,4 +301,77 @@ int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start, cons
 //        }
 //    }
     return 0;
+}
+
+static int match_str(char *pattern, const char *filename)
+{
+	char *next_token, *cur_token;
+    int pos, strpos;
+    int ret = 0;
+
+    next_token = strchr(pattern, '%');
+
+	if(next_token == NULL){
+		//not a name pattern, just check for inclusion
+		if(strstr(pattern, filename)!=NULL || strstr(filename, pattern)!=NULL)
+			ret = 1;
+	} else {
+		strpos = 0;
+		cur_token = &pattern[strpos];
+
+		while( next_token != NULL){
+			pos = next_token-pattern;
+			pattern[pos] = '\0';
+
+			if(pos - strpos > 0){ //check for inclusion
+				//printf("token %s\n", cur_token);
+				if(strstr(filename, cur_token) == NULL){
+					ret = 0;
+					pattern[pos] = '%';
+					//printf("->not found\n");
+					break;
+				} else {
+					ret = 1;
+					//printf("->found\n");
+				}
+			}
+			pattern[pos] = '%';
+
+			strpos = pos+1;
+			cur_token = &pattern[strpos];
+			next_token = strchr(cur_token, '%');
+		}
+		if( ret && (strpos != strlen(pattern))){
+			//printf("token %s\n", cur_token);
+			//check the last token
+			if(strstr(filename, cur_token) == NULL){
+				ret = 0;
+				//printf("->not found\n");
+			} else {
+				//printf("->found\n");
+			}
+		}
+	}
+	return ret;
+}
+
+
+fname_pattern_t *find_fname_pattern(const char *filename)
+{
+	int i;
+	fname_pattern_t *pat;
+	 
+	if (strlen (filename) == 0) return NULL;
+		
+    pat = gl_fname_ptrns;
+	while(pat != NULL){
+		 /*First see if the filename matches against any of the exclude patterns*/
+		for(i = 0; i < pat->nexcls; i++)
+			if(match_str(pat->excl_fnames[i], filename)) return NULL;
+		
+		if(match_str(pat->fname, filename) && !pat->ignore_io) break;
+		
+		pat = pat->next;
+	}
+	return pat;
 }

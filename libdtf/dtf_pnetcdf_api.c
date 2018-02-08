@@ -15,6 +15,7 @@
 #include "dtf_util.h"
 #include "dtf_nbuf_io.h"
 #include "dtf_req_match.h"
+#include "dtf_io_pattern.h"
 
 
 extern int lib_initialized;
@@ -64,17 +65,13 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 	}
 
-    fname_pattern_t *pat = gl_fname_ptrns;
-	while(pat != NULL){
-		if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls) && !pat->ignore_io){
-			fbuf = create_file_buffer(pat, filename);
-			/*Because this component creates the file, we assume that it's the writer*/
-			fbuf->omode = DTF_WRITE; 
-			fbuf->writer_id = gl_my_comp_id;
-			fbuf->reader_id = (gl_my_comp_id == pat->comp1) ? pat->comp2 : pat->comp1;
-			break;
-		}
-		pat = pat->next;
+    fname_pattern_t *pat = find_fname_pattern(filename);
+    if(pat != NULL){
+		fbuf = create_file_buffer(pat, filename);
+		/*Because this component creates the file, we assume that it's the writer*/
+		fbuf->omode = DTF_WRITE; 
+		fbuf->writer_id = gl_my_comp_id;
+		fbuf->reader_id = (gl_my_comp_id == pat->comp1) ? pat->comp2 : pat->comp1;
 	}
 
 	if(fbuf == NULL){
@@ -88,7 +85,13 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
     fbuf->comm = comm;
 	init_req_match_masters(comm, fbuf->my_mst_info);
 	fbuf->root_writer = fbuf->my_mst_info->masters[0];
-	
+	if(pat->replay_io && (pat->wrt_recorded == IO_PATTERN_RECORDING)){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: Creating file %s but have not finished recording the I/O pattern for \
+				a file that matches the same file pattern. Did you forget to close the old file?", filename);
+		pat->wrt_recorded = IO_PATTERN_RECORDED;
+	} else if (pat->replay_io && (pat->wrt_recorded == DTF_UNDEFINED))
+		pat->wrt_recorded = IO_PATTERN_RECORDING;
+		
 	 /*In scale-letkf we assume completely mirrorer file handling. 
 	 * Hence, will simply duplicate the master structre*/
 	 if(gl_scale){
@@ -98,6 +101,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		assert(fbuf->cpl_mst_info->masters != NULL);
 		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
 		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
+		fbuf->cpl_info_shared = 1;
 	 }
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
@@ -152,8 +156,9 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
  */
 _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 {
-    int nranks;
+    int nranks, cpl_cmp, cpl_root;
     file_buffer_t *fbuf;
+	fname_pattern_t *pat = NULL;
 	
     if(!lib_initialized) return;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
@@ -161,19 +166,10 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
 
     if(fbuf == NULL){
-		fname_pattern_t *pat = gl_fname_ptrns;
-		while(pat != NULL){
-			if(match_ptrn(pat->fname, filename, pat->excl_fnames, pat->nexcls) && !pat->ignore_io){
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
-				fbuf = create_file_buffer(pat, filename);
-				/*Assume that this component is the reader*/
-				fbuf->reader_id = gl_my_comp_id;
-				fbuf->writer_id = (gl_my_comp_id == pat->comp1) ? pat->comp2 : pat->comp1;
-				assert( (omode & NC_WRITE) == 0);
-				fbuf->omode = DTF_READ;
-				break;
-			}
-			pat = pat->next;
+		pat = find_fname_pattern(filename);
+		if(pat != NULL){
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
+			fbuf = create_file_buffer(pat, filename);	
 		}
 	}
 
@@ -186,6 +182,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
         fbuf->comm = comm;
     else
         assert(fbuf->comm == comm);
+   
     MPI_Comm_size(comm, &nranks);
 
     if(comm == gl_comps[gl_my_comp_id].comm)
@@ -205,6 +202,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 			assert(fbuf->cpl_mst_info->masters != NULL);
 			memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
 			fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
+			fbuf->cpl_info_shared = 1;
 		 }
     } else {
 		/*do a simple check that the same set of processes as before opened the file*/
@@ -220,62 +218,131 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		assert(fbuf->root_writer == gl_my_rank);
 		while(fbuf->fready_notify_flag != DTF_UNDEFINED)
 			progress_io_matching();
-	 }
+	 }	   
 
-	if( omode & NC_WRITE )
-		fbuf->omode = DTF_WRITE;
-	else // NC_NOWRITE 
-		fbuf->omode = DTF_READ;
-
-	/*Set who's the reader and writer component in this session*/
-	int cpl_cmp = (fbuf->reader_id == gl_my_comp_id) ? fbuf->writer_id : fbuf->reader_id; 
-	int cpl_root = (fbuf->reader_id == gl_my_comp_id) ? fbuf->root_writer : fbuf->root_reader;
+	if(pat == NULL){
+		pat = find_fname_pattern(filename);
+		assert(pat != NULL);
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Pat comp1 %d, comp2 %d, fname %s, replay %d", pat->comp1, pat->comp2, pat->fname, pat->replay_io);
+	}
 	
-	if(fbuf->omode == DTF_READ){
+	if(pat->replay_io){
+		 if(pat->wrt_recorded == IO_PATTERN_RECORDING || pat->rdr_recorded == IO_PATTERN_RECORDING)
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: Opening file %s but have not finished recording the I/O pattern for \
+			a file that matches the same file pattern. Did you forget to close the old file?", filename);
+		 if(pat->wrt_recorded == IO_PATTERN_RECORDING)
+			pat->wrt_recorded = IO_PATTERN_RECORDED;
+		 if(pat->rdr_recorded == IO_PATTERN_RECORDING)
+			pat->rdr_recorded = IO_PATTERN_RECORDED;
+	}
+	
+	 /*If component opens this file for reading and before it 
+  * opened the file for writing, root process must broad
+  * cast master list of the coupled component to other 
+  * processes in this component. */
+  
+    if( !(omode & NC_WRITE) && fbuf->writer_id == gl_my_comp_id && !fbuf->cpl_info_shared){
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about other component");
+			if(fbuf->root_writer == gl_my_rank)
+				assert(fbuf->cpl_mst_info->nmasters > 0);
+		
+			int err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
+			CHECK_MPI(err);
+			
+			if(gl_my_rank != fbuf->root_writer){
+				assert(fbuf->cpl_mst_info->masters== NULL);
+				fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+				assert(fbuf->cpl_mst_info->masters != NULL);	
+			}
+			
+			err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
+			CHECK_MPI(err);
+			
+			fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
+			fbuf->cpl_info_shared = 1;
+	}
+	
+	/*Set who's the reader and writer component in this session*/
+	cpl_cmp = (pat->comp1 == gl_my_comp_id) ? pat->comp2 : pat->comp1; 
+	DTF_DBG(VERBOSE_DBG_LEVEL, "cpl cmp %d", cpl_cmp);
+	/*if this is not the first transfer session, the root from the other coponent is 
+	 * known from previous session*/
+	cpl_root = (fbuf->reader_id == gl_my_comp_id) ? fbuf->root_writer : fbuf->root_reader;
+
+	if( omode & NC_WRITE ){
+		fbuf->omode = DTF_WRITE;
+		fbuf->writer_id = gl_my_comp_id;
+		fbuf->reader_id = cpl_cmp;
+		fbuf->root_writer = fbuf->my_mst_info->masters[0];
+		fbuf->root_reader = cpl_root;
+		
+		if(pat->replay_io && (pat->wrt_recorded == DTF_UNDEFINED))
+			pat->wrt_recorded = IO_PATTERN_RECORDING;
+			
+	} else { // NC_NOWRITE  
+		
+		fbuf->omode = DTF_READ;
+		fbuf->writer_id = cpl_cmp;
+		fbuf->reader_id = gl_my_comp_id;
+		fbuf->root_writer = cpl_root;
+		fbuf->root_reader = fbuf->my_mst_info->masters[0];
+	
+		if(pat->replay_io && (pat->rdr_recorded == DTF_UNDEFINED))
+			pat->rdr_recorded = IO_PATTERN_RECORDING;
+	}
+
+
+	
+	//~ if(fbuf->omode == DTF_READ){
 
 	    /*If the component was the writer in the previous session, the root
 		 * process must have the master info of the coupled component. It
 		 * will broadcast the info.*/
-		if(fbuf->writer_id == gl_my_comp_id){
+		/*if(fbuf->writer_id == gl_my_comp_id){
 			int rank, err;
 			
-			if(!gl_scale){
-				MPI_Comm_rank(comm, &rank);
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about the other component");
+			//~ if(!gl_scale){
+				//~ MPI_Comm_rank(comm, &rank);
+				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about the other component");
 				
-				//root broadcasts master info to others
-				if(rank == 0){
-					assert(fbuf->cpl_mst_info->nmasters>0);
-				}
-				err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
-				CHECK_MPI(err);
-				if(rank != 0){
-					assert(fbuf->cpl_mst_info->masters== NULL);
-					fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-					assert(fbuf->cpl_mst_info->masters != NULL);	
-				}
+				//~ //root broadcasts master info to others
+				//~ if(rank == 0){
+					//~ assert(fbuf->cpl_mst_info->nmasters>0);
+				//~ }
+				//~ err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
+				//~ CHECK_MPI(err);
+				//~ if(rank != 0){
+					//~ assert(fbuf->cpl_mst_info->masters== NULL);
+					//~ fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+					//~ assert(fbuf->cpl_mst_info->masters != NULL);	
+				//~ }
 				
-				err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
-				CHECK_MPI(err);
-			}
+				//~ err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
+				//~ CHECK_MPI(err);
+			//~ }
 			
 			fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
 			
 			//~ for(i = 0; i < fbuf->cpl_mst_info->nmasters; i++)
 				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "mst list %d",fbuf->cpl_mst_info->masters[i]); 
-		} else 
-			fbuf->root_writer = cpl_root;
+		} else */
+			//~ fbuf->root_writer = cpl_root;
 		 
-		fbuf->reader_id = gl_my_comp_id;
-		fbuf->root_reader = fbuf->my_mst_info->masters[0];
-		fbuf->writer_id = cpl_cmp;
-	} else { /*fbuf->omode == DTF_WRITE*/			
-		fbuf->writer_id = gl_my_comp_id;
-		fbuf->root_writer = fbuf->my_mst_info->masters[0];
-		fbuf->reader_id = cpl_cmp;	
-		fbuf->root_reader = cpl_root;
-	}
+		//~ fbuf->reader_id = gl_my_comp_id;
+		//~ fbuf->root_reader = fbuf->my_mst_info->masters[0];
+		//~ fbuf->writer_id = cpl_cmp;
+		
 	
+		
+	//~ } else { /*fbuf->omode == DTF_WRITE*/			
+		//~ fbuf->writer_id = gl_my_comp_id;
+		//~ fbuf->root_writer = fbuf->my_mst_info->masters[0];
+		//~ fbuf->reader_id = cpl_cmp;	
+		//~ fbuf->root_reader = cpl_root;
+		
+	//~ }
+	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d), omode %d", gl_comps[fbuf->writer_id].name, fbuf->root_writer, gl_comps[fbuf->reader_id].name, fbuf->root_reader, omode);	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %d (root %d), reader %d (root %d), omode %d", fbuf->writer_id, fbuf->root_writer, fbuf->reader_id, fbuf->root_reader, omode);
     
     open_file(fbuf, comm);
@@ -322,6 +389,16 @@ _EXTERN_C_ void dtf_close(const char* filename)
         return;
     }
 
+	fname_pattern_t *pat = find_fname_pattern(filename);			
+	assert(pat != NULL);
+	if(pat->replay_io){
+		if(pat->rdr_recorded == IO_PATTERN_RECORDING)
+			pat->rdr_recorded = IO_PATTERN_RECORDED;
+		else if(pat->wrt_recorded == IO_PATTERN_RECORDING)
+			pat->wrt_recorded = IO_PATTERN_RECORDED;
+	}
+	fbuf->cur_transfer_epoch = 0; //reset 
+	
     close_file(fbuf);
 }
 

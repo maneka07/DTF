@@ -3,6 +3,7 @@
 
 #include <mpi.h>
 #include "rb_red_black_tree.h"
+
 //#include "dtf_req_match.h"
 
 #define MAX_FILE_NAME 1024
@@ -51,14 +52,13 @@ typedef struct file_buffer{
   int                       nvars;            /*Number of defined variables*/
   int                       writer_id;
   int                       reader_id;
-  int                       cpl_comp_id;      /*Id of the component with whom this component is
-                                               coupled via this file*/
   int                       is_ready;           /*Used to let the reader know that the file is either
                                       - received from the writer (mode = DTF_IO_MODE_MEMORY)
                                       - finished being written (mode = DTF_IO_MODE_FILE)
                                     */
   int                       iomode;    /*Do normal File I/O or direct data transfer?*/
-  int                       omode;     /*open mode (read/write/undefined)*/           
+  int                       omode;     /*open mode (read/write/undefined)*/      
+  int 						cur_transfer_epoch;      
 
   int                       root_writer;           /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
   int                       root_reader;
@@ -73,6 +73,7 @@ typedef struct file_buffer{
                                                     Possible values: 0 - the ps does not write to this file
                                                                      1 - the ps writes to this file. The file is not ready yet.
                                                                      2 - The file is ready, reader has been notified */
+  int                       cpl_info_shared;                                          
   struct file_buffer        *next;
   struct file_buffer        *prev;
 }file_buffer_t;
@@ -85,6 +86,12 @@ typedef struct fname_pattern{
     int  comp2;
     int  iomode;
     int  ignore_io;				/*disable I/O for this file*/
+    int  replay_io;            /*Should we record and replay during matching I/O pattern for this file?*/
+    int  rdr_recorded;          /*if recorded, reader doesn't need to send its requests during matching as 
+								the writer has already recorded its read pattern*/
+    int  wrt_recorded;          /*If recorded, writer skips matching and replays data sending from previously 
+                                 recorded I/O pattern*/
+    struct io_pattern *io_pats;          /*Recorded pattern of what data this process sends to which reader process*/
     struct fname_pattern *next;
 }fname_pattern_t;
 
@@ -95,4 +102,6 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
 dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 void add_var(file_buffer_t *fbuf, dtf_var_t *var);
 int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
+fname_pattern_t *find_fname_pattern(const char *filename);
+
 #endif
