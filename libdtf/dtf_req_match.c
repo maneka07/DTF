@@ -1446,19 +1446,19 @@ int match_ioreqs(file_buffer_t *fbuf)
 					progress_io_matching();
 				
 			 }
-			
-			err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, fbuf->comm);
-			CHECK_MPI(err);
-			
-			if(fbuf->root_writer != gl_my_rank){
-				assert(fbuf->cpl_mst_info->masters== NULL);
-				fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-				assert(fbuf->cpl_mst_info->masters != NULL);	
+			if(!gl_scale){
+				err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, fbuf->comm);
+				CHECK_MPI(err);
+				
+				if(fbuf->root_writer != gl_my_rank){
+					assert(fbuf->cpl_mst_info->masters== NULL);
+					fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+					assert(fbuf->cpl_mst_info->masters != NULL);	
+				}
+				
+				err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, fbuf->comm);
+				CHECK_MPI(err);	
 			}
-			
-			err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, fbuf->comm);
-			CHECK_MPI(err);	
-			
 			fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
 			fbuf->cpl_info_shared = 1;
 		 }
@@ -2255,14 +2255,15 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 				assert(fbuf->root_writer == gl_my_rank);
 				
 				if(gl_scale){
-					assert(fbuf->root_reader == src);
+					fbuf->root_reader = src;
+					assert(fbuf->root_reader == fbuf->cpl_mst_info->masters[0]);
 				} else {
-					//~ /*First, forward the info to other processes in component*/
-					//~ if(fbuf->root_writer == gl_my_comp_id)	
-						//~ notify_masters(fbuf, rbuf, bufsz, FILE_INFO_REQ_TAG);
-					
-					//~ if(fbuf->my_mst_info->my_mst == gl_my_rank)
-						//~ notify_workgroup(fbuf, rbuf, bufsz, FILE_INFO_REQ_TAG);
+						//~ /*First, forward the info to other processes in component*/
+						//~ if(fbuf->root_writer == gl_my_comp_id)	
+							//~ notify_masters(fbuf, rbuf, bufsz, FILE_INFO_REQ_TAG);
+						
+						//~ if(fbuf->my_mst_info->my_mst == gl_my_rank)
+							//~ notify_workgroup(fbuf, rbuf, bufsz, FILE_INFO_REQ_TAG);
 					
 					fbuf->root_reader = src;
 					//parse mst info of the other component

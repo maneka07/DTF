@@ -377,6 +377,7 @@ void close_file(file_buffer_t *fbuf)
 			//~ }
 
         }
+       
     } else if (fbuf->reader_id == gl_my_comp_id){
             assert(fbuf->rreq_cnt == 0);
             assert(fbuf->wreq_cnt == 0);

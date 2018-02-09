@@ -100,8 +100,12 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
 		assert(fbuf->cpl_mst_info->masters != NULL);
 		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
-		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
-		fbuf->cpl_info_shared = 1;
+		/*Set root reader immediately only for file I/O. If mode is transfer
+		 * we need to force scale receive FILE_INFO_REQ_TAG so won't set the root reader.*/
+		if(fbuf->iomode == DTF_IO_MODE_FILE){
+			fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
+			fbuf->cpl_info_shared = 1;
+		}
 	 }
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
@@ -143,6 +147,8 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		//~ if(s != NULL)
 			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp open file %s", fbuf->file_path);
     }
+    
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d)", gl_comps[fbuf->writer_id].name, fbuf->root_writer, gl_comps[fbuf->reader_id].name, fbuf->root_reader);	
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Exit create");
 }
@@ -203,6 +209,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 			memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
 			fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
 			fbuf->cpl_info_shared = 1;
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Root writer set to %d", fbuf->root_writer);
 		 }
     } else {
 		/*do a simple check that the same set of processes as before opened the file*/
@@ -268,7 +275,9 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	/*if this is not the first transfer session, the root from the other coponent is 
 	 * known from previous session*/
 	cpl_root = (fbuf->reader_id == gl_my_comp_id) ? fbuf->root_writer : fbuf->root_reader;
-
+	if(gl_scale)
+		cpl_root = fbuf->cpl_mst_info->masters[0];
+	
 	if( omode & NC_WRITE ){
 		fbuf->omode = DTF_WRITE;
 		fbuf->writer_id = gl_my_comp_id;
@@ -290,61 +299,8 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		if(pat->replay_io && (pat->rdr_recorded == DTF_UNDEFINED))
 			pat->rdr_recorded = IO_PATTERN_RECORDING;
 	}
-
-
 	
-	//~ if(fbuf->omode == DTF_READ){
-
-	    /*If the component was the writer in the previous session, the root
-		 * process must have the master info of the coupled component. It
-		 * will broadcast the info.*/
-		/*if(fbuf->writer_id == gl_my_comp_id){
-			int rank, err;
-			
-			//~ if(!gl_scale){
-				//~ MPI_Comm_rank(comm, &rank);
-				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about the other component");
-				
-				//~ //root broadcasts master info to others
-				//~ if(rank == 0){
-					//~ assert(fbuf->cpl_mst_info->nmasters>0);
-				//~ }
-				//~ err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
-				//~ CHECK_MPI(err);
-				//~ if(rank != 0){
-					//~ assert(fbuf->cpl_mst_info->masters== NULL);
-					//~ fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-					//~ assert(fbuf->cpl_mst_info->masters != NULL);	
-				//~ }
-				
-				//~ err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
-				//~ CHECK_MPI(err);
-			//~ }
-			
-			fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
-			
-			//~ for(i = 0; i < fbuf->cpl_mst_info->nmasters; i++)
-				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "mst list %d",fbuf->cpl_mst_info->masters[i]); 
-		} else */
-			//~ fbuf->root_writer = cpl_root;
-		 
-		//~ fbuf->reader_id = gl_my_comp_id;
-		//~ fbuf->root_reader = fbuf->my_mst_info->masters[0];
-		//~ fbuf->writer_id = cpl_cmp;
-		
-	
-		
-	//~ } else { /*fbuf->omode == DTF_WRITE*/			
-		//~ fbuf->writer_id = gl_my_comp_id;
-		//~ fbuf->root_writer = fbuf->my_mst_info->masters[0];
-		//~ fbuf->reader_id = cpl_cmp;	
-		//~ fbuf->root_reader = cpl_root;
-		
-	//~ }
-	
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d), omode %d", gl_comps[fbuf->writer_id].name, fbuf->root_writer, gl_comps[fbuf->reader_id].name, fbuf->root_reader, omode);	
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %d (root %d), reader %d (root %d), omode %d", fbuf->writer_id, fbuf->root_writer, fbuf->reader_id, fbuf->root_reader, omode);
-    
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d), omode %d", gl_comps[fbuf->writer_id].name, fbuf->root_writer, gl_comps[fbuf->reader_id].name, fbuf->root_reader, omode);	  
     open_file(fbuf, comm);
 }
 
