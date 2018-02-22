@@ -19,6 +19,10 @@
 #include "nc.h"
 #include "macro.h"
 
+#ifdef DTF
+#include "dtf.h"
+#endif
+
 #define CHECK_ERROR(status) {                                                \
     if (ncp->safe_mode == 1) {                                               \
         int g_status;                                                        \
@@ -197,6 +201,10 @@ ncmpii_fill_var_rec(NC         *ncp,
     if (err != NC_NOERR)
         count = 0; /* participate collective write with 0-length request */
 
+#ifdef DTF
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+        printf("DTF Warning: mpi_file_write inside ncmpii_fill_var_rec is called\n");
+#endif
     /* write to variable collectively */
     TRACE_IO(MPI_File_write_at_all)(fh, offset, buf, (int)count,
                                     MPI_BYTE, &mpistatus);
@@ -234,7 +242,7 @@ ncmpi_fill_var_rec(int        ncid,
     if (NC_readonly(ncp)) DEBUG_RETURN_ERROR(NC_EPERM) /* read-only */
 
     /* This must be called in data mode */
-    if (NC_indef(ncp)) DEBUG_RETURN_ERROR(NC_EINDEFINE)                                
+    if (NC_indef(ncp)) DEBUG_RETURN_ERROR(NC_EINDEFINE)
 
     /* must be called in collective data mode */
     if (NC_indep(ncp)) DEBUG_RETURN_ERROR(NC_EINDEP)
@@ -280,7 +288,7 @@ ncmpi_set_fill(int  ncid,
         int root_fill_mode=fill_mode;
         TRACE_COMM(MPI_Bcast)(&root_fill_mode, 1, MPI_INT, 0, ncp->nciop->comm);
         if (mpireturn != MPI_SUCCESS)
-            return  ncmpii_handle_error(mpireturn, "MPI_Bcast"); 
+            return  ncmpii_handle_error(mpireturn, "MPI_Bcast");
         if (fill_mode != root_fill_mode) {
             /* dataset's fill mode is inconsistent with root's */
             printf("Warning: fill mode set in %s() is inconsistent\n", __func__);
@@ -338,7 +346,7 @@ ncmpi_def_var_fill(int   ncid,
         int root_no_fill=no_fill;
         TRACE_COMM(MPI_Bcast)(&root_no_fill, 1, MPI_INT, 0, ncp->nciop->comm);
         if (mpireturn != MPI_SUCCESS)
-            return  ncmpii_handle_error(mpireturn, "MPI_Bcast"); 
+            return  ncmpii_handle_error(mpireturn, "MPI_Bcast");
 
         if (no_fill != root_no_fill) {
             /* variable's fill mode is inconsistent with root's */
@@ -361,7 +369,7 @@ ncmpi_def_var_fill(int   ncid,
             free_fill_value=1;
         }
         memcpy(root_fill_value, fill_value, (size_t)varp->xsz);
-            
+
         TRACE_COMM(MPI_Bcast)(root_fill_value, varp->xsz, MPI_BYTE, 0, ncp->nciop->comm);
         if (memcmp(fill_value, root_fill_value, (size_t)varp->xsz)) {
             /* variable's fill value is inconsistent with root's */
@@ -746,7 +754,10 @@ fillerup_aggregate(NC *ncp, NC *old_ncp)
     TRACE_IO(MPI_File_set_view)(fh, 0, MPI_BYTE, filetype, "native",
                                 MPI_INFO_NULL);
     MPI_Type_free(&filetype);
-
+#ifdef DTF
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+        printf("DTF Warning: mpi_file_write inside fillerup_aggregate is called\n");
+#endif
     /* write to variable collectively */
     TRACE_IO(MPI_File_write_at_all)(fh, 0, buf, buf_len, MPI_BYTE, &mpistatus);
 

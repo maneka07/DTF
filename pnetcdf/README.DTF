@@ -1,0 +1,1 @@
+./configure --prefix=/home/tanya/apps/pnetcdf CFLAGS="-I/home/tanya/comm_lib/libdtf -L/home/tanya/comm_lib/libdtf -ldtf -g" LDFLAGS="-L/home/tanya/comm_lib/libdtf -ldtf" CC=mpicc FC=mpif90 

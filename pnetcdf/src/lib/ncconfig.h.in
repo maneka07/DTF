@@ -12,6 +12,9 @@
 /* Define if to disable in-place byte swap */
 #undef DISABLE_IN_PLACE_SWAP
 
+/* Enable DTF lib */
+#undef DTF
+
 /* Define if able to support CDF-5 file format */
 #undef ENABLE_CDF5
 

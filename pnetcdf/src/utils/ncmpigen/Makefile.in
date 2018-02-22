@@ -62,7 +62,7 @@ uninstall:
 	$(RM) -f $(MANDIR)/man1/$(MANUAL)
 
 $(PROGRAM):	$(OBJS) $(LIBRARY)
-	$(LINK.c) $(OBJS) $(LDFLAGS) $(LIBS) 
+	$(LINK.c) $(OBJS) $(LIBS) $(LDFLAGS) 
 
 # Below is used if a PnetCDF developer wants to rebuild ncmpigenyy.c or
 # ncmpigentab.c. In that case, configure.in at the root directory needs

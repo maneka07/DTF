@@ -26,6 +26,10 @@
 #include "subfile.h"
 #endif
 
+#ifdef DTF
+#include "dtf.h"
+#endif // DTF
+
 /* The const string below is for the RCS ident(1) command to find a string like
  * "\044Id: \100(#) PnetCDF library version 1.4.0 of 16 Nov 2013 $"
  * in the library file (libpnetcdf.a).
@@ -207,6 +211,9 @@ ncmpi_create(MPI_Comm    comm,
     /* this configure time setting will be overwritten by the run-time
      * environment variable PNETCDF_SAFE_MODE */
 #endif
+
+
+
     /* get environment variable PNETCDF_SAFE_MODE
      * if it is set to 1, then we perform a strict parameter consistent test
      */
@@ -363,6 +370,10 @@ ncmpi_create(MPI_Comm    comm,
     ncmpii_add_to_NCList(ncp);
     *ncidp = ncp->nciop->fd;
 
+#ifdef DTF
+    dtf_create(path, comm, *ncidp);
+#endif // DTF
+
     if (env_info != info) MPI_Info_free(&env_info);
 
     return status;
@@ -387,6 +398,8 @@ ncmpi_open(MPI_Comm    comm,
     /* this configure time setting will be overwritten by the run-time
      * environment variable PNETCDF_SAFE_MODE */
 #endif
+
+
     /* get environment variable PNETCDF_SAFE_MODE
      * if it is set to 1, then we perform a strict parameter consistent test
      */
@@ -418,6 +431,11 @@ ncmpi_open(MPI_Comm    comm,
             DEBUG_ASSIGN_ERROR(status, NC_EMULTIDEFINE_OMODE)
         }
     }
+
+#ifdef DTF
+    dtf_open(path, omode, comm);
+
+#endif // DTF
 
     /* take hints from the environment variable PNETCDF_HINTS
      * a string of hints separated by ";" and each hint is in the
@@ -491,6 +509,9 @@ ncmpi_open(MPI_Comm    comm,
 
     ncmpii_add_to_NCList(ncp);
     *ncidp = ncp->nciop->fd;
+#ifdef DTF
+    dtf_set_ncid(path, *ncidp);
+#endif // DTF
 
 #ifdef ENABLE_SUBFILING
     if (ncp->subfile_mode) {
@@ -962,13 +983,27 @@ int
 ncmpi_close(int ncid) {
     int status = NC_NOERR;
     NC *ncp;
+#ifdef DTF
+    char *tmppath;
+    size_t pathlen;
+#endif
 
     status = ncmpii_NC_check_id(ncid, &ncp);
     if (status != NC_NOERR)
         return status;
+#ifdef DTF
+    pathlen = strlen(ncp->nciop->path);
+    tmppath = malloc(pathlen);
+    strcpy(tmppath, ncp->nciop->path);
+#endif
 
     /* calling the implementation of ncmpi_close() */
-    return ncmpii_close(ncp);
+    status = ncmpii_close(ncp);
+#ifdef DTF
+    dtf_close(tmppath);
+    free(tmppath);
+#endif // DTF
+    return status;
 }
 
 /*----< ncmpi_delete() >-----------------------------------------------------*/

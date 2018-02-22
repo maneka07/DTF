@@ -51,6 +51,10 @@
 
 #define MAX_NC_ID 1024
 
+#ifdef DTF
+#include "dtf.h"
+#endif // DTF
+
 static unsigned char IDalloc[MAX_NC_ID];
 
 inline void
@@ -348,8 +352,14 @@ ncmpiio_open(MPI_Comm     comm,
     /* extract MPI-IO hints */
     ncmpiio_extract_hints(nciop, info);
 
-    TRACE_IO(MPI_File_open)(comm, (char *)path, mpiomode,
-                            info, &nciop->collective_fh);
+//#ifdef DTF
+//    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+//        mpireturn = MPI_SUCCESS;
+//    } else
+//#endif
+        TRACE_IO(MPI_File_open)(comm, (char *)path, mpiomode,
+                                info, &nciop->collective_fh);
+
     if (mpireturn != MPI_SUCCESS) {
         ncmpiio_free(nciop);
         return ncmpii_handle_error(mpireturn, "MPI_File_open");
@@ -371,6 +381,9 @@ ncmpiio_open(MPI_Comm     comm,
         return ncmpii_handle_error(mpireturn, "MPI_Comm_dup");
 
     /* get the file info used by MPI-IO */
+//#ifdef DTF
+//    if(dtf_io_mode(ncp->nciop->path) != DTF_IO_MODE_MEMORY)
+//#endif
     MPI_File_get_info(nciop->collective_fh, &nciop->mpiinfo);
 
     ncp->nciop = nciop;
@@ -474,7 +487,10 @@ ncmpiio_move(ncio *const nciop,
         else {
             nbytes -= chunk_size*nprocs;
         }
-
+#ifdef DTF
+    if(dtf_io_mode(nciop->path) == DTF_IO_MODE_MEMORY)
+        printf("DTF Warning: mpi_file_read inside ncmpiio_move is called\n");
+#endif
         /* read the original data @ from+nbytes+rank*chunk_size */
         TRACE_IO(MPI_File_read_at_all)(nciop->collective_fh,
                                        from+nbytes+rank*chunk_size,
@@ -494,7 +510,10 @@ ncmpiio_move(ncio *const nciop,
         TRACE_COMM(MPI_Allreduce)(&status, &min_st, 1, MPI_INT, MPI_MIN, nciop->comm);
         status = min_st;
         if (status != NC_NOERR) break;
-
+#ifdef DTF
+    if(dtf_io_mode(nciop->path) == DTF_IO_MODE_MEMORY)
+        printf("DTF Warning: mpi_file_write inside ncmpiio_move is called\n");
+#endif
         /* write to new location @ to+nbytes+rank*chunk_size */
         TRACE_IO(MPI_File_write_at_all)(nciop->collective_fh,
                                         to+nbytes+rank*chunk_size,

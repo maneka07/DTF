@@ -994,6 +994,9 @@ fi
 has_fortran=${enable_fortran}
 AC_SUBST(has_fortran)
 
+dnl Enable DTF
+AC_DEFINE([DTF], 1, [Enable DTF lib])
+
 UD_MAKEWHATIS
 
 dnl

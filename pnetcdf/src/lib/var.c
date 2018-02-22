@@ -23,6 +23,10 @@
 #include "macro.h"
 #include "utf8proc.h"
 
+#ifdef DTF
+#include "dtf.h"
+#endif // DTF
+
 /*----< ncmpii_free_NC_var() >------------------------------------------------*/
 /*
  * Free var
@@ -564,6 +568,14 @@ ncmpi_def_var(int         ncid,
     /* change to FILL only if the entire dataset fill mode is FILL */
     if (NC_dofill(ncp)) varp->no_fill = 0;
 
+#ifdef DTF
+    //printf("size of one element %d\n", varp->xsz);
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+        MPI_Datatype dtype = ncmpii_nc2mpitype(varp->type);
+        dtf_def_var(ncp->nciop->path, *varidp, ndims, dtype, varp->shape);
+    }
+#endif
+
     return NC_NOERR;
 }
 
@@ -840,7 +852,7 @@ ncmpi_rename_var(int         ncid,
         int nchars = (int)strlen(newname);
         TRACE_COMM(MPI_Bcast)(&nchars, 1, MPI_INT, 0, ncp->nciop->comm);
         if (mpireturn != MPI_SUCCESS)
-            return ncmpii_handle_error(mpireturn, "MPI_Bcast"); 
+            return ncmpii_handle_error(mpireturn, "MPI_Bcast");
 
         if (nchars != (int) strlen(newname)) {
             /* newname's length is inconsistent with root's */

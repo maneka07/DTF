@@ -29,6 +29,10 @@
 # endif
 #endif
 
+#ifdef DTF
+#include "dtf.h"
+#endif // DTF
+
 /* Prototypes for functions used only in this file */
 static MPI_Offset hdr_len_NC_name(const NC_string *ncstrp, int sizeof_t);
 static MPI_Offset hdr_len_NC_dim(const NC_dim *dimp, int sizeof_t);
@@ -914,8 +918,21 @@ hdr_fetch(bufferinfo *gbp) {
     gbp->index = 0;
 
     MPI_Comm_rank(gbp->nciop->comm, &rank);
+#ifdef DTF
+    dtf_tstart();
+        if(dtf_io_mode(gbp->nciop->path)==DTF_IO_MODE_MEMORY){
+            dtf_read_hdr_chunk(gbp->nciop->path, (gbp->offset)-slack, gbp->size, gbp->base);
+            /* we might have had to backtrack */
+            gbp->offset += (gbp->size - slack);
+            dtf_tend();
+            return NC_NOERR;
+		}
+#endif // DTF
+
     if (rank == 0) {
         MPI_Status mpistatus;
+        int get_size;
+
         /* fileview is already entire file visible and MPI_File_read_at does
            not change the file pointer */
         TRACE_IO(MPI_File_read_at)(gbp->nciop->collective_fh,
@@ -926,11 +943,12 @@ hdr_fetch(bufferinfo *gbp) {
             if (err == NC_EFILE) DEBUG_ASSIGN_ERROR(err, NC_EREAD)
         }
         else {
-            int get_size;
             MPI_Get_count(&mpistatus, MPI_BYTE, &get_size);
+//            printf("pnet %d: actually read hdr chunk sz %d (in hdr_fetch())\n", rank, get_size);
             gbp->get_size += get_size;
         }
     }
+
     /* we might have had to backtrack */
     gbp->offset += (gbp->size - slack);
 
@@ -941,7 +959,9 @@ hdr_fetch(bufferinfo *gbp) {
 
     /* broadcast root's read to other processes */
     TRACE_COMM(MPI_Bcast)(gbp->base, (int)gbp->size, MPI_BYTE, 0, gbp->nciop->comm);
-
+#ifdef DTF
+    dtf_tend();
+#endif
     return err;
 }
 
@@ -2479,32 +2499,60 @@ int ncmpii_write_header(NC *ncp)
         fh = ncp->nciop->independent_fh;
 
     MPI_Comm_rank(ncp->nciop->comm, &rank);
-    if (rank == 0) {
-        MPI_Status mpistatus;
-        void *buf = NCI_Malloc((size_t)ncp->xsz); /* header's write buffer */
+    int put_size;
+#ifdef DTF
+    dtf_tstart();
+    //TODO dtf: if processes changed def and rewrite header I need to change the header sync function (remove checking for write_flag()
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+                printf("pnet %d: inside ncmpii_write_header\n", rank);
+                void *buf = NCI_Malloc((size_t)ncp->xsz); /* header's write buffer */
 
-        /* copy header object to write buffer */
-        status = ncmpii_hdr_put_NC(ncp, buf);
+                /* copy header object to write buffer */
+                status = ncmpii_hdr_put_NC(ncp, buf);
 
-        if (ncp->xsz != (int)ncp->xsz) {
-            NCI_Free(buf);
-            DEBUG_RETURN_ERROR(NC_EINTOVERFLOW)
-        }
-        TRACE_IO(MPI_File_write_at)(fh, 0, buf, (int)ncp->xsz, MPI_BYTE, &mpistatus);
-        if (mpireturn != MPI_SUCCESS) {
-            err = ncmpii_handle_error(mpireturn, "MPI_File_write_at");
-            if (status == NC_NOERR) {
-                err = (err == NC_EFILE) ? NC_EWRITE : err;
-                DEBUG_ASSIGN_ERROR(status, err)
+                if (ncp->xsz != (int)ncp->xsz) {
+                    NCI_Free(buf);
+                    DEBUG_RETURN_ERROR(NC_EINTOVERFLOW)
+                }
+                dtf_write_hdr(ncp->nciop->path, (int)ncp->xsz, buf);
+                mpireturn = MPI_SUCCESS;
+//                if(put_size==0 && nbytes!=0)
+//                    mpireturn = MPI_ERR_UNKNOWN;
+                 NCI_Free(buf);
+                 if(rank == 0)
+                    ncp->nciop->put_size += (int)ncp->xsz;
+                dtf_tend();
+                return NC_NOERR;
             }
+#endif // DTF
+        if (rank == 0) {
+            MPI_Status mpistatus;
+            void *buf = NCI_Malloc((size_t)ncp->xsz); /* header's write buffer */
+
+            /* copy header object to write buffer */
+            status = ncmpii_hdr_put_NC(ncp, buf);
+
+            if (ncp->xsz != (int)ncp->xsz) {
+                NCI_Free(buf);
+                DEBUG_RETURN_ERROR(NC_EINTOVERFLOW)
+            }
+
+            printf("pnet %d: write at offt %ld, sz %d\n", rank, 0l, (int)ncp->xsz);
+
+            TRACE_IO(MPI_File_write_at)(fh, 0, buf, (int)ncp->xsz, MPI_BYTE, &mpistatus);
+
+            if (mpireturn != MPI_SUCCESS) {
+                err = ncmpii_handle_error(mpireturn, "MPI_File_write_at");
+                if (status == NC_NOERR) {
+                    err = (err == NC_EFILE) ? NC_EWRITE : err;
+                    DEBUG_ASSIGN_ERROR(status, err)
+                }
+            } else {
+                MPI_Get_count(&mpistatus, MPI_BYTE, &put_size);
+                ncp->nciop->put_size += put_size;
+            }
+            NCI_Free(buf);
         }
-        else {
-            int put_size;
-            MPI_Get_count(&mpistatus, MPI_BYTE, &put_size);
-            ncp->nciop->put_size += put_size;
-        }
-        NCI_Free(buf);
-    }
 
     if (ncp->safe_mode == 1) {
         /* broadcast root's status, because only root writes to the file */
@@ -2522,7 +2570,8 @@ int ncmpii_write_header(NC *ncp)
     ncp->xsz = ncmpii_hdr_len_NC(ncp);
 
     if (NC_doFsync(ncp)) { /* NC_SHARE is set */
-        TRACE_IO(MPI_File_sync)(fh);
+            TRACE_IO(MPI_File_sync)(fh);
+
         if (mpireturn != MPI_SUCCESS) {
             ncmpii_handle_error(mpireturn,"MPI_File_sync");
             DEBUG_RETURN_ERROR(NC_EMPI)
@@ -2533,7 +2582,9 @@ int ncmpii_write_header(NC *ncp)
             DEBUG_RETURN_ERROR(NC_EMPI)
         }
     }
-
+#ifdef DTF
+    dtf_tend();
+#endif
     return status;
 }
 

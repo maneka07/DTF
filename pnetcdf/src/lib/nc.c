@@ -46,6 +46,10 @@ static int NC_check_def(MPI_Comm comm, void *buf, MPI_Offset nn);
 static int nc_set_fill(int ncid, int fillmode, int *old_mode_ptr);
 #endif
 
+#ifdef DTF
+#include "dtf.h"
+#endif // DTF
+
 /*----< ncmpii_add_to_NCList() >---------------------------------------------*/
 void
 ncmpii_add_to_NCList(NC *ncp)
@@ -147,7 +151,7 @@ NC_check_header(NC         *ncp,
                                   ncp->nciop->comm);
         if (mpireturn != MPI_SUCCESS) {
             if (rank > 0) NCI_Free(cmpbuf);
-            return ncmpii_handle_error(mpireturn, "MPI_Allreduce"); 
+            return ncmpii_handle_error(mpireturn, "MPI_Allreduce");
         }
 
         if (g_status != NC_NOERR) { /* some headers are inconsistent */
@@ -459,7 +463,7 @@ NC_begins(NC         *ncp,
     /* only root's header size matters */
     TRACE_COMM(MPI_Bcast)(&ncp->xsz, 1, MPI_OFFSET, 0, ncp->nciop->comm);
     if (mpireturn != MPI_SUCCESS)
-        return ncmpii_handle_error(mpireturn, "MPI_Bcast"); 
+        return ncmpii_handle_error(mpireturn, "MPI_Bcast");
 
     /* This function is called in ncmpi_enddef(), which can happen either when
      * creating a new file or opening an existing file with metadata modified.
@@ -686,6 +690,7 @@ ncmpii_sync_numrecs(NC         *ncp,
         int len;
         char pos[8], *buf=pos;
         MPI_Status mpistatus;
+        int put_size;
 
         if (ncp->flags & NC_64BIT_DATA) {
             len = X_SIZEOF_INT64;
@@ -701,15 +706,19 @@ ncmpii_sync_numrecs(NC         *ncp,
         /* ncmpix_put_xxx advances the 1st argument with size len */
 
         /* root's file view always includes the entire file header */
-
+#ifdef DTF
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+       printf("DTF Warning: ncmpii_sync_numrecs() is called\n");
+#endif
         TRACE_IO(MPI_File_write_at)(fh, NC_NUMRECS_OFFSET, (void*)pos, len,
                                     MPI_BYTE, &mpistatus);
+
+
         if (mpireturn != MPI_SUCCESS) {
             err = ncmpii_handle_error(mpireturn, "MPI_File_write_at");
             if (status == NC_NOERR && err == NC_EFILE) DEBUG_ASSIGN_ERROR(status, NC_EWRITE)
         }
         else {
-            int put_size;
             MPI_Get_count(&mpistatus, MPI_BYTE, &put_size);
             ncp->nciop->put_size += put_size;
         }
@@ -776,6 +785,7 @@ write_NC(NC *ncp)
     /* ncp->xsz is root's header size, we need to calculate local's */
     local_xsz = ncmpii_hdr_len_NC(ncp);
 
+
     buf = NCI_Malloc((size_t)local_xsz); /* buffer for local header object */
 
     /* copy the entire local header object to buffer */
@@ -784,6 +794,20 @@ write_NC(NC *ncp)
         NCI_Free(buf);
         return status;
     }
+
+
+#ifdef DTF
+    dtf_tstart();
+    MPI_Comm_rank(ncp->nciop->comm, &rank);
+//    printf("pnet %d: local header sz %d\n", rank, (int)local_xsz);
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+//            printf("pnet %d: writing header of sz %llu\n", rank, local_xsz);
+            dtf_write_hdr(ncp->nciop->path, local_xsz, buf);
+            NCI_Free(buf);
+            dtf_tend();
+            return NC_NOERR;
+    }
+#endif // DTF
 
     /* check the header consistency across all processes and sync header.
      * When safe_mode is on:
@@ -820,11 +844,12 @@ write_NC(NC *ncp)
      * header object in memory has been sync-ed across all processes. */
 
     /* only rank 0's header gets written to the file */
-    MPI_Comm_rank(ncp->nciop->comm, &rank);
     if (rank == 0) {
         /* rank 0's fileview already includes the file header */
         MPI_Status mpistatus;
         if (ncp->xsz != (int)ncp->xsz) DEBUG_ASSIGN_ERROR(status, NC_EINTOVERFLOW)
+
+       // printf("pnet %d: write header sz %d (in write_NC())\n", 0, (int)ncp->xsz);
         TRACE_IO(MPI_File_write_at)(ncp->nciop->collective_fh, 0, buf,
                                     (int)ncp->xsz, MPI_BYTE, &mpistatus);
         if (mpireturn != MPI_SUCCESS) {
@@ -849,7 +874,9 @@ write_NC(NC *ncp)
 
     fClr(ncp->flags, NC_NDIRTY);
     NCI_Free(buf);
-
+#ifdef DTF
+    dtf_tend();
+#endif
     return status;
 }
 
@@ -1031,7 +1058,7 @@ ncmpii_NC_check_vlens(NC *ncp)
  * collectively, if any one process got an error. However, when safe mode is
  * off, we simply return the error and program may hang if some processes
  * do not get error and proceed to the next subroutine call.
- */ 
+ */
 #define CHECK_ERROR(status) {                                                \
     if (ncp->safe_mode == 1) {                                               \
         int g_status;                                                        \
@@ -1201,6 +1228,11 @@ ncmpii_NC_enddef(NC         *ncp,
     /* If the user sets NC_SHARE, we enforce a stronger data consistency */
     if (NC_doFsync(ncp))
         ncmpiio_sync(ncp->nciop); /* calling MPI_File_sync() */
+
+#ifdef DTF
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+        dtf_enddef(ncp->nciop->path);
+#endif
 
     return status;
 }

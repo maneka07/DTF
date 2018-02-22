@@ -38,7 +38,7 @@ GARBAGE		= $(PROGRAM) test0.nc test1.nc test1.cdl test2.cdl
 all:		$(PROGRAM)
 
 $(PROGRAM):	$(LIBRARY) $(OBJS)
-	$(LINK.c) $(OBJS) $(LDFLAGS) $(LIBS) 
+	$(LINK.c) $(OBJS) $(LIBS) $(LDFLAGS)
 
 test:		$(PROGRAM) FORCE
 	$(NCGEN) -b $(srcdir)/test0.cdl -o `pwd`/test0.nc

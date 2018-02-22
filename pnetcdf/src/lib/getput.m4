@@ -31,6 +31,9 @@ dnl
 #include "subfile.h"
 #endif
 
+#ifdef DTF
+#include "dtf.h"
+#endif // DTF
 
 /*----< ncmpii_calc_datatype_elems() >---------------------------------------*/
 /* check NC_ECHAR and obtain the following metadata about buftype:
@@ -280,6 +283,53 @@ ncmpii_getput_varm(NC               *ncp,
     MPI_Datatype ptype, filetype=MPI_BYTE, imaptype=MPI_DATATYPE_NULL;
     MPI_File fh;
 
+#ifdef DTF
+    dtf_tstart();
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+        int varid = -1;
+        MPI_Offset get_put_sz;
+        //int varid = ncmpii_NC_findvar(&ncp->vars, varp->name, &tmp);
+
+        NC_var **tmp = (NC_var **) ncp->vars.value;
+
+        for (varid=0; varid<ncp->vars.ndefined; varid++, tmp++)
+            if((*tmp) == varp)
+                break;
+//        printf("pnet: found var, id %d\n", varid);
+        if(rw_flag == WRITE_REQ ){
+            get_put_sz = dtf_read_write_var(ncp->nciop->path, varid, start, count, stride, imap, buftype, buf, DTF_WRITE);
+            ncp->nciop->put_size += get_put_sz;
+        } else{ /*READ_REQ*/
+            get_put_sz = dtf_read_write_var(ncp->nciop->path, varid, start, count, stride, imap, buftype, buf, DTF_READ);
+            ncp->nciop->get_size += get_put_sz;
+        }
+        dtf_tend();
+        return NC_NOERR;
+   }else {
+         int i, varid;
+            NC_var **tmp = (NC_var **) ncp->vars.value;
+
+            for (varid=0; varid<ncp->vars.ndefined; varid++, tmp++)
+                if((*tmp) == varp)
+                    break;
+
+            /*Adding temporary printing out of write or read request*/
+/*            printf( "IO call for var %d, rw flag %d, start->count:\n", varid, rw_flag);
+            if(start != NULL)
+            for(i = 0; i < varp->ndims; i++)
+                printf( "%lld\t %lld\n", start[i], count[i]);*/
+
+            if(rw_flag == WRITE_REQ ){
+                dtf_log_ioreq(ncp->nciop->path, varid, varp->ndims, start, count, buftype, buf, DTF_WRITE);
+            } else{ /*READ_REQ*/
+                dtf_log_ioreq(ncp->nciop->path, varid, varp->ndims, start, count, buftype, buf, DTF_READ);
+
+            }
+   }
+#endif // DTF
+
+
+
 #ifdef ENABLE_SUBFILING
     /* call a separate routine if variable is stored in subfiles */
     if (varp->num_subfiles > 1) {
@@ -290,7 +340,7 @@ ncmpii_getput_varm(NC               *ncp,
             fprintf(stderr, "varm APIs for subfiling is yet to be implemented\n");
             DEBUG_RETURN_ERROR(NC_ENOTSUPPORT)
         }
-        
+
         return ncmpii_subfile_getput_vars(ncp, varp, start, count, stride,
                                           buf, bufcount, buftype,
                                           rw_flag, io_method);
@@ -312,7 +362,7 @@ ncmpii_getput_varm(NC               *ncp,
     err = ncmpii_calc_datatype_elems(ncp, varp, start, count, stride, rw_flag,
                                      buftype, &ptype, &bufcount, &bnelems,
                                      &nbytes, &el_size, &buftype_is_contig);
-    if (err == NC_EIOMISMATCH) DEBUG_ASSIGN_ERROR(warning, err) 
+    if (err == NC_EIOMISMATCH) DEBUG_ASSIGN_ERROR(warning, err)
     else if (err != NC_NOERR) goto err_check;
 
     /* because nbytes will be used as the argument "count" in MPI-IO
@@ -338,7 +388,12 @@ ncmpii_getput_varm(NC               *ncp,
     err = ncmpii_vars_create_filetype(ncp, varp, start, count, stride, rw_flag,
                                       NULL, &offset, &filetype, NULL);
     if (err != NC_NOERR) goto err_check;
-
+ /*   int datasz;
+    MPI_Type_size(filetype, &datasz);
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    printf("pnet %d: offt %lld for filetype of sz %d\n", rank, offset, datasz);
+*/
     if (bufcount != (int)bufcount) DEBUG_ASSIGN_ERROR(err, NC_EINTOVERFLOW)
 
 err_check:
@@ -458,7 +513,7 @@ err_check:
      */
 
 mpi_io:
-    if (io_method == COLL_IO)
+     if (io_method == COLL_IO)
         fh = ncp->nciop->collective_fh;
     else
         fh = ncp->nciop->independent_fh;
@@ -472,9 +527,11 @@ mpi_io:
     if (filetype != MPI_BYTE) MPI_Type_free(&filetype);
 
     if (rw_flag == WRITE_REQ) {
+        int put_size;
         if (io_method == COLL_IO) {
             TRACE_IO(MPI_File_write_at_all)(fh, offset, xbuf, (int)nbytes,
                                             MPI_BYTE, &mpistatus);
+
             if (mpireturn != MPI_SUCCESS) {
                 err = ncmpii_handle_error(mpireturn, "MPI_File_write_at_all");
                 /* return the first encountered error if there is any */
@@ -487,6 +544,7 @@ mpi_io:
         else { /* io_method == INDEP_IO */
             TRACE_IO(MPI_File_write_at)(fh, offset, xbuf, (int)nbytes,
                                         MPI_BYTE,  &mpistatus);
+
             if (mpireturn != MPI_SUCCESS) {
                 err = ncmpii_handle_error(mpireturn, "MPI_File_write_at");
                 /* return the first encountered error if there is any */
@@ -496,11 +554,12 @@ mpi_io:
                 }
             }
         }
-        int put_size;
         MPI_Get_count(&mpistatus, MPI_BYTE, &put_size);
         ncp->nciop->put_size += put_size;
     }
     else {  /* rw_flag == READ_REQ */
+        int get_size = 0;
+
         if (io_method == COLL_IO) {
             TRACE_IO(MPI_File_read_at_all)(fh, offset, xbuf, (int)nbytes,
                                            MPI_BYTE, &mpistatus);
@@ -516,6 +575,7 @@ mpi_io:
         else { /* io_method == INDEP_IO */
             TRACE_IO(MPI_File_read_at)(fh, offset, xbuf, (int)nbytes,
                                        MPI_BYTE, &mpistatus);
+
             if (mpireturn != MPI_SUCCESS) {
                 err = ncmpii_handle_error(mpireturn, "MPI_File_read_at");
                 /* return the first encountered error if there is any */
@@ -525,7 +585,6 @@ mpi_io:
                 }
             }
         }
-        int get_size;
         MPI_Get_count(&mpistatus, MPI_BYTE, &get_size);
         ncp->nciop->get_size += get_size;
     }
@@ -647,7 +706,9 @@ mpi_io:
                 TRACE_COMM(MPI_Barrier)(ncp->nciop->comm);
         }
     }
-
+#ifdef DTF
+    dtf_tend();
+#endif
     return ((warning != NC_NOERR) ? warning : status);
 }
 

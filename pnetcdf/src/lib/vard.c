@@ -26,6 +26,10 @@
 #include "subfile.h"
 #endif
 
+#ifdef DTF
+#include "dtf.h"
+#endif
+
 /* for write case, buf needs to swapped back if swapped previously */
 #define FINAL_CLEAN_UP {                                                       \
     if (is_buf_swapped) /* byte-swap back to buf's original contents */        \
@@ -230,11 +234,19 @@ err_check:
 
     if (rw_flag == WRITE_REQ) {
         if (io_method == COLL_IO) {
+#ifdef DTF
+ if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+    printf("DTF Warning: calling write from ncmpii_getput_vard\n");
+#endif // DTF
             TRACE_IO(MPI_File_write_at_all)(fh, offset, cbuf, (int)bufcount, buftype, &mpistatus);
             if (mpireturn != MPI_SUCCESS)
                 return ncmpii_handle_error(mpireturn, "MPI_File_write_at_all");
         }
         else { /* io_method == INDEP_IO */
+#ifdef DTF
+ if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+    printf("DTF Warning: calling write from ncmpii_getput_vard 2\n");
+#endif // DTF
             TRACE_IO(MPI_File_write_at)(fh, offset, cbuf, (int)bufcount, buftype, &mpistatus);
             if (mpireturn != MPI_SUCCESS)
                 return ncmpii_handle_error(mpireturn, "MPI_File_write_at");
@@ -245,11 +257,19 @@ err_check:
     }
     else {  /* rw_flag == READ_REQ */
         if (io_method == COLL_IO) {
+#ifdef DTF
+ if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+    printf("DTF Warning: reading inside ncmpii_getput_vard\n");
+#endif // DTF
             TRACE_IO(MPI_File_read_at_all)(fh, offset, cbuf, (int)bufcount, buftype, &mpistatus);
             if (mpireturn != MPI_SUCCESS)
                 return ncmpii_handle_error(mpireturn, "MPI_File_read_at_all");
         }
         else { /* io_method == INDEP_IO */
+#ifdef DTF
+ if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+    printf("DTF Warning: reading inside ncmpii_getput_vard 2\n");
+#endif // DTF
             TRACE_IO(MPI_File_read_at)(fh, offset, cbuf, (int)bufcount, buftype, &mpistatus);
             if (mpireturn != MPI_SUCCESS)
                 return ncmpii_handle_error(mpireturn, "MPI_File_read_at");

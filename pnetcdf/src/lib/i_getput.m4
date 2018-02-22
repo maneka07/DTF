@@ -28,6 +28,10 @@ dnl
 #include "ncmpidtype.h"
 #include "macro.h"
 
+#ifdef DTF
+#include "dtf.h"
+#endif
+
 
 define(`CollIndep',   `ifelse(`$1',`_all', `COLL_IO', `INDEP_IO')')dnl
 define(`ReadWrite',   `ifelse(`$1', `get', `READ_REQ', `WRITE_REQ')')dnl
@@ -561,6 +565,56 @@ ncmpii_igetput_varm(NC               *ncp,
     MPI_Datatype ptype, imaptype=MPI_DATATYPE_NULL;
     NC_req *req;
 
+
+#ifdef DTF
+    dtf_tstart();
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+        int varid = -1;
+        MPI_Offset get_put_sz;
+        //int varid = ncmpii_NC_findvar(&ncp->vars, varp->name, &tmp);
+
+        NC_var **tmp = (NC_var **) ncp->vars.value;
+
+        for (varid=0; varid<ncp->vars.ndefined; varid++, tmp++)
+            if((*tmp) == varp)
+                break;
+//        printf("pnet: found var, id %d\n", varid);
+        if(rw_flag == WRITE_REQ ){
+            get_put_sz = dtf_read_write_var(ncp->nciop->path, varid, start, count, stride, imap, buftype, buf, DTF_WRITE);
+            ncp->nciop->put_size += get_put_sz;
+        } else{ /*READ_REQ*/
+            get_put_sz = dtf_read_write_var(ncp->nciop->path, varid, start, count, stride, imap, buftype, buf, DTF_READ);
+            ncp->nciop->get_size += get_put_sz;
+        }
+
+        if(reqid != NULL)
+            *reqid = NC_REQ_NULL;
+        dtf_tend();
+        return NC_NOERR;
+   }else {
+        int i, varid;
+            NC_var **tmp = (NC_var **) ncp->vars.value;
+
+            for (varid=0; varid<ncp->vars.ndefined; varid++, tmp++)
+                if((*tmp) == varp)
+                    break;
+
+            /*Adding temporary printing out of write or read request*/
+/*            printf( "IO call for var %d, rw flag %d, start->count:\n", varid, rw_flag);
+            if(start != NULL)
+            for(i = 0; i < varp->ndims; i++)
+                printf( "%lld\t %lld\n", start[i], count[i]);*/
+
+            if(rw_flag == WRITE_REQ ){
+                dtf_log_ioreq(ncp->nciop->path, varid, varp->ndims, start, count, buftype, buf, DTF_WRITE);
+            } else{ /*READ_REQ*/
+                dtf_log_ioreq(ncp->nciop->path, varid, varp->ndims, start, count, buftype, buf, DTF_READ);
+
+            }
+   }
+#endif // DTF
+
+
     /* check NC_ECHAR error and calculate the followings:
      * ptype: element data type (MPI primitive type) in buftype
      * bufcount: If it is -1, then this is called from a high-level API and in
@@ -806,7 +860,9 @@ ncmpii_igetput_varm(NC               *ncp,
 
     /* return the request ID */
     if (reqid != NULL) *reqid = req->id;
-
+#ifdef DTF
+    dtf_tend();
+#endif
     return ((warning != NC_NOERR) ? warning : status);
 }
 

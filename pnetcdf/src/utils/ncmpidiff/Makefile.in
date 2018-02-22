@@ -35,7 +35,7 @@ GARBAGE		= $(PROGRAM)
 all:		$(PROGRAM)
 
 $(PROGRAM):	$(LIBRARY) $(OBJS)
-	$(LINK.c) $(OBJS) $(LDFLAGS) $(LIBS) 
+	$(LINK.c) $(OBJS) $(LIBS) $(LDFLAGS) 
 
 install: $(PROGRAM) $(MANUAL)
 	$(INSTALL) -d -m 755 $(MANDIR)/man1

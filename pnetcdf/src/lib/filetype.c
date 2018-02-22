@@ -21,6 +21,10 @@
 #include "ncx.h"
 #include "macro.h"
 
+#ifdef DTF
+#include "dtf.h"
+#endif
+
 
 #if SIZEOF_MPI_AINT != SIZEOF_MPI_OFFSET
 /*----< check_recsize_too_big() >--------------------------------------------*/
@@ -923,6 +927,7 @@ ncmpii_file_set_view(NC           *ncp,
                      MPI_Datatype  filetype)
 {
     int rank, err, mpireturn, status=NC_NOERR;
+    MPI_Comm_rank(ncp->nciop->comm, &rank);
 
     if (filetype == MPI_BYTE) {
         /* filetype is a contiguous space, make the whole file visible */

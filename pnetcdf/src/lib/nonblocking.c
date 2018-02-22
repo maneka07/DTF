@@ -22,6 +22,9 @@
 #include "ncmpidtype.h"
 #include "macro.h"
 
+#ifdef DTF
+#include "dtf.h"
+#endif
 
 /* buffer layers:
 
@@ -59,6 +62,10 @@ ncmpii_getput_zero_req(NC  *ncp,
                                 MPI_INFO_NULL);
 
     if (rw_flag == READ_REQ) {
+#ifdef DTF
+ if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+    printf("DTF Warning: reading inside ncmpii_getput_zero_req\n");
+#endif // DTF
         TRACE_IO(MPI_File_read_all)(fh, NULL, 0, MPI_BYTE, &mpistatus);
         if (mpireturn != MPI_SUCCESS) {
             err = ncmpii_handle_error(mpireturn, "MPI_File_read_all");
@@ -66,6 +73,10 @@ ncmpii_getput_zero_req(NC  *ncp,
             DEBUG_ASSIGN_ERROR(status, err)
         }
     } else { /* WRITE_REQ */
+#ifdef DTF
+ if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+    printf("DTF Warning: writing inside ncmpii_getput_zero_req\n");
+#endif // DTF
         TRACE_IO(MPI_File_write_all)(fh, NULL, 0, MPI_BYTE, &mpistatus);
         if (mpireturn != MPI_SUCCESS) {
             err = ncmpii_handle_error(mpireturn, "MPI_File_write_all");
@@ -407,14 +418,34 @@ ncmpi_wait(int ncid,
 {
     int  status=NC_NOERR;
     NC  *ncp;
-
     if (num_reqs == 0) return NC_NOERR;
 
     status = ncmpii_NC_check_id(ncid, &ncp);
     if (status != NC_NOERR) return status;
 
+#ifdef DTF
+    dtf_tstart();
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+        int i;
+
+        if(req_ids != NULL)
+            for(i = 0; i < num_reqs; i++)
+                req_ids[i] = NC_REQ_NULL;
+
+        if(statuses != NULL)
+            for(i = 0; i < num_reqs; i++)
+                statuses[i] = NC_NOERR;
+        dtf_tend();
+        return NC_NOERR;
+    }
+#endif
+
 #ifdef ENABLE_REQ_AGGREGATION
-    return ncmpii_wait(ncp, INDEP_IO, num_reqs, req_ids, statuses);
+    status = ncmpii_wait(ncp, INDEP_IO, num_reqs, req_ids, statuses);
+#ifdef DTF
+    dtf_tend();
+#endif
+    return status;
 #else
     int i, err, *reqids=NULL;
     if (num_reqs <= NC_REQ_ALL) { /* flush all pending requests */
@@ -431,7 +462,9 @@ ncmpi_wait(int ncid,
         if (status == NC_NOERR) status = err;
     }
     if (reqids != NULL) NCI_Free(reqids);
-
+#ifdef DTF
+    dtf_tend();
+#endif
     return status; /* return the first error encountered */
 #endif
 }
@@ -466,8 +499,29 @@ ncmpi_wait_all(int  ncid,
         /* must return the error now, parallel program might hang */
         return status;
 
+#ifdef DTF
+    dtf_tstart();
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+        int i;
+
+        if(req_ids != NULL)
+            for(i = 0; i < num_reqs; i++)
+                req_ids[i] = NC_REQ_NULL;
+
+        if(statuses != NULL)
+            for(i = 0; i < num_reqs; i++)
+                statuses[i] = NC_NOERR;
+        dtf_tend();
+        return NC_NOERR;
+    }
+#endif
+
 #ifdef ENABLE_REQ_AGGREGATION
-    return ncmpii_wait(ncp, COLL_IO, num_reqs, req_ids, statuses);
+    status = ncmpii_wait(ncp, COLL_IO, num_reqs, req_ids, statuses);
+#ifdef DTF
+    dtf_tend();
+#endif
+    return status;
 #else
     int i, err, *reqids=NULL;
 
@@ -498,7 +552,9 @@ ncmpi_wait_all(int  ncid,
     /* return to collective data mode */
     err = ncmpi_end_indep_data(ncid);
     if (status == NC_NOERR) status = err;
-
+#ifdef DTF
+    dtf_tend();
+#endif
     return status; /* return the first error encountered, if there is any */
 #endif
 }
@@ -1002,7 +1058,7 @@ err_check:
         TRACE_COMM(MPI_Allreduce)(io_req, do_io, 3, MPI_INT, MPI_MAX,
                                   ncp->nciop->comm);
         if (mpireturn != MPI_SUCCESS)
- 	    return ncmpii_handle_error(mpireturn, "MPI_Allreduce"); 
+ 	    return ncmpii_handle_error(mpireturn, "MPI_Allreduce");
 
         /* if error occurs, return the API collectively */
         if (do_io[2] != -NC_NOERR) return err;
@@ -1618,6 +1674,7 @@ ncmpii_req_aggregation(NC     *ncp,
         /* concatenate all filetypes into a single one and do I/O */
         return ncmpii_mgetput(ncp, num_reqs, reqs, rw_flag, io_method);
     }
+
     /* now some request's aggregate access region is interleaved with other's */
 
     /* divide the requests into groups.
@@ -1877,8 +1934,24 @@ ncmpii_req_aggregation(NC     *ncp,
         if (status == NC_NOERR) status = err;
     }
 
+#ifdef DTF
+    int typesz;
+    MPI_Type_size(buf_type, &typesz);
+    size_t datasz = buf_len * typesz;
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+#endif // DTF
+
     if (rw_flag == READ_REQ) {
-        if (io_method == COLL_IO) {
+        int get_size;
+#ifdef DTF
+ if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+    printf("DTF Warning: read req in ncmpii_req_aggregation\n");
+    printf("pnet %d: read %lu (%d els) at offt %ld (in ncmpii_req_aggregation())\n", rank, (long unsigned)datasz, buf_len, (long int)offset);
+    }
+#endif // DTF
+           if (io_method == COLL_IO) {
+
             TRACE_IO(MPI_File_read_at_all)(fh, offset, buf, buf_len, buf_type,
                                            &mpistatus);
             if (mpireturn != MPI_SUCCESS) {
@@ -1901,38 +1974,45 @@ ncmpii_req_aggregation(NC     *ncp,
                 }
             }
         }
-        if (mpireturn == MPI_SUCCESS) {
-            int get_size;
+
+    if (mpireturn == MPI_SUCCESS) {
             MPI_Get_count(&mpistatus, MPI_BYTE, &get_size);
-            ncp->nciop->get_size += get_size;
-        }
+        ncp->nciop->get_size += get_size;
+    }
     } else { /* WRITE_REQ */
-        if (io_method == COLL_IO) {
-            TRACE_IO(MPI_File_write_at_all)(fh, offset, buf, buf_len, buf_type,
+        int put_size;
+#ifdef DTF
+    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
+        printf("DTF Warning: write req in ncmpii_req_aggregation\n");
+        printf("pnet %d: write %lu (%d els) at offt %ld (in ncmpii_req_aggregation())\n", rank, (long unsigned)datasz, buf_len, (long int)offset);
+    }
+#endif // DTF
+            if (io_method == COLL_IO) {
+                TRACE_IO(MPI_File_write_at_all)(fh, offset, buf, buf_len, buf_type,
+                                                &mpistatus);
+                if (mpireturn != MPI_SUCCESS) {
+                    err = ncmpii_handle_error(mpireturn, "MPI_File_write_at_all");
+                    /* return the first encountered error if there is any */
+                    if (status == NC_NOERR) {
+                        err = (err == NC_EFILE) ? NC_EWRITE : err;
+                        DEBUG_ASSIGN_ERROR(status, err)
+                    }
+                }
+            } else {
+                TRACE_IO(MPI_File_write_at)(fh, offset, buf, buf_len, buf_type,
                                             &mpistatus);
-            if (mpireturn != MPI_SUCCESS) {
-                err = ncmpii_handle_error(mpireturn, "MPI_File_write_at_all");
-                /* return the first encountered error if there is any */
-                if (status == NC_NOERR) {
-                    err = (err == NC_EFILE) ? NC_EWRITE : err;
-                    DEBUG_ASSIGN_ERROR(status, err)
+                if (mpireturn != MPI_SUCCESS) {
+                    err = ncmpii_handle_error(mpireturn, "MPI_File_write_at");
+                    /* return the first encountered error if there is any */
+                    if (status == NC_NOERR) {
+                        err = (err == NC_EFILE) ? NC_EWRITE : err;
+                        DEBUG_ASSIGN_ERROR(status, err)
+                    }
                 }
             }
-        } else {
-            TRACE_IO(MPI_File_write_at)(fh, offset, buf, buf_len, buf_type,
-                                        &mpistatus);
-            if (mpireturn != MPI_SUCCESS) {
-                err = ncmpii_handle_error(mpireturn, "MPI_File_write_at");
-                /* return the first encountered error if there is any */
-                if (status == NC_NOERR) {
-                    err = (err == NC_EFILE) ? NC_EWRITE : err;
-                    DEBUG_ASSIGN_ERROR(status, err)
-                }
-            }
-        }
+
         if (mpireturn == MPI_SUCCESS) {
-            int put_size;
-            MPI_Get_count(&mpistatus, MPI_BYTE, &put_size);
+                MPI_Get_count(&mpistatus, MPI_BYTE, &put_size);
             ncp->nciop->put_size += put_size;
         }
     }
@@ -1982,8 +2062,8 @@ ncmpii_wait_getput(NC     *ncp,
 #ifndef _DISALLOW_POST_NONBLOCKING_API_IN_DEFINE_MODE
     /* move the offset calculation from posting API calls (pack_request) to
      * wait call, such that posting a nonblocking request can be done in
-     * define mode  
-     */  
+     * define mode
+     */
     for (i=0; i<num_reqs; i++) {
         /* get the starting file offset for this request */
         ncmpii_get_offset(ncp, reqs[i].varp, reqs[i].start, NULL, NULL,
@@ -2061,14 +2141,14 @@ ncmpii_wait_getput(NC     *ncp,
             if (io_method == INDEP_IO) {
                 TRACE_IO(MPI_File_sync)(ncp->nciop->independent_fh);
                 if (mpireturn != MPI_SUCCESS) {
-                    err = ncmpii_handle_error(mpireturn, "MPI_File_sync"); 
+                    err = ncmpii_handle_error(mpireturn, "MPI_File_sync");
                     if (status == NC_NOERR) status = err;
                 }
             }
             else {
                 TRACE_IO(MPI_File_sync)(ncp->nciop->collective_fh);
                 if (mpireturn != MPI_SUCCESS) {
-                    err = ncmpii_handle_error(mpireturn, "MPI_File_sync"); 
+                    err = ncmpii_handle_error(mpireturn, "MPI_File_sync");
                     if (status == NC_NOERR) status = err;
                 }
                 TRACE_COMM(MPI_Barrier)(ncp->nciop->comm);
@@ -2226,6 +2306,10 @@ ncmpii_mgetput(NC           *ncp,
 
     if (rw_flag == READ_REQ) {
         if (io_method == COLL_IO) {
+#ifdef DTF
+ if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+    printf("DTF Warning: reading inside ncmpii_mgetput\n");
+#endif // DTF
             TRACE_IO(MPI_File_read_at_all)(fh, offset, buf, len, buf_type,
                                            &mpistatus);
             if (mpireturn != MPI_SUCCESS) {
@@ -2237,6 +2321,9 @@ ncmpii_mgetput(NC           *ncp,
                 }
             }
         } else {
+#ifdef DTF
+    printf("DTF Warning: reading inside ncmpii_mgetput\n");
+#endif // DTF
             TRACE_IO(MPI_File_read_at)(fh, offset, buf, len, buf_type,
                                        &mpistatus);
             if (mpireturn != MPI_SUCCESS) {
@@ -2255,6 +2342,11 @@ ncmpii_mgetput(NC           *ncp,
 
     } else { /* WRITE_REQ */
         if (io_method == COLL_IO) {
+
+#ifdef DTF
+ if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
+    printf("DTF Warning: writing inside ncmpii_mgetput\n");
+#endif // DTF
             TRACE_IO(MPI_File_write_at_all)(fh, offset, buf, len, buf_type,
                                             &mpistatus);
             if (mpireturn != MPI_SUCCESS) {
@@ -2266,6 +2358,9 @@ ncmpii_mgetput(NC           *ncp,
                 }
             }
         } else {
+#ifdef DTF
+    printf("DTF Warning: writing inside ncmpii_mgetput 2\n");
+#endif // DTF
             TRACE_IO(MPI_File_write_at)(fh, offset, buf, len, buf_type,
                                         &mpistatus);
             if (mpireturn != MPI_SUCCESS) {
