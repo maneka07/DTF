@@ -108,8 +108,6 @@ io_req_t *new_ioreq(int id,
                     int buffered);
 
 
-
-void progress_msg_queue();
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
 //void delete_ioreqs(file_buffer_t *fbuf);
 void delete_ioreqs(file_buffer_t *fbuf, int finalize);
@@ -130,4 +128,5 @@ void log_ioreq(file_buffer_t *fbuf,
 			  void *buf,
 			  int rw_flag);
 void send_data(void* buf, int bufsz);
+int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued);
 #endif // dtf_REQ_MATCH_H_INCLUDED

@@ -85,6 +85,7 @@ typedef struct fname_pattern{
     int  comp1;
     int  comp2;
     int  iomode;
+    int  write_only;                
     int  ignore_io;				/*disable I/O for this file*/
     int  replay_io;            /*Should we record and replay during matching I/O pattern for this file?*/
     int  rdr_recorded;          /*if recorded, reader doesn't need to send its requests during matching as 

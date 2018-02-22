@@ -278,7 +278,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	if(gl_scale)
 		cpl_root = fbuf->cpl_mst_info->masters[0];
 	
-	if( omode & NC_WRITE ){
+	if( omode & NC_WRITE && !pat->write_only){
 		fbuf->omode = DTF_WRITE;
 		fbuf->writer_id = gl_my_comp_id;
 		fbuf->reader_id = cpl_cmp;
@@ -298,10 +298,15 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	
 		if(pat->replay_io && (pat->rdr_recorded == DTF_UNDEFINED))
 			pat->rdr_recorded = IO_PATTERN_RECORDING;
+		
+		if(pat->write_only)
+			DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is a write only file, consider as if opened for reading", filename);
 	}
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d), omode %d", gl_comps[fbuf->writer_id].name, fbuf->root_writer, gl_comps[fbuf->reader_id].name, fbuf->root_reader, omode);	  
     open_file(fbuf, comm);
+    
+    progress_recv_queue();
 }
 
 _EXTERN_C_ void dtf_enddef(const char *filename)
@@ -309,7 +314,8 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
-    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+    
+    progress_recv_queue();
 
 }
 

@@ -500,11 +500,11 @@ static void do_matching(file_buffer_t *fbuf)
                     my_idx = i;
                     continue;
                 } else {
-                    dtf_msg_t *msg = new_dtf_msg(sbuf[i], bufsz[i], IO_DATA_REQ_TAG);
+                    dtf_msg_t *msg = new_dtf_msg(sbuf[i], bufsz[i], DTF_UNDEFINED, IO_DATA_REQ_TAG);
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Send data req to wrt %d", writers[i]);
                     err = MPI_Isend((void*)sbuf[i], offt[i], MPI_BYTE, writers[i], IO_DATA_REQ_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
                     CHECK_MPI(err);
-                    ENQUEUE_ITEM(msg, gl_msg_q);
+                    ENQUEUE_ITEM(msg, gl_out_msg_q);
                 }
             }
 
@@ -624,6 +624,8 @@ void clean_iodb(ioreq_db_t *iodb, int nvars)
 
 	DTF_DBG(VERBOSE_DBG_LEVEL, "iodb clean");
 }
+
+//TODO don't send ioreqs for write all or scalars
 
 static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
 {
@@ -768,7 +770,7 @@ static void parse_ioreqs(void *buf, int bufsz, int rank, MPI_Comm comm)
                 memcpy(info->blck->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
                 offt += var->ndims*sizeof(MPI_Offset);
                 /*add block to the database*/
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Insert block for var %d", var_id);
+                DTF_DBG(VERBOSE_ALL_LEVEL, "Insert block for var %d", var_id);
 				rb_red_blk_node *bl_node = RBTreeInsertBlock(witem->dblocks, info);
 				assert(bl_node != NULL);
 				dtf_free(info, sizeof(insert_info));
@@ -912,11 +914,11 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
     if(fbuf->reader_id == gl_my_comp_id && nrreqs == 0){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
 		if(gl_my_rank == fbuf->root_reader){
-			dtf_msg_t *msg = new_dtf_msg(NULL, 0, READ_DONE_TAG);
+			dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
 			err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
 					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
 			CHECK_MPI(err);
-			ENQUEUE_ITEM(msg, gl_msg_q);
+			ENQUEUE_ITEM(msg, gl_out_msg_q);
 		} else {
 			err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
 					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm);
@@ -982,7 +984,7 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
             err = MPI_Isend((void*)sbuf[mst], (int)offt[mst], MPI_BYTE, mst_info->masters[mst], IO_REQS_TAG,
                             gl_comps[fbuf->writer_id].comm, &reqs[mst]);//&(msg->req));
             CHECK_MPI(err);
-            //ENQUEUE_ITEM(msg, gl_msg_q);
+            //ENQUEUE_ITEM(msg, gl_out_msg_q);
         }
     }
     flag = 0;
@@ -1076,11 +1078,11 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 		 DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
         
 		if(gl_my_rank == fbuf->root_reader){
-			dtf_msg_t *msg = new_dtf_msg(NULL, 0, READ_DONE_TAG);
+			dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
 			err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
 					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
 			CHECK_MPI(err);
-			ENQUEUE_ITEM(msg, gl_msg_q);
+			ENQUEUE_ITEM(msg, gl_out_msg_q);
 		} else {
 			err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
 					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm);
@@ -1221,14 +1223,14 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
         } else {
             int flag;
             MPI_Status status;
-            dtf_msg_t *msg = new_dtf_msg(sbuf[mst], bufsz[mst], IO_REQS_TAG);
+            dtf_msg_t *msg = new_dtf_msg(sbuf[mst], bufsz[mst], DTF_UNDEFINED, IO_REQS_TAG);
             DTF_DBG(VERBOSE_DBG_LEVEL, "Post send ioreqs req to mst %d (bufsz %lu (allcd %lu), comp id %d (mine %d)", mst_info->masters[mst], offt[mst], bufsz[mst], fbuf->writer_id, gl_my_comp_id);
             err = MPI_Isend((void*)sbuf[mst], (int)offt[mst], MPI_BYTE, mst_info->masters[mst], IO_REQS_TAG,
                             gl_comps[fbuf->writer_id].comm, &(msg->req));
             CHECK_MPI(err);
             err = MPI_Test(&(msg->req), &flag, &status);
             CHECK_MPI(err);
-            ENQUEUE_ITEM(msg, gl_msg_q);
+            ENQUEUE_ITEM(msg, gl_out_msg_q);
         }
     }
 
@@ -1283,11 +1285,11 @@ void send_ioreqs_by_mst(file_buffer_t *fbuf)
 		 DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
         
 		if(gl_my_rank == fbuf->root_reader){
-			dtf_msg_t *msg = new_dtf_msg(NULL, 0, READ_DONE_TAG);
+			dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
 			err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
 					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
 			CHECK_MPI(err);
-			ENQUEUE_ITEM(msg, gl_msg_q);
+			ENQUEUE_ITEM(msg, gl_out_msg_q);
 		} else {
 			err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
 					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm);
@@ -1349,14 +1351,14 @@ void send_ioreqs_by_mst(file_buffer_t *fbuf)
 				assert(buf != NULL);
 			    memcpy(buf, sbuf, bufsz);
 
-				msg = new_dtf_msg(buf, bufsz, IO_REQS_TAG);
+				msg = new_dtf_msg(buf, bufsz, DTF_UNDEFINED, IO_REQS_TAG);
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Post send ioreqs req to mst %d (bufsz %lu (allcd %lu)", fbuf->cpl_mst_info->masters[mst], offt, bufsz);
 				err = MPI_Isend(buf, (int)offt, MPI_BYTE, fbuf->my_mst_info->masters[mst], IO_REQS_TAG,
 								gl_comps[fbuf->writer_id].comm, &(msg->req));
 				CHECK_MPI(err);
 				err = MPI_Test(&(msg->req), &flag, &status);
 				CHECK_MPI(err);
-				ENQUEUE_ITEM(msg, gl_msg_q);
+				ENQUEUE_ITEM(msg, gl_out_msg_q);
 			}
 		}
 		if(mine)
@@ -2063,7 +2065,7 @@ static void recv_data_rdr(void* buf, int bufsz)
 				
                 DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE:Completed all rreqs for file %s", fbuf->file_path);
 
-				dtf_msg_t *msg = new_dtf_msg(NULL, 0, READ_DONE_TAG);
+				dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
 				err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
                           READ_DONE_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
 				CHECK_MPI(err);
@@ -2075,7 +2077,7 @@ static void recv_data_rdr(void* buf, int bufsz)
 					dtf_free(msg, sizeof(dtf_msg_t));
 					fbuf->done_matching_flag = 1;
 				} else
-					ENQUEUE_ITEM(msg, gl_msg_q);
+					ENQUEUE_ITEM(msg, gl_out_msg_q);
             }
         }
     } //while(bufsz)
@@ -2151,120 +2153,75 @@ static void notify_workgroup(file_buffer_t *fbuf,  void *msg, int msgsz, int msg
     dtf_free(reqs, (fbuf->my_mst_info->my_wg_sz - 1)*sizeof(MPI_Request));
 }
 
-void progress_msg_queue()
-{
-    dtf_msg_t *msg;
-    int flag, err;
-    MPI_Status status;
-    double t_st;
-
-    if(gl_msg_q == NULL)
-       return;
-
-    msg = gl_msg_q;
-    while(msg != NULL){
-        t_st = MPI_Wtime();
-        err = MPI_Test(&(msg->req), &flag, &status);
-        CHECK_MPI(err);
-        if(flag){
-            gl_stats.accum_comm_time += MPI_Wtime() - t_st;
-            dtf_msg_t *tmp = msg->next;
-            DEQUEUE_ITEM(msg, gl_msg_q);
-            if(msg->tag == FILE_READY_TAG){
-                file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, (char*)msg->buf, -1);
-                if(fbuf == NULL)
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Error: cant find %s", (char*)msg->buf);
-                assert(fbuf != NULL);
-                assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
-                fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Completed sending file ready notif for %s", (char*)msg->buf);
-            }
-            delete_dtf_msg(msg);
-            msg = tmp;
-        } else{
-            gl_stats.idle_time += MPI_Wtime() - t_st;
-            msg = msg->next;
-        }
-    }
-}
-
-static void print_recv_msg(int tag)
+static void print_recv_msg(int tag, int src)
 {
     switch(tag){
         case FILE_READY_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_READY_TAG");
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_READY_TAG from %d", src);
             break;
         case IO_DATA_REQ_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_DATA_REQ_TAG");
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_DATA_REQ_TAG from %d", src);
             break;
         case READ_DONE_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_TAG");
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_TAG from %d", src);
             break;
         case READ_DONE_CONFIRM_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_CONFIRM_TAG");
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_CONFIRM_TAG from %d", src);
             break;
         case FILE_INFO_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_TAG");
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_TAG from %d", src);
             break;
         case FILE_INFO_REQ_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_REQ_TAG");
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_REQ_TAG from %d", src);
             break;
         case MATCH_DONE_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag MATCH_DONE_TAG");
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag MATCH_DONE_TAG from %d", src);
             break;
         case IO_REQS_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_REQS_TAG");
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_REQS_TAG from %d", src);
             break;
         case IO_DATA_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_DATA_TAG");
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_DATA_TAG from %d", src);
             break;
         case COMP_SYNC_TAG:
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag COMP_SYNC_TAG");
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag COMP_SYNC_TAG from %d", src);
 			break;
         default:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag unknown %d", tag);
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag unknown %d from %d", tag, src);
             assert(0);
     }
 }
 
-static void parce_msg(int comp, int src, int tag, int bufsz)
+int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 {
 	MPI_Status status;
-	int err;
 	file_buffer_t *fbuf;
 	size_t offt;
-	void *rbuf;
 	char filename[MAX_FILE_NAME];
-	double t_st;
-	double t_start_comm;
+	int ret = 1;
 	
 	switch(tag){
 			case FILE_INFO_REQ_TAG:
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Recv file info req from rank %d (comp %s)", src, gl_comps[comp].name);
-				rbuf = dtf_malloc(bufsz);
-				assert(rbuf != NULL);
-				t_start_comm = MPI_Wtime();
-				err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, FILE_INFO_REQ_TAG, gl_comps[comp].comm, &status);
-				CHECK_MPI(err);
-				gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
 				offt = 0;
 				memcpy(filename, rbuf, MAX_FILE_NAME);
 				offt += MAX_FILE_NAME;
 				fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-				assert(fbuf != NULL);
+				if(fbuf == NULL){
+					if(!is_queued){
+						DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: no record for file %s yet, queue the request to process later", filename); 
+						dtf_msg_t *msg = new_dtf_msg(rbuf, bufsz, src, tag);
+						ENQUEUE_ITEM(msg, gl_comps[comp].in_msg_q);
+						break;
+					}
+					ret = 0;
+					break;
+				}
 				assert(fbuf->root_writer == gl_my_rank);
 				
 				if(gl_scale){
 					fbuf->root_reader = src;
 					assert(fbuf->root_reader == fbuf->cpl_mst_info->masters[0]);
 				} else {
-						//~ /*First, forward the info to other processes in component*/
-						//~ if(fbuf->root_writer == gl_my_comp_id)	
-							//~ notify_masters(fbuf, rbuf, bufsz, FILE_INFO_REQ_TAG);
-						
-						//~ if(fbuf->my_mst_info->my_mst == gl_my_rank)
-							//~ notify_workgroup(fbuf, rbuf, bufsz, FILE_INFO_REQ_TAG);
-					
 					fbuf->root_reader = src;
 					//parse mst info of the other component
 					assert(fbuf->cpl_mst_info->nmasters == 0);
@@ -2286,48 +2243,21 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 				dtf_free(rbuf, bufsz);
 				break;
 			case IO_REQS_TAG:
-				t_st = MPI_Wtime();
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Received reqs from %d, comp %d (my comp %d), bufsz %d", src, comp,gl_my_comp_id, (int)bufsz);
-				rbuf = dtf_malloc(bufsz);
-				assert(rbuf != NULL);
-				t_start_comm = MPI_Wtime();
-				err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_REQS_TAG, gl_comps[comp].comm, &status);
-				CHECK_MPI(err);
-				gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
 				parse_ioreqs(rbuf, bufsz, src, gl_comps[comp].comm);
 				dtf_free(rbuf, bufsz);
-				gl_stats.master_time += MPI_Wtime() - t_st;
 				break;
 			case IO_DATA_REQ_TAG:
-				rbuf = dtf_malloc(bufsz);
-				assert(rbuf != NULL);
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Recv data req from mst %d", src);
-				t_start_comm = MPI_Wtime();
-				err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_DATA_REQ_TAG, gl_comps[comp].comm, &status);
-				CHECK_MPI(err);
-				gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
 				send_data(rbuf, bufsz);
 				dtf_free(rbuf, bufsz);
 				break;
-
 			case IO_DATA_TAG:
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Recved data from %d", src);
-				assert(bufsz>0);
-				rbuf = dtf_malloc(bufsz);
-				assert(rbuf != NULL);
-				t_start_comm = MPI_Wtime();
-				err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, IO_DATA_TAG, gl_comps[comp].comm, &status);
-				CHECK_MPI(err);
-				gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
-				DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: recv data from %d", src);
 				recv_data_rdr(rbuf, bufsz);
 				dtf_free(rbuf, bufsz);
 				break;
 			case READ_DONE_TAG:
-				t_st = MPI_Wtime();
-				err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, READ_DONE_TAG, gl_comps[comp].comm, &status);
-				CHECK_MPI(err);
-				fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+				
+				fbuf = find_file_buffer(gl_filebuf_list, (char*)rbuf, -1);
 				assert(fbuf != NULL);
 
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Recv read done for file %s from %d in comp %d (tot %d)", fbuf->file_path,
@@ -2358,13 +2288,9 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 							DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
 					}
 				}
-
-				gl_stats.master_time += MPI_Wtime() - t_st;
 				break;
 			case MATCH_DONE_TAG:
-				err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, MATCH_DONE_TAG, gl_comps[comp].comm, &status);
-				CHECK_MPI(err);
-				fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+				fbuf = find_file_buffer(gl_filebuf_list, (char*)rbuf, -1);
 				assert(fbuf != NULL);
 				if(fbuf->my_mst_info->my_mst == gl_my_rank)
 					notify_workgroup(fbuf, NULL, 0, MATCH_DONE_TAG);
@@ -2372,36 +2298,50 @@ static void parce_msg(int comp, int src, int tag, int bufsz)
 				fbuf->done_matching_flag = 1;
 				break;
 			case COMP_SYNC_TAG:
-				err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, COMP_SYNC_TAG, gl_comps[comp].comm, &status);
-				CHECK_MPI(err);
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Sync tag for file %s", filename);
-				fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Sync tag for file %s", (char*)rbuf);
+				fbuf = find_file_buffer(gl_filebuf_list, (char*)rbuf, -1);
 				assert(fbuf != NULL);
 				fbuf->sync_comp_flag = 1;
 				break;
 			case FILE_READY_TAG:
-				err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, FILE_READY_TAG, gl_comps[comp].comm, &status);
-				CHECK_MPI(err);
-				DTF_DBG(VERBOSE_DBG_LEVEL,   "Receive FILE_READY notif for %s", filename);
+				fbuf = find_file_buffer(gl_filebuf_list, (char*)rbuf, -1);
+				if(fbuf == NULL){
+					if(!is_queued){
+						DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: no record for file %s yet, queue the request to process later",  (char*)rbuf);
+						char *tmp = dtf_malloc(MAX_FILE_NAME);
+						assert(tmp != NULL);
+						strcpy(tmp, (char*)rbuf); 
+						dtf_msg_t *msg = new_dtf_msg(tmp, MAX_FILE_NAME, src, tag);
+						ENQUEUE_ITEM(msg, gl_comps[comp].in_msg_q);
+					}
+					ret = 0;
+					break;
+				}
+				DTF_DBG(VERBOSE_DBG_LEVEL,   "Process FILE_READY notif for %s", (char*)rbuf);
 
-				fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-				assert(fbuf != NULL);
 				fbuf->is_ready = 1;
+				if(is_queued)
+					dtf_free(rbuf, bufsz);
 				break;
 		   default:
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown tag %d", status.MPI_TAG);
 				assert(0);
 		}
+		
+	return ret;
 }
 
 void progress_io_matching()
 {
     MPI_Status status;
-    int comp, flag, err, bufsz;
+    int comp, flag, err, bufsz, tag, src;
     gl_stats.nprogress_call++;
-    double t_st;
-
-    progress_msg_queue();
+    double t_st, t_start_comm;
+    void *rbuf;
+    char filename[MAX_FILE_NAME];
+	
+	progress_recv_queue();
+    progress_send_queue();
 
     for(comp = 0; comp < gl_ncomp; comp++){
         if( gl_comps[comp].comm == MPI_COMM_NULL || comp == gl_my_comp_id){
@@ -2417,9 +2357,37 @@ void progress_io_matching()
                 gl_stats.idle_time += MPI_Wtime() - t_st;
                 break;
             } 
+            tag = status.MPI_TAG;
+            src = status.MPI_SOURCE;
 			MPI_Get_count(&status, MPI_BYTE, &bufsz);
-            print_recv_msg(status.MPI_TAG);
-			parce_msg(comp, status.MPI_SOURCE, status.MPI_TAG, bufsz);
+			if(bufsz != MAX_FILE_NAME){
+				rbuf = dtf_malloc(bufsz);
+				assert(rbuf != NULL);
+			}
+            print_recv_msg(tag, src);
+			
+			t_start_comm = MPI_Wtime();
+			switch(tag){
+				case FILE_INFO_REQ_TAG:
+				case IO_REQS_TAG:
+				case IO_DATA_REQ_TAG:
+				case IO_DATA_TAG:
+					err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_comps[comp].comm, &status);
+					parce_msg(comp, src, tag, rbuf, bufsz, 0);
+					break;
+				case READ_DONE_TAG:					
+				case MATCH_DONE_TAG:					
+				case COMP_SYNC_TAG:
+				case FILE_READY_TAG:
+					err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, tag, gl_comps[comp].comm, &status);
+					parce_msg(comp, src, tag, filename, MAX_FILE_NAME, 0);
+					break;
+			   default:
+					DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown tag %d", status.MPI_TAG);
+					assert(0);
+			}
+			gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
+			CHECK_MPI(err);
         }
     }
     //check messages in my component
@@ -2432,10 +2400,38 @@ void progress_io_matching()
             if(!flag){
                 gl_stats.idle_time += MPI_Wtime() - t_st;
                 break;
-            } 
+            }         
+			tag = status.MPI_TAG;
+			 src = status.MPI_SOURCE;
 			MPI_Get_count(&status, MPI_BYTE, &bufsz);
-            print_recv_msg(status.MPI_TAG);
-			parce_msg(comp, status.MPI_SOURCE, status.MPI_TAG, bufsz);
+			if(bufsz != MAX_FILE_NAME){
+				rbuf = dtf_malloc(bufsz);
+				assert(rbuf != NULL);
+			}
+            print_recv_msg(tag, src);
+			
+			t_start_comm = MPI_Wtime();
+			switch(tag){
+				case FILE_INFO_REQ_TAG:
+				case IO_REQS_TAG:
+				case IO_DATA_REQ_TAG:
+				case IO_DATA_TAG:
+					err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_comps[comp].comm, &status);
+					parce_msg(comp, src, tag, rbuf, bufsz, 0);
+					break;
+				case READ_DONE_TAG:					
+				case MATCH_DONE_TAG:					
+				case COMP_SYNC_TAG:
+				case FILE_READY_TAG:
+					err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, src, tag, gl_comps[comp].comm, &status);
+					parce_msg(comp, src, tag, filename, MAX_FILE_NAME, 0);
+					break;
+			   default:
+					DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown tag %d", status.MPI_TAG);
+					assert(0);
+			}
+			gl_stats.accum_comm_time += MPI_Wtime() - t_start_comm;
+			CHECK_MPI(err);
 	}
     
 }

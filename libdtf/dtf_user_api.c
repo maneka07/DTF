@@ -20,7 +20,7 @@ int lib_initialized=0;
 
 file_info_req_q_t *gl_finfo_req_q = NULL;
 file_info_t *gl_finfo_list = NULL;
-dtf_msg_t *gl_msg_q = NULL;
+dtf_msg_t *gl_out_msg_q = NULL;
 
 struct file_buffer* gl_filebuf_list = NULL;        /*List of all file buffers*/
 struct fname_pattern *gl_fname_ptrns = NULL;    /*Patterns for file name*/
@@ -147,8 +147,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_fname_ptrns = NULL;
     gl_filebuf_list = NULL;
     gl_finfo_req_q = NULL;
-    gl_msg_q = NULL;
-
+    gl_out_msg_q = NULL;
+	
     /*Parse ini file and initialize components*/
     err = load_config(filename, module_name);
     if(err) goto panic_exit;
@@ -205,16 +205,24 @@ _EXTERN_C_ int dtf_finalize()
 	
     /*Send any unsent file notifications
       and delete buf files*/
-	while(gl_msg_q != NULL)
-		progress_msg_queue();
+    if(gl_out_msg_q != NULL){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Send msg queue not empty:");
+		dtf_msg_t *msg = gl_out_msg_q;
+		while(msg != NULL){
+			DTF_DBG(VERBOSE_DBG_LEVEL, "%p", (void*)msg);
+			msg = msg->next;
+		}
+		while(gl_out_msg_q != NULL)
+			progress_send_queue();
+	}
 		
     finalize_files();
     
-    if(gl_msg_q != NULL)
+    if(gl_out_msg_q != NULL)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize message queue");
 	
-    while(gl_msg_q != NULL)
-		progress_msg_queue();
+    while(gl_out_msg_q != NULL)
+		progress_send_queue();
 
     assert(gl_finfo_req_q == NULL);
    
@@ -240,10 +248,10 @@ _EXTERN_C_ int dtf_finalize()
   //  if(gl_stats.malloc_size != MAX_COMP_NAME )
     //  DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
     assert(gl_finfo_req_q == NULL);
-    assert(gl_msg_q == NULL);
+    assert(gl_out_msg_q == NULL);
 
-	if(gl_my_rank == 0)
-		DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF: finalized");
+
+	DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalized");
     dtf_free(gl_my_comp_name, MAX_COMP_NAME);
     lib_initialized = 0;
     fflush(stdout);

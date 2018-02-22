@@ -158,6 +158,7 @@ fname_pattern_t *new_fname_pattern()
     pat->replay_io = DTF_UNDEFINED;
     pat->rdr_recorded = DTF_UNDEFINED;
     pat->wrt_recorded = DTF_UNDEFINED;
+    pat->write_only = 0;
     pat->io_pats = NULL;
     return pat;
 }
@@ -303,56 +304,50 @@ int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start, cons
     return 0;
 }
 
-static int match_str(char *pattern, const char *filename)
+static int match_str(char* pattern, const char* filename)
 {
-	char *next_token, *cur_token;
-    int pos, strpos;
     int ret = 0;
-
-    next_token = strchr(pattern, '%');
-
+    char *next_token, *cur_token;
+    int next_pos, cur_pos, token_len;
+    char *match_str;
+	
+    if(strlen(pattern)== 0 || strlen(filename)==0)
+        return ret;
+        
+	next_token = strchr(pattern, '%');
+	
 	if(next_token == NULL){
 		//not a name pattern, just check for inclusion
 		if(strstr(pattern, filename)!=NULL || strstr(filename, pattern)!=NULL)
 			ret = 1;
 	} else {
-		strpos = 0;
-		cur_token = &pattern[strpos];
-
+		cur_pos = 0;
+		cur_token = &pattern[cur_pos];
+		
 		while( next_token != NULL){
-			pos = next_token-pattern;
-			pattern[pos] = '\0';
-
-			if(pos - strpos > 0){ //check for inclusion
-				//printf("token %s\n", cur_token);
-				if(strstr(filename, cur_token) == NULL){
-					ret = 0;
-					pattern[pos] = '%';
-					//printf("->not found\n");
-					break;
-				} else {
-					ret = 1;
-					//printf("->found\n");
-				}
+			next_pos = next_token-pattern;
+			token_len = next_token - cur_token;
+			pattern[next_pos] = '\0';
+			
+			if(next_pos - cur_pos > 0){ //check for inclusion
+				match_str = strstr(filename, cur_token);
+				ret = (match_str == NULL) ? 0 : 1;
 			}
-			pattern[pos] = '%';
-
-			strpos = pos+1;
-			cur_token = &pattern[strpos];
+			pattern[next_pos] = '%';
+			
+			if(!ret) break;
+			
+			cur_pos = next_pos+1;
+			cur_token = &pattern[cur_pos];
+			filename = match_str + token_len;
 			next_token = strchr(cur_token, '%');
 		}
-		if( ret && (strpos != strlen(pattern))){
-			//printf("token %s\n", cur_token);
+		if( ret && (cur_pos != strlen(pattern)))
 			//check the last token
-			if(strstr(filename, cur_token) == NULL){
-				ret = 0;
-				//printf("->not found\n");
-			} else {
-				//printf("->found\n");
-			}
-		}
+			ret = (strstr(filename, cur_token) == NULL) ? 0 : 1;
 	}
-	return ret;
+	
+    return ret;
 }
 
 
@@ -360,17 +355,24 @@ fname_pattern_t *find_fname_pattern(const char *filename)
 {
 	int i;
 	fname_pattern_t *pat;
-	 
+	int found = 0;
+	
 	if (strlen (filename) == 0) return NULL;
 		
     pat = gl_fname_ptrns;
 	while(pat != NULL){
+		
+		if(match_str(pat->fname, filename) && !pat->ignore_io){
+			found = 1;
 		 /*First see if the filename matches against any of the exclude patterns*/
-		for(i = 0; i < pat->nexcls; i++)
-			if(match_str(pat->excl_fnames[i], filename)) return NULL;
-		
-		if(match_str(pat->fname, filename) && !pat->ignore_io) break;
-		
+			for(i = 0; i < pat->nexcls; i++)
+				if(match_str(pat->excl_fnames[i], filename)){
+					found = 0;
+					break;					
+				}
+		}
+		if(found)
+			break;
 		pat = pat->next;
 	}
 	return pat;

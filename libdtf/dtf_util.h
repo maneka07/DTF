@@ -88,6 +88,7 @@ typedef struct component{
     unsigned int    id;
     char            name[MAX_COMP_NAME];
     int             connect_mode; /*0 - I am server, 1 - I am client, -1 - undefined (no interconnection)*/
+    struct dtf_msg  *in_msg_q;   /*Queue of incoming messages (those that cannot be processed right now)*/
     MPI_Comm        comm;   /*intra or inter component communicator*/
 }component_t;
 
@@ -142,6 +143,7 @@ typedef struct stats{
 
 typedef struct dtf_msg{
     MPI_Request req;
+    int src;   //if src is DTF_UNDEFINED, this is an outgoing message, otherwise incoming
     void *buf;
     int tag;
     size_t bufsz;
@@ -175,7 +177,7 @@ extern struct stats gl_stats;
 extern char *gl_my_comp_name;
 extern void* gl_msg_buf;
 extern struct file_info_req_q *gl_finfo_req_q;
-extern dtf_msg_t *gl_msg_q;
+extern dtf_msg_t *gl_out_msg_q;		//Queue of outgoing messages (pending requests)     
 extern file_info_t *gl_finfo_list;
 char _buff[1024];
 
@@ -232,8 +234,12 @@ void shift_coord(int ndims, const MPI_Offset *bl_start,
                  MPI_Offset *subbl_count, MPI_Offset fit_nelems);
 void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstbuf, int nelems);
 double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype);
-dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int tag);
+dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag);
 void delete_dtf_msg(dtf_msg_t *msg);
 void print_stats();
 int inquire_root(const char *filename);
+
+void progress_send_queue();
+void progress_recv_queue();
+
 #endif

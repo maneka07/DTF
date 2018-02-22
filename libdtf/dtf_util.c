@@ -17,7 +17,7 @@
 #include "rb_red_black_tree.h"
 
 extern file_info_req_q_t *gl_finfo_req_q;
-extern dtf_msg_t *gl_msg_q;
+extern dtf_msg_t *gl_out_msg_q;
 
 MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord)
 {
@@ -52,13 +52,13 @@ void notify_file_ready(file_buffer_t *fbuf)
 	filename = dtf_malloc(MAX_FILE_NAME);
 	assert(filename != NULL);
 	strcpy(filename, fbuf->file_path);
-	msg = new_dtf_msg(filename, MAX_FILE_NAME, FILE_READY_TAG);
+	msg = new_dtf_msg(filename, MAX_FILE_NAME, DTF_UNDEFINED, FILE_READY_TAG);
 	DTF_DBG(VERBOSE_DBG_LEVEL,   "Notify reader root rank %d that file %s is ready", fbuf->root_reader, fbuf->file_path);
 	err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_READY_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
 	CHECK_MPI(err);
-	ENQUEUE_ITEM(msg, gl_msg_q);
+	ENQUEUE_ITEM(msg, gl_out_msg_q);
 	fbuf->fready_notify_flag = RDR_NOTIF_POSTED;
-	progress_msg_queue();
+	progress_send_queue();
 }
 
 /*Standard deviation*/
@@ -104,6 +104,9 @@ void print_stats()
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: library-measured I/O time: %.4f", gl_stats.timer_accum);
 	if(gl_stats.user_timer_accum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: user-measured I/O time: %.4f", gl_stats.user_timer_accum);
+
+	if(gl_stats.transfer_time > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: transfer time: %.4f", gl_stats.transfer_time);
 
     /*In scale-letkf the last ranks write mean files not treated by dtf, we don't need
       stats for that*/
@@ -212,7 +215,7 @@ void print_stats()
     dev = stand_devi(gl_stats.timer_accum, dblsum, nranks);
 
     if(gl_my_rank==0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg pnetcdf time: %.5f : %.5f", avglibt, dev);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg total pnetcdf time: %.5f : %.5f", avglibt, dev);
 
     err = MPI_Allreduce(&(gl_stats.user_timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
@@ -224,8 +227,14 @@ void print_stats()
     err = MPI_Reduce(&(gl_stats.transfer_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank == 0 && dblsum > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg tot match time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg transfer time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
 
+	dblint_in.dbl = gl_stats.transfer_time;
+    dblint_in.intg = gl_my_rank;
+    err = MPI_Reduce(&dblint_in, &dblint_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max transfer: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
 
 
     //dblint_in.dbl = walltime;
@@ -936,7 +945,7 @@ void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstb
     }
 }
 
-dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int tag)
+dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag)
 {
     dtf_msg_t *msg = dtf_malloc(sizeof(struct dtf_msg));
     assert(msg != NULL);
@@ -952,7 +961,7 @@ dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int tag)
     msg->tag = tag;
     msg->next = NULL;
     msg->prev = NULL;
-
+    msg->src = src; 
     return msg;
 }
 
@@ -961,4 +970,62 @@ void delete_dtf_msg(dtf_msg_t *msg)
     if(msg->bufsz > 0)
         dtf_free(msg->buf, msg->bufsz);
     dtf_free(msg, sizeof(msg));
+}
+
+void progress_send_queue()
+{
+    dtf_msg_t *msg;
+    int flag, err;
+    MPI_Status status;
+    double t_st;
+
+    if(gl_out_msg_q == NULL)
+       return;
+
+    msg = gl_out_msg_q;
+    while(msg != NULL){
+        t_st = MPI_Wtime();
+        err = MPI_Test(&(msg->req), &flag, &status);
+        CHECK_MPI(err);
+        if(flag){
+            gl_stats.accum_comm_time += MPI_Wtime() - t_st;
+            dtf_msg_t *tmp = msg->next;
+            DEQUEUE_ITEM(msg, gl_out_msg_q);
+            if(msg->tag == FILE_READY_TAG){
+                file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, (char*)msg->buf, -1);
+                if(fbuf == NULL)
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Error: cant find %s", (char*)msg->buf);
+                assert(fbuf != NULL);
+                assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
+                fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Completed sending file ready notif for %s", (char*)msg->buf);
+            }
+            delete_dtf_msg(msg);
+            msg = tmp;
+        } else{
+            gl_stats.idle_time += MPI_Wtime() - t_st;
+            msg = msg->next;
+        }
+    }
+}
+
+void progress_recv_queue()
+{
+	int comp;
+	dtf_msg_t *msg, *tmp;
+	
+	for(comp = 0; comp < gl_ncomp; comp++){
+		if(gl_comps[comp].in_msg_q == NULL)
+			continue;
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Progress recv queue for comp %d", comp);
+		msg = gl_comps[comp].in_msg_q;
+		while(msg != NULL){
+			if(parce_msg(comp, msg->src, msg->tag, msg->buf, msg->bufsz, 1)){
+				tmp = msg->next;
+				DEQUEUE_ITEM(msg, gl_comps[comp].in_msg_q);
+				msg = tmp;
+			} else
+				msg = msg->next;
+		}
+	}
 }

@@ -446,6 +446,7 @@ int load_config(const char *ini_name, const char *comp_name){
             for(i = 0; i<gl_ncomp; i++){
                 gl_comps[i].id = i;
                 gl_comps[i].connect_mode = DTF_UNDEFINED;
+                gl_comps[i].in_msg_q = NULL;
                 gl_comps[i].name[0] = 0;
                 gl_comps[i].comm = MPI_COMM_NULL;
             }
@@ -556,6 +557,10 @@ int load_config(const char *ini_name, const char *comp_name){
 			cur_fpat->replay_io = atoi(value);
 			assert(cur_fpat->replay_io==0 ||  cur_fpat->replay_io==1);
 			
+        }  else if(strcmp(param, "write_only") == 0){
+			cur_fpat->write_only = atoi(value);
+			assert(cur_fpat->write_only==0 ||  cur_fpat->write_only==1);
+			
         }  else if(strcmp(param, "ignore_io") == 0){
 			cur_fpat->ignore_io = atoi(value);
 			assert(cur_fpat->ignore_io==0 ||  cur_fpat->ignore_io==1);
@@ -659,6 +664,16 @@ void finalize_comp_comm(){
     int i;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finalizing communicators");
     for(i = 0; i<gl_ncomp; i++){
+		if(gl_comps[i].in_msg_q != NULL){
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Recv msg queue for comp %s not empty:", gl_comps[i].name);
+			dtf_msg_t *msg = gl_comps[i].in_msg_q;
+			while(msg != NULL){
+				DTF_DBG(VERBOSE_DBG_LEVEL, "%p", (void*)msg);
+				msg = msg->next;
+			}
+			assert(0);
+		}
+		
        destroy_intercomm(gl_comps[i].id);
     }
 
