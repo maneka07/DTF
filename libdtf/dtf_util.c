@@ -1017,12 +1017,13 @@ void progress_recv_queue()
 	for(comp = 0; comp < gl_ncomp; comp++){
 		if(gl_comps[comp].in_msg_q == NULL)
 			continue;
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Progress recv queue for comp %d", comp);
 		msg = gl_comps[comp].in_msg_q;
 		while(msg != NULL){
 			if(parce_msg(comp, msg->src, msg->tag, msg->buf, msg->bufsz, 1)){
 				tmp = msg->next;
+				msg->bufsz = 0;
 				DEQUEUE_ITEM(msg, gl_comps[comp].in_msg_q);
+				delete_dtf_msg(msg);
 				msg = tmp;
 			} else
 				msg = msg->next;

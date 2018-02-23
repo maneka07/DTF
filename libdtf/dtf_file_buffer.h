@@ -57,7 +57,8 @@ typedef struct file_buffer{
                                       - finished being written (mode = DTF_IO_MODE_FILE)
                                     */
   int                       iomode;    /*Do normal File I/O or direct data transfer?*/
-  int                       omode;     /*open mode (read/write/undefined)*/      
+  int                       omode;     /*open mode (read/write/undefined)*/ 
+  int 						ignore_io;     
   int 						cur_transfer_epoch;      
 
   int                       root_writer;           /*MPI_COMM_WORLD rank of the rank who is a root in comm*/

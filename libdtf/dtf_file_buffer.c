@@ -220,6 +220,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
     buf->root_reader = -1;
     buf->omode = DTF_UNDEFINED;
 	buf->iomode = pat->iomode;
+	buf->ignore_io = pat->ignore_io;
 	buf->cur_transfer_epoch = 0;
 	//insert
 	if(gl_filebuf_list == NULL)
@@ -362,7 +363,7 @@ fname_pattern_t *find_fname_pattern(const char *filename)
     pat = gl_fname_ptrns;
 	while(pat != NULL){
 		
-		if(match_str(pat->fname, filename) && !pat->ignore_io){
+		if(match_str(pat->fname, filename)){
 			found = 1;
 		 /*First see if the filename matches against any of the exclude patterns*/
 			for(i = 0; i < pat->nexcls; i++)
