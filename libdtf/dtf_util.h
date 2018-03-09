@@ -107,16 +107,16 @@ typedef struct stats{
     int             ndata_msg_sent;
     double          accum_dbuff_time;
     size_t          accum_dbuff_sz;
-    double          accum_comm_time;
-    double          accum_hdr_time;
+    double          t_comm;
+    double          t_hdr;
     double          parse_ioreq_time;
     size_t          data_msg_sz;      /*Accumulated size of messages */
     double          transfer_time;  /*data transfer time=I/O calls+dtf_transfer */
     double          idle_time;
     double          idle_do_match_time;
-    double          accum_progr_time;
-    double          accum_do_matching_time;
-    double          accum_rw_var;
+    double          t_progr_comm;
+    double          t_do_match;
+    double          t_rw_var;
     double          master_time;  /*measure accum time for master-related work*/
     int             ndb_match;       /*How many times I/O req matching was performed*/
     double          walltime;
@@ -139,6 +139,10 @@ typedef struct stats{
     double          st_fin;
     double          t_open_hist;
     double          t_open_rest;
+    double          t_mtch_hist;
+    double          t_mtch_rest;
+    double          t_progr_transf;
+    unsigned long   cnt_progr_transf;
 } stats_t;
 
 typedef struct dtf_msg{

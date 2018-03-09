@@ -25,6 +25,9 @@ _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *hea
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
+    
+    progress_comm();
+    
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
 
 
@@ -34,7 +37,7 @@ _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *hea
     }
     double t_start = MPI_Wtime();
     write_hdr(fbuf, hdr_sz, header);
-    gl_stats.accum_hdr_time += MPI_Wtime() - t_start;
+    gl_stats.t_hdr += MPI_Wtime() - t_start;
     gl_stats.transfer_time += MPI_Wtime() - t_start;
 }
 
@@ -45,12 +48,15 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
 
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
+    
+    progress_comm();
+    
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
     if(fbuf->ignore_io) return 0;
 	
     double t_start = MPI_Wtime();
     ret = read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
-    gl_stats.accum_hdr_time += MPI_Wtime() - t_start;
+    gl_stats.t_hdr += MPI_Wtime() - t_start;
     gl_stats.transfer_time += MPI_Wtime() - t_start;
     return ret;
 }
@@ -67,20 +73,22 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 	}
 
+	progress_comm();
+
     fname_pattern_t *pat = find_fname_pattern(filename);
     if(pat != NULL){
 		fbuf = create_file_buffer(pat, filename);
 		/*Because this component creates the file, we assume that it's the writer*/
-		fbuf->omode = DTF_WRITE; 
+		//fbuf->omode = DTF_WRITE; 
 		fbuf->writer_id = gl_my_comp_id;
 		fbuf->reader_id = (gl_my_comp_id == pat->comp1) ? pat->comp2 : pat->comp1;
 	}
 
 	if(fbuf == NULL){
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Creating file %s. File is not treated by DTF", filename);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "Creating file %s. File is not treated by DTF", filename);
         return;
     } else {
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Created file %s (ncid %d)", filename, ncid);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "Created file %s (ncid %d)", filename, ncid);
     }
 	
     fbuf->ncid = ncid;
@@ -147,10 +155,10 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
 
         //scale-letkf
-		if(strstr(fbuf->file_path, "hist.d")!=NULL)
-			gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-		else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-			gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+		//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
+			//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+		//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+			//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
 		//~ char *s = getenv("DTF_SCALE");
 		//~ if(s != NULL)
 			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp open file %s", fbuf->file_path);
@@ -175,7 +183,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	fname_pattern_t *pat = NULL;
 	
     if(!lib_initialized) return;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "Opening file %s", filename);
 
     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
 
@@ -185,12 +193,18 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against pattern %s", pat->fname);
 			fbuf = create_file_buffer(pat, filename);	
 		}
+	} else {
+		//NOTE TEMPORARY SOLUTION TO DISABLE GOING TO THE NEXT ITERATION IN SCALE_LETKF
+		fbuf->ignore_io = 1;
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "Will ignore io for file %s", filename);
 	}
 
     if(fbuf == NULL) {
         DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s. File is not treated by DTF", filename);
         return;
     }
+
+	progress_comm();
 
     if(fbuf->comm == MPI_COMM_NULL)
         fbuf->comm = comm;
@@ -237,7 +251,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	 if(fbuf->fready_notify_flag == RDR_NOTIF_POSTED){
 		assert(fbuf->root_writer == gl_my_rank);
 		while(fbuf->fready_notify_flag != DTF_UNDEFINED)
-			progress_io_matching();
+			progress_comm();
 	 }	   
 
 	if(pat == NULL){
@@ -292,7 +306,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		cpl_root = fbuf->cpl_mst_info->masters[0];
 	
 	if( omode & NC_WRITE && !pat->write_only){
-		fbuf->omode = DTF_WRITE;
+		//fbuf->omode = DTF_WRITE;
 		fbuf->writer_id = gl_my_comp_id;
 		fbuf->reader_id = cpl_cmp;
 		fbuf->root_writer = fbuf->my_mst_info->masters[0];
@@ -303,7 +317,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 			
 	} else { // NC_NOWRITE  
 		
-		fbuf->omode = DTF_READ;
+		//fbuf->omode = DTF_READ;
 		fbuf->writer_id = cpl_cmp;
 		fbuf->reader_id = gl_my_comp_id;
 		fbuf->root_writer = cpl_root;
@@ -327,9 +341,9 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     if(!lib_initialized) return;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
+    fbuf->is_defined = 1;
     
-    progress_recv_queue();
-
+    progress_comm();
 }
 
 _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
@@ -341,6 +355,8 @@ _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is not treated by DTF. Will not set ncid", filename);
         return;
     }
+    progress_comm();
+    
     DTF_DBG(VERBOSE_DBG_LEVEL, "Set ncid of file %s to %d (previos value %d)", filename, ncid, fbuf->ncid);
     fbuf->ncid = ncid;
 }
@@ -357,12 +373,14 @@ _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
 _EXTERN_C_ void dtf_close(const char* filename)
 {
     if(!lib_initialized) return;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Closing file %s", filename);
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "Closing file %s", filename);
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL, "File not treated by dtf");
         return;
     }
+
+	progress_comm();
 
     if(fbuf->ignore_io){
 		return;
@@ -420,8 +438,14 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     if(!lib_initialized) return 0;
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
+    
+    progress_comm();
+    
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-	if(fbuf->ignore_io) return 0;
+	if(fbuf->ignore_io){ 
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "ignore io call for %s", filename);
+		return 0;
+	}
 	double t_start = MPI_Wtime();
 	
 	if(varid >= fbuf->nvars){
@@ -499,6 +523,7 @@ _EXTERN_C_ int dtf_io_mode(const char* filename)
 {
     if(!lib_initialized) return DTF_UNDEFINED;
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    
     if(fbuf == NULL){
         return DTF_UNDEFINED;
     }
@@ -513,6 +538,9 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
    
     if(fbuf == NULL) return 0;
+    
+    progress_comm();
+    
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 	if(fbuf->ignore_io) return 0;
 	

@@ -77,7 +77,7 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 		rpat->next = NULL;
 	} else {
 		//merge
-		size_t shift = sizeof(MPI_Offset) + MAX_FILE_NAME + MAX_FILE_NAME%sizeof(MPI_Offset);
+		size_t shift = sizeof(MPI_Offset); /*rdr_rank*/
 		void *tmp = realloc(rpat->data, rpat->datasz + datasz - shift);
 		assert(tmp != NULL);
 		rpat->data = tmp;
@@ -87,10 +87,12 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 	}
 }
 
+//TODO figure out how to replay for nonblocking
 void replay_io(fname_pattern_t *pat, char *filename, int epoch)
 {
 	io_pattern_t *iopat;
 	rank_pattern_t *rpat;
+	file_buffer_t *fbuf;
 	
 	/*Find I/O pattern for the given epoch*/
 	iopat = pat->io_pats;
@@ -108,9 +110,11 @@ void replay_io(fname_pattern_t *pat, char *filename, int epoch)
 	rpat = iopat->rank_pats;
 	while(rpat != NULL){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Replay data for file %s for rank %d", filename, rpat->rank);
-		//first replace the file name in the pattern data with the most recent filename
-		memcpy( (unsigned char*)rpat->data+sizeof(MPI_Offset), filename, MAX_FILE_NAME);
-		send_data(rpat->data, rpat->datasz);
+		fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+		if(fbuf == NULL)
+			assert(0); 
+		
+		send_data(fbuf, (unsigned char*)(rpat->data) + MAX_FILE_NAME, rpat->datasz - MAX_FILE_NAME);
 		rpat = rpat->next;
 	}
 } 

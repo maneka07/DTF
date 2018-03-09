@@ -76,8 +76,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.transfer_time = 0;
     gl_stats.ndb_match = 0;
     gl_stats.walltime = MPI_Wtime();
-    gl_stats.accum_comm_time = 0;
-    gl_stats.accum_hdr_time = 0;
+    gl_stats.t_comm = 0;
+    gl_stats.t_hdr = 0;
     gl_stats.nprogress_call = 0;
     gl_stats.nioreqs = 0;
     gl_stats.nbl = 0;
@@ -86,15 +86,23 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.timer_start = 0;
     gl_stats.accum_dbuff_sz = 0;
     gl_stats.accum_dbuff_time = 0;
-    gl_stats.accum_rw_var = 0;
-    gl_stats.accum_progr_time = 0;
-    gl_stats.accum_do_matching_time = 0;
+    gl_stats.t_rw_var = 0;
+    gl_stats.t_progr_comm = 0;
+    gl_stats.t_do_match = 0;
     gl_stats.nfiles = 0;
     gl_stats.idle_time = 0;
     gl_stats.idle_do_match_time = 0;
     gl_stats.master_time = 0;
     gl_stats.iodb_nioreqs = 0;
     gl_stats.parse_ioreq_time = 0;
+    gl_stats.st_mtch_hist = 0;
+    gl_stats.st_mtch_rest = 0;
+    gl_stats.t_open_hist = 0;
+    gl_stats.t_open_rest = 0;
+    gl_stats.t_mtch_hist = 0;
+    gl_stats.t_mtch_rest = 0;
+    gl_stats.t_progr_transf = 0;
+    gl_stats.cnt_progr_transf = 0;
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -199,17 +207,18 @@ _EXTERN_C_ int dtf_finalize()
 //int MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype,
 //               MPI_Op op, int root, MPI_Comm comm)
 
-	DTF_DBG(VERBOSE_DBG_LEVEL,"time_stamp DTF: finalize");
+	DTF_DBG(VERBOSE_ERROR_LEVEL,"time_stamp DTF: finalize");
 	MPI_Barrier(gl_comps[gl_my_comp_id].comm);
     gl_stats.st_fin = MPI_Wtime() - gl_stats.walltime;
 	
     /*Send any unsent file notifications
       and delete buf files*/
     if(gl_out_msg_q != NULL){
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Send msg queue not empty:");
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "Send msg queue not empty:");
 		dtf_msg_t *msg = gl_out_msg_q;
 		while(msg != NULL){
-			DTF_DBG(VERBOSE_DBG_LEVEL, "%p", (void*)msg);
+			//DTF_DBG(VERBOSE_DBG_LEVEL, "%p", (void*)msg);
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "%d", msg->tag);
 			msg = msg->next;
 		}
 		while(gl_out_msg_q != NULL)
@@ -217,13 +226,14 @@ _EXTERN_C_ int dtf_finalize()
 	}
 		
     finalize_files();
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "1");
     
     if(gl_out_msg_q != NULL)
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize message queue");
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "Finalize message queue");
 	
     while(gl_out_msg_q != NULL)
 		progress_send_queue();
-
+ DTF_DBG(VERBOSE_ERROR_LEVEL, "1");
     assert(gl_finfo_req_q == NULL);
    
 	finfo = gl_finfo_list;
@@ -238,7 +248,7 @@ _EXTERN_C_ int dtf_finalize()
     //destroy inrracomp communicator
     err = MPI_Comm_free(&gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
-
+ DTF_DBG(VERBOSE_ERROR_LEVEL, "1");
 
     clean_config();
 
@@ -275,6 +285,38 @@ _EXTERN_C_ int dtf_transfer_v2(const char *filename, int ncid, int it )
 		return dtf_transfer(filename, ncid);
     return 0;
 }
+
+/*
+ * Start non-blocking data transfer. Processes will try to progress
+ * with data transfer as much as they can but if there is no more work 
+ * to do at the moment, the process will simply return. 
+ * The user needs to eventually call dtf_transfer_complete or 
+ * dtf_transfer_complete_all to ensure the completion of the data tranfer.
+ * 
+ * NOTE: The user cannot call dtf_transfer_start or dtf_transfer for the 
+ * same file if there is already an active data transfer
+ * */
+//_EXTERN_C_ int dtf_transfer_start(const char *filename)
+//{
+	
+//}
+
+/*
+ * Process will block until the data transfer for this file is completed.
+ * */
+_EXTERN_C_ int dtf_transfer_complete(const char *filename, int ncid)
+{
+	return 0;
+}
+
+/*
+ * Process will block until all active data transfers are completed.
+ * */
+_EXTERN_C_ int dtf_transfer_complete_all()
+{
+	return 0;
+}
+
 
 /*called by user to do explicit matching*/
 /*
@@ -330,11 +372,11 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
 
 		fbuf->is_ready = 1;	
 		//Check for any incoming messages
-		progress_io_matching();
+		progress_comm();
 		if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
 			if(fbuf->root_writer == gl_my_rank){
 				while(fbuf->root_reader == -1)
-					progress_io_matching();
+					progress_comm();
 				notify_file_ready(fbuf);
 			}
 		}
@@ -404,6 +446,16 @@ void dtf_finalize_(int* ierr)
 void dtf_transfer_(const char *filename, int *ncid, int *ierr)
 {
     *ierr = dtf_transfer(filename, *ncid);
+}
+
+void dtf_transfer_complete_(const char *filename, int *ncid)
+{
+	dtf_transfer_complete(filename, *ncid);
+}
+
+void dtf_transfer_complete_all_()
+{
+	dtf_transfer_complete_all();
 }
 
 void dtf_print_(const char *str)

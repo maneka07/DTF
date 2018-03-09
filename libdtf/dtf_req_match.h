@@ -111,7 +111,8 @@ io_req_t *new_ioreq(int id,
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
 //void delete_ioreqs(file_buffer_t *fbuf);
 void delete_ioreqs(file_buffer_t *fbuf, int finalize);
-void progress_io_matching();
+void progress_comm();
+void progress_transfer();
 int  match_ioreqs(file_buffer_t *fbuf);
 //void match_ioreqs_all(int rw_flag);
 int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);
@@ -127,6 +128,8 @@ void log_ioreq(file_buffer_t *fbuf,
 			  MPI_Datatype dtype,
 			  void *buf,
 			  int rw_flag);
-void send_data(void* buf, int bufsz);
+void send_data(file_buffer_t *fbuf, void* buf, int bufsz);
 int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued);
+void send_ioreqs_by_block(file_buffer_t *fbuf);
+void send_ioreqs_by_var(file_buffer_t *fbuf);
 #endif // dtf_REQ_MATCH_H_INCLUDED

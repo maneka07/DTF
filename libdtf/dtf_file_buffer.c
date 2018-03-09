@@ -218,7 +218,8 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 	buf->writer_id = -1;
 	buf->root_writer = -1;
     buf->root_reader = -1;
-    buf->omode = DTF_UNDEFINED;
+    //buf->omode = DTF_UNDEFINED;
+    buf->is_defined = 0;
 	buf->iomode = pat->iomode;
 	buf->ignore_io = pat->ignore_io;
 	buf->cur_transfer_epoch = 0;

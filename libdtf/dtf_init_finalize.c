@@ -662,13 +662,14 @@ panic_exit:
 void finalize_comp_comm(){
 
     int i;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Finalizing communicators");
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "Finalizing communicators");
     for(i = 0; i<gl_ncomp; i++){
 		if(gl_comps[i].in_msg_q != NULL){
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Recv msg queue for comp %s not empty:", gl_comps[i].name);
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "Recv msg queue for comp %s not empty:", gl_comps[i].name);
 			dtf_msg_t *msg = gl_comps[i].in_msg_q;
 			while(msg != NULL){
-				DTF_DBG(VERBOSE_DBG_LEVEL, "%p", (void*)msg);
+				//DTF_DBG(VERBOSE_DBG_LEVEL, "%p", (void*)msg);
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "%d",msg->tag);
 				msg = msg->next;
 			}
 			assert(0);
@@ -707,12 +708,12 @@ void finalize_files()
 
 			//~ if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
 				//~ while(fbuf->root_reader == -1)
-					//~ progress_io_matching();
+					//~ progress_comm();
 				//~ notify_file_ready(fbuf);
 			//~ }
 			if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOTIF_POSTED)
 				while(fbuf->fready_notify_flag != DTF_UNDEFINED)
-					progress_io_matching();
+					progress_comm();
 			 
 		} 
 		file_cnt++;
