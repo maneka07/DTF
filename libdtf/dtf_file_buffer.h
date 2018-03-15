@@ -56,6 +56,7 @@ typedef struct file_buffer{
 												- received from the writer (mode = DTF_IO_MODE_MEMORY)
 												- finished being written (mode = DTF_IO_MODE_FILE)
 												*/
+  int                       is_transfering;   /*Set to 1 when active transfer phase is happening*/
   int                       iomode;    /*Do normal File I/O or direct data transfer?*/
   //int                       omode;     /*open mode (read/write/undefined)*/ 
   int 						ignore_io; 
@@ -75,7 +76,9 @@ typedef struct file_buffer{
                                                     Possible values: 0 - the ps does not write to this file
                                                                      1 - the ps writes to this file. The file is not ready yet.
                                                                      2 - The file is ready, reader has been notified */
-  int                       cpl_info_shared;                                          
+  int                       cpl_info_shared;
+  double                    t_last_sent_ioreqs;  /*timestamp when last sent I/O request*/
+  int                       has_unsent_ioreqs;                                          
   struct file_buffer        *next;
   struct file_buffer        *prev;
 }file_buffer_t;
@@ -98,13 +101,23 @@ typedef struct fname_pattern{
     struct fname_pattern *next;
 }fname_pattern_t;
 
-void delete_file_buffer(file_buffer_t* buf);
-file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path);
-fname_pattern_t* new_fname_pattern();
-file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid);
-dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
-void add_var(file_buffer_t *fbuf, dtf_var_t *var);
-int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
-fname_pattern_t *find_fname_pattern(const char *filename);
+file_buffer_t*		create_file_buffer(fname_pattern_t *pat, const char* file_path);
+void 				delete_file_buffer(file_buffer_t* buf);
+file_buffer_t* 		find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid);
+
+fname_pattern_t*	new_fname_pattern();
+fname_pattern_t*	find_fname_pattern(const char *filename);
+
+dtf_var_t* 			new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
+void 				add_var(file_buffer_t *fbuf, dtf_var_t *var);
+MPI_Offset 			read_write_var(file_buffer_t *fbuf,
+								   int varid,
+								   const MPI_Offset *start,
+								   const MPI_Offset *count,
+								   const MPI_Offset *stride,
+								   const MPI_Offset *imap,
+								   MPI_Datatype dtype,
+								   void *buf,
+								   int rw_flag);
 
 #endif

@@ -379,7 +379,13 @@ _EXTERN_C_ void dtf_close(const char* filename)
         DTF_DBG(VERBOSE_DBG_LEVEL, "File not treated by dtf");
         return;
     }
-
+	if(fbuf->has_unsent_ioreqs){
+		//Send request to master immediately
+		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
+			send_ioreqs_by_var(fbuf);
+		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
+			send_ioreqs_by_block(fbuf);
+	}
 	progress_comm();
 
     if(fbuf->ignore_io){
@@ -391,7 +397,7 @@ _EXTERN_C_ void dtf_close(const char* filename)
 	if(pat->replay_io){
 		if(pat->rdr_recorded == IO_PATTERN_RECORDING)
 			pat->rdr_recorded = IO_PATTERN_RECORDED;
-		else if(pat->wrt_recorded == IO_PATTERN_RECORDING)
+		else if(pat->wrt_recorded == IO_PATTERN_RECORDING)  //TODO this will not work in nonblocking version
 			pat->wrt_recorded = IO_PATTERN_RECORDED;
 	}
 	fbuf->cur_transfer_epoch = 0; //reset 
@@ -483,8 +489,9 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
 		ret *= el_sz;
 		return ret;
 	}
-    ret = nbuf_read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
+    ret = read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
     gl_stats.transfer_time += MPI_Wtime() - t_start;
+    fbuf->is_transfering = 1;
     return ret;
 }
 

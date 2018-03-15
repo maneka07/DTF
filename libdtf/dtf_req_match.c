@@ -249,12 +249,15 @@ static void do_matching(file_buffer_t *fbuf)
 
     double t_st, t_idle = 0, t_start;
 
-    int n_matched_blocks = 0;
+    int n_matched_blocks = 0;{
     if(!fbuf->my_mst_info->iodb->updated_flag) //no new info since last time matching was done, ignore
+        DTF_DBG(VERBOSE_DBG_LEVEL, "1");
         return;
-    if(fbuf->my_mst_info->iodb->witems == NULL || fbuf->my_mst_info->iodb->ritems == NULL)
+	}
+    if(fbuf->my_mst_info->iodb->witems == NULL || fbuf->my_mst_info->iodb->ritems == NULL){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "2");
 		return;
-
+	}
     fbuf->my_mst_info->iodb->updated_flag = 0; //reset
 
     t_start = MPI_Wtime();
@@ -625,17 +628,17 @@ void clean_iodb(ioreq_db_t *iodb, int nvars)
 	DTF_DBG(VERBOSE_DBG_LEVEL, "iodb clean");
 }
 
-//TODO don't send ioreqs for write all or scalars
-
 static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int rank, MPI_Comm comm)
 {
-    int var_id, rw_flag;
+    int var_id, rw_flag, i;
     dtf_var_t *var = NULL;
     size_t offt = 0;
     unsigned char *chbuf = (unsigned char*)buf;
 	read_db_item_t *ritem = NULL;
 
     double t_st = MPI_Wtime();
+    
+   // offt += MAX_FILE_NAME;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start parsing reqs for file %s", fbuf->file_path);
     if(comm == gl_comps[fbuf->reader_id].comm)
@@ -655,8 +658,8 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int rank, MP
         offt += sizeof(MPI_Offset);
         var_id = (int)(*(MPI_Offset*)(chbuf+offt));
         offt += sizeof(MPI_Offset);
-
         gl_stats.iodb_nioreqs++;
+        assert(var_id < fbuf->nvars);
 		var = fbuf->vars[var_id];
 
         if(rw_flag == DTF_READ){
@@ -705,7 +708,11 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int rank, MP
             offt += var->ndims*sizeof(MPI_Offset);
             memcpy(dblock->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
             offt += var->ndims*sizeof(MPI_Offset);
-
+            
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Added dblock:");
+			for(i = 0; i < var->ndims; i++)
+				DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", dblock->start[i], dblock->count[i]);
+			
             /*add to list*/
             if(ritem->dblocks == NULL){
                 ritem->dblocks = dblock;
@@ -729,7 +736,6 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int rank, MP
 				for(i = 0; i < fbuf->nvars; i++)
 					fbuf->my_mst_info->iodb->witems[i] = NULL;
 			}
-
             if(fbuf->my_mst_info->iodb->witems[var_id] == NULL){
                 fbuf->my_mst_info->iodb->witems[var_id] = (write_db_item_t*)dtf_malloc(sizeof(write_db_item_t));
                 assert(fbuf->my_mst_info->iodb->witems[var_id] != NULL);
@@ -745,7 +751,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int rank, MP
                 witem->ndims = var->ndims;
             } else
 				witem = fbuf->my_mst_info->iodb->witems[var_id];
-
+				
             if(var->ndims > 0){
 				insert_info *info = dtf_malloc(sizeof(insert_info));
 				assert(info != NULL);
@@ -764,7 +770,11 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int rank, MP
                 memcpy(info->blck->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
                 offt += var->ndims*sizeof(MPI_Offset);
                 /*add block to the database*/
-                DTF_DBG(VERBOSE_ALL_LEVEL, "Insert block for var %d", var_id);
+                //~ DTF_DBG(VERBOSE_ALL_LEVEL, "Insert block for var %d", var_id);
+               
+				//~ for(i = 0; i < var->ndims; i++)
+					//~ DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", info->blck->start[i], info->blck->count[i]);
+				
 				rb_red_blk_node *bl_node = RBTreeInsertBlock(witem->dblocks, info);
 				assert(bl_node != NULL);
 				dtf_free(info, sizeof(insert_info));
@@ -773,6 +783,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int rank, MP
                 ((block_t*)witem->dblocks)->start = NULL;
                 ((block_t*)witem->dblocks)->count = NULL;
                 ((block_t*)witem->dblocks)->rank = rank;
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Inserted scalar var");
             }
             witem->nblocks++;
         }
@@ -899,7 +910,6 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
 				break;
 			}
 			data_to_send = 1;
-			
 
 			mst = varid % nmasters;
 			bufsz[mst] += sizeof(MPI_Offset)*2 + var->ndims*2*sizeof(MPI_Offset);
@@ -974,6 +984,7 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
             MPI_Status status;
             dtf_msg_t *msg = new_dtf_msg(sbuf[mst], bufsz[mst], DTF_UNDEFINED, IO_REQS_TAG);
             DTF_DBG(VERBOSE_DBG_LEVEL, "Post send ioreqs req to mst %d (bufsz %lu (allcd %lu), comp id %d (mine %d)", mst_info->masters[mst], offt[mst], bufsz[mst], fbuf->writer_id, gl_my_comp_id);
+            assert(offt[mst] == bufsz[mst]);
             err = MPI_Isend((void*)sbuf[mst], (int)offt[mst], MPI_BYTE, mst_info->masters[mst], IO_REQS_TAG,
                             gl_comps[fbuf->writer_id].comm, &(msg->req));
             CHECK_MPI(err);
@@ -984,11 +995,13 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
     }
     
     if(idx != -1){
-		MPI_Offset offt2 = MAX_FILE_NAME ;
-        parse_ioreqs(fbuf, (unsigned char*)sbuf[idx] + offt2, (int)offt[idx] - offt2, gl_my_rank, gl_comps[gl_my_comp_id].comm);
+		assert(offt[idx] == bufsz[idx]);
+        parse_ioreqs(fbuf,sbuf[idx], offt[idx], gl_my_rank, gl_comps[gl_my_comp_id].comm);
         dtf_free(sbuf[idx], bufsz[idx]);
     } 
-
+    
+    fbuf->t_last_sent_ioreqs = MPI_Wtime();
+	fbuf->has_unsent_ioreqs = 0;
 fn_exit:
     dtf_free(sbuf, nmasters*sizeof(unsigned char*));
     dtf_free(bufsz,nmasters*sizeof(unsigned char*));
@@ -1158,13 +1171,12 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 					offt[mst] += sizeof(MPI_Offset);
 					*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)varid;
 					offt[mst] += sizeof(MPI_Offset);
-
 					memcpy(sbuf[mst]+offt[mst], ioreq->start, var->ndims*sizeof(MPI_Offset));
 					/*Adjust corresponding start coordinate*/
 					*(MPI_Offset*)(sbuf[mst]+offt[mst] + var->max_dim*sizeof(MPI_Offset)) = ioreq->start[var->max_dim] + shift;
 					strt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
 					offt[mst] += var->ndims*sizeof(MPI_Offset);
-
+					
 					memcpy(sbuf[mst]+offt[mst], ioreq->count, var->ndims*sizeof(MPI_Offset));
 					cnt = (MPI_Offset*)(sbuf[mst]+offt[mst]);
 					/*Adjust corresponding count*/
@@ -1185,14 +1197,14 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 					}
 					shift += cnt[var->max_dim];
 					offt[mst] += var->ndims*sizeof(MPI_Offset);
-
+					
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Will send info to mst %d about block (shift along %d by %lld):", mst, var->max_dim, shift);
 					for(i = 0; i < var->ndims; i++)
 						DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", strt[i], cnt[i]);
 
 				}
 				ioreq->sent_flag = 1;
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Sent %u blocks", block_cnt);
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Packed %u blocks", block_cnt);
 			}
 			ioreq = ioreq->next;
 		}
@@ -1209,7 +1221,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
             int flag;
             MPI_Status status;
             dtf_msg_t *msg = new_dtf_msg(sbuf[mst], bufsz[mst], DTF_UNDEFINED, IO_REQS_TAG);
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Post send ioreqs req to mst %d (bufsz %lu (allcd %lu), comp id %d (mine %d)", mst_info->masters[mst], offt[mst], bufsz[mst], fbuf->writer_id, gl_my_comp_id);
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Post send ioreqs req to mst %d (bufsz %lu (allcd %lu), comp id %d (mine %d)", mst_info->masters[mst], 		offt[mst], bufsz[mst], fbuf->writer_id, gl_my_comp_id);
             err = MPI_Isend((void*)sbuf[mst], (int)offt[mst], MPI_BYTE, mst_info->masters[mst], IO_REQS_TAG,
                             gl_comps[fbuf->writer_id].comm, &(msg->req));
             CHECK_MPI(err);
@@ -1222,10 +1234,13 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
     //gl_stats.t_comm += MPI_Wtime() - t_start_comm;
 
     if(idx != -1){
-		MPI_Offset offt2 = MAX_FILE_NAME ;
-        parse_ioreqs(fbuf, (unsigned char*)sbuf[idx] + offt2, (int)offt[idx] - offt2, gl_my_rank, gl_comps[gl_my_comp_id].comm);
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Parse reqs to myself: %d", (int)offt[idx] - MAX_FILE_NAME);
+        parse_ioreqs(fbuf, (unsigned char*)sbuf[idx] + MAX_FILE_NAME, offt[idx] - MAX_FILE_NAME, gl_my_rank, gl_comps[gl_my_comp_id].comm);
         dtf_free(sbuf[idx], bufsz[idx]);
     }
+    
+    fbuf->t_last_sent_ioreqs = MPI_Wtime();
+    fbuf->has_unsent_ioreqs = 0;
 
 fn_exit:
     dtf_free(sbuf, nmasters*sizeof(unsigned char*));
@@ -1233,8 +1248,78 @@ fn_exit:
     dtf_free(offt, nmasters*sizeof(unsigned char*));
 }
 
-//TODO allow sending data without synchronization but just keep this data
-//and process it later?
+void match_ioreqs_multiple()
+{
+	file_buffer_t *fbuf;
+	int compl_file_cnt = 0;
+	int file_cnt = 0;
+	double t_start = MPI_Wtime();
+	
+	/*First check for how many files need to complete transfer 
+	 * and send any unsent I/O requests*/
+	fbuf = gl_filebuf_list;
+	while(fbuf != NULL){
+		if(fbuf->is_transfering){ 
+			file_cnt++;
+			DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is in active transfer", fbuf->file_path);
+			
+			if(strstr(fbuf->file_path, "hist.d")!=NULL)
+				gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+			else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+				gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+			
+			if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
+				send_ioreqs_by_var(fbuf);
+			else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
+				send_ioreqs_by_block(fbuf);
+		}
+		fbuf = fbuf->next;
+	}
+
+	progress_comm();
+	
+	while(compl_file_cnt != file_cnt){
+		
+		fbuf = gl_filebuf_list;
+		while(fbuf != NULL){
+			if(fbuf->is_transfering && fbuf->done_matching_flag){
+				
+				compl_file_cnt++;
+				
+				/*Reset flags*/
+				if (fbuf->writer_id == gl_my_comp_id)
+					/*Reset flag for future matchings*/
+					fbuf->my_mst_info->iodb->updated_flag = 0;
+				if(fbuf->my_mst_info->my_mst == gl_my_rank)
+					fbuf->my_mst_info->nread_completed = 0;
+				fbuf->done_matching_flag = 0;
+				fbuf->is_transfering = 0;
+				
+				if(!gl_scale){
+					if(fbuf->my_mst_info->my_mst == gl_my_rank)
+						clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
+
+					delete_ioreqs(fbuf,0);
+				}
+				
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Finished transfer for %s", fbuf->file_path);
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "Time for matching for %s %.4f", fbuf->file_path, MPI_Wtime() - t_start);				
+				if(strstr(fbuf->file_path, "hist.d")!=NULL){
+					gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+					gl_stats.t_mtch_hist = MPI_Wtime() - t_start;
+				}else if(strstr(fbuf->file_path, "anal.d")!=NULL){
+					gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+					gl_stats.t_mtch_rest = MPI_Wtime() - t_start;
+				}
+
+				fbuf->cur_transfer_epoch++;
+			}
+			fbuf = fbuf->next;
+		}
+		progress_comm();
+	}
+}
+
 int match_ioreqs(file_buffer_t *fbuf)
 {
 
@@ -1255,10 +1340,6 @@ int match_ioreqs(file_buffer_t *fbuf)
 	else if(strstr(fbuf->file_path, "anal.d")!=NULL)
 		gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
 
-    //~ if(fbuf->my_mst_info->my_mst == gl_my_rank){
-        //~ //there should be no unfinished matches
-        //~ assert(fbuf->my_mst_info->nread_completed == 0);
-    //~ }
 
 	/*Check if we should do normal matching or replay a previously 
 	 * recorded I/O pattern.*/
@@ -1341,6 +1422,7 @@ int match_ioreqs(file_buffer_t *fbuf)
     if(fbuf->my_mst_info->my_mst == gl_my_rank)
 		fbuf->my_mst_info->nread_completed = 0;
 	fbuf->done_matching_flag = 0;
+	fbuf->is_transfering = 0;
 	
 	if(!gl_scale){
 		if(fbuf->my_mst_info->my_mst == gl_my_rank)
@@ -1375,32 +1457,25 @@ int match_ioreqs(file_buffer_t *fbuf)
 	//if(gl_scale)
 	DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp Stat: Time for matching %.4f", MPI_Wtime() - t_start);
 	{
-		int rank, avg=0, my;
-		MPI_Comm_rank(fbuf->comm, &rank);
+		//~ int rank, avg=0, my;
+		//~ MPI_Comm_rank(fbuf->comm, &rank);
 		
 		if(strstr(fbuf->file_path, "hist.d")!=NULL){
 			gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
 			gl_stats.t_mtch_hist = MPI_Wtime() - t_start;
-			my = gl_stats.t_mtch_hist;
+			//~ my = gl_stats.t_mtch_hist;
 		}else if(strstr(fbuf->file_path, "anal.d")!=NULL){
 			gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
 			gl_stats.t_mtch_rest = MPI_Wtime() - t_start;
-			my = gl_stats.t_mtch_rest;
+			//~ my = gl_stats.t_mtch_rest;
 		}
-		err = MPI_Reduce(&my, &avg, 1, MPI_DOUBLE, MPI_SUM, 0, fbuf->comm);
-		CHECK_MPI(err);
-		if(strstr(fbuf->file_path, "hist.d")!=NULL)
-			gl_stats.t_mtch_hist = avg;
-		else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-			gl_stats.t_mtch_rest = avg;
+		//~ err = MPI_Reduce(&my, &avg, 1, MPI_DOUBLE, MPI_SUM, 0, fbuf->comm);
+		//~ CHECK_MPI(err);
+		//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
+			//~ gl_stats.t_mtch_hist = avg;
+		//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+			//~ gl_stats.t_mtch_rest = avg;
 	}
-
-//    t_part3 = MPI_Wtime() - t_part3;
-//
-//    t_all = MPI_Wtime() - t_all;
-//
-//    DTF_DBG(VERBOSE_DBG_LEVEL, "statsss: part1: %.4f: %.4f: p2: %.4f: %.4f:prog: %.4f: %.4f: dom: %.4f: %.4f: p3: %.4f:%.4f: all: %.4f",
-//            t_part1, (t_part1/t_all)*100, t_part2, (t_part2/t_all)*100, t_progress, (t_progress/t_part2)*100, t_dom, (t_dom/t_part2)*100, t_part3, (t_part3/t_all)*100, t_all);
 
 	fbuf->cur_transfer_epoch++;
 
@@ -2004,14 +2079,8 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 	memcpy(filename, rbuf, MAX_FILE_NAME);
 	offt += MAX_FILE_NAME ;
 	fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-	if(fbuf == NULL || ( (tag == FILE_INFO_REQ_TAG) && !fbuf->is_defined)){
-		if(!is_queued){
-			DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: no record for file %s yet, queue the request to process later", filename); 
-			dtf_msg_t *msg = new_dtf_msg(rbuf, bufsz, src, tag);
-			ENQUEUE_ITEM(msg, gl_comps[comp].in_msg_q);
-		}
-		return 0;
-	}
+	if(fbuf == NULL) goto fn_exit;
+	if(!fbuf->is_defined) goto fn_exit;
 	
 	switch(tag){
 			case FILE_INFO_REQ_TAG:
@@ -2032,8 +2101,8 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					assert(fbuf->root_reader == fbuf->cpl_mst_info->masters[0]);
 				}
 				
-				DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer, process the file info request, root reader %d",
-						fbuf->cpl_mst_info->masters[0] );
+				DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer for file %s, process the file info request, root reader %d",
+						fbuf->file_path, fbuf->cpl_mst_info->masters[0] );
 			
 				if(fbuf->iomode == DTF_IO_MODE_MEMORY) 
 					send_file_info(fbuf, fbuf->root_reader);
@@ -2098,6 +2167,14 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 		}
 	dtf_free(rbuf, bufsz);	
 	return ret;
+	
+fn_exit:
+	if(!is_queued){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: no record for file %s yet, queue the request to process later", filename); 
+		dtf_msg_t *msg = new_dtf_msg(rbuf, bufsz, src, tag);
+		ENQUEUE_ITEM(msg, gl_comps[comp].in_msg_q);
+	}
+	return 0;
 }
 
 void progress_transfer()

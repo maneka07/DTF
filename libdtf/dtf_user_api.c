@@ -101,8 +101,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.t_open_rest = 0;
     gl_stats.t_mtch_hist = 0;
     gl_stats.t_mtch_rest = 0;
-    gl_stats.t_progr_transf = 0;
-    gl_stats.cnt_progr_transf = 0;
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -140,6 +138,14 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     else
         gl_conf.data_msg_size_limit = atoi(s) * 1024;
         
+    
+    s = getenv("DTF_IOREQ_FREQ");
+    if(s == NULL)
+        gl_conf.t_send_ioreqs_freq = 0.01;
+    else
+        gl_conf.t_send_ioreqs_freq = atof(s);
+        
+    assert(gl_conf.t_send_ioreqs_freq > 0);
     
 	s = getenv("DTF_IODB_RANGE");
     if(s == NULL)
@@ -314,6 +320,16 @@ _EXTERN_C_ int dtf_transfer_complete(const char *filename, int ncid)
  * */
 _EXTERN_C_ int dtf_transfer_complete_all()
 {
+	double t_start;
+	if(!lib_initialized) return 0;
+	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Start transfer_complete_all");
+	t_start = MPI_Wtime();
+	match_ioreqs_multiple();
+	gl_stats.transfer_time += MPI_Wtime() - t_start;
+	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "End transfer_complete_all");
+
 	return 0;
 }
 

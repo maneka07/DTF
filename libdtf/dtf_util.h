@@ -101,6 +101,7 @@ typedef struct dtf_config{
     MPI_Offset  iodb_range;  		  /*the size of the data block in the first dimension*/
     int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
     int         log_ioreqs;
+	double          t_send_ioreqs_freq;  /*time out upon reaching which I/O reqs must be sent*/
 }dtf_config_t;
 
 typedef struct stats{
@@ -141,8 +142,6 @@ typedef struct stats{
     double          t_open_rest;
     double          t_mtch_hist;
     double          t_mtch_rest;
-    double          t_progr_transf;
-    unsigned long   cnt_progr_transf;
 } stats_t;
 
 typedef struct dtf_msg{
@@ -242,6 +241,7 @@ dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag);
 void delete_dtf_msg(dtf_msg_t *msg);
 void print_stats();
 int inquire_root(const char *filename);
+int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
 
 void progress_send_queue();
 void progress_recv_queue();

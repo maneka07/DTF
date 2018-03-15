@@ -125,8 +125,6 @@ void print_stats()
 		else {
 			enssz = atoi(s);
 			nranks = nranks - atoi(s);
-			gl_stats.t_mtch_hist = gl_stats.t_mtch_hist/atoi(s);
-			gl_stats.t_mtch_rest = gl_stats.t_mtch_rest/atoi(s);
 			if(gl_my_rank == 0)
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF: for stats consider %d ranks out of %d", nranks, nranks + atoi(s));
 		}
@@ -231,8 +229,6 @@ void print_stats()
 		}
     
     }
-
-
 
 	if(gl_my_rank == 0)
 		rb_print_stats();
@@ -540,6 +536,8 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
     MPI_Comm_rank(comm, &rank);
     
     t_start = MPI_Wtime();
+    
+    if(fbuf->iomode == DTF_IO_MODE_FILE) fbuf->is_defined = 1;
 
     if(fbuf->reader_id == gl_my_comp_id){
         
@@ -561,7 +559,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 			}
 			MPI_Barrier(comm);
             fbuf->is_ready = 1;
-
+			
             //~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
 				//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
 			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
@@ -613,6 +611,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 			}
 
 			fbuf->is_ready = 1;
+			fbuf->is_defined = 1;
         }
         
 		fbuf->cpl_info_shared = 1;
@@ -621,7 +620,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
 		if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
 			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
-			
+		assert(fbuf->is_defined);
         /*reset all flags*/
         //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
 			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
@@ -1069,3 +1068,39 @@ void progress_recv_queue()
 		}
 	}
 }
+
+
+int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start, const MPI_Offset *count )
+{
+    dtf_var_t *var = fbuf->vars[varid];
+
+    if(var->ndims > 0){
+        int i;
+
+      /*  if(frt_indexing){
+            for(i = 0; i < var->ndims; i++)
+                if(var->shape[i] == DTF_UNLIMITED) //no boundaries for unlimited dimension
+                    continue;
+                else if(start[i] + count[i] > var->shape[var->ndims-i-1]){
+                    DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: var %d, index %llu is out of bounds (shape is %llu)", varid, start[i]+count[i], var->shape[var->ndims-i-1]);
+                    return 1;
+                }
+        } else { */
+            for(i = 0; i < var->ndims; i++)
+                if(var->shape[i] == DTF_UNLIMITED) //no boundaries for unlimited dimension
+                    continue;
+                else if(start[i] + count[i] > var->shape[i]){
+                            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: var %d, index %llu is out of bounds (shape is %llu)", varid, start[i]+count[i], var->shape[i]);
+                            return 1;
+                }
+       /* } */
+    }
+//    else {
+//        if( (start != NULL) || (count != NULL)){
+//            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: var %d is a scalar variable but trying to read an array", varid);
+//            return 1;
+//        }
+//    }
+    return 0;
+}
+
