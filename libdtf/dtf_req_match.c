@@ -919,16 +919,16 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
 
     if(fbuf->reader_id == gl_my_comp_id && nrreqs == 0){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
-		if(gl_my_rank == fbuf->root_reader){
-			dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
-			err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
-					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
-			CHECK_MPI(err);
-			ENQUEUE_ITEM(msg, gl_out_msg_q);
-		} else {
-			err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
-					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm);
-			CHECK_MPI(err);
+		
+		dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
+		err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
+				  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
+		CHECK_MPI(err);
+		err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
+		CHECK_MPI(err);
+		ENQUEUE_ITEM(msg, gl_out_msg_q);
+		
+		if(gl_my_rank != fbuf->root_reader){
 			fbuf->done_matching_flag = 1;
 		}	
     }
@@ -1074,17 +1074,17 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 	}
    if(fbuf->reader_id == gl_my_comp_id && nrreqs == 0){
 		 DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
-        
-		if(gl_my_rank == fbuf->root_reader){
-			dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
-			err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
-					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
-			CHECK_MPI(err);
-			ENQUEUE_ITEM(msg, gl_out_msg_q);
-		} else {
-			err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
-					  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm);
-			CHECK_MPI(err);
+         int flag = 0;
+		
+		dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
+		err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
+				  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
+		CHECK_MPI(err);
+		err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
+		CHECK_MPI(err);
+		ENQUEUE_ITEM(msg, gl_out_msg_q);
+		
+		if(gl_my_rank != fbuf->root_reader){
 			fbuf->done_matching_flag = 1;
 		}
 		
@@ -1966,18 +1966,19 @@ void send_file_info(file_buffer_t *fbuf, int reader_root)
 {
     void *sbuf;
     MPI_Offset sbuf_sz, err;
-
+	int flag;
+	
     DTF_DBG(VERBOSE_DBG_LEVEL, "Will send file info to reader %d", reader_root);
     pack_file_info(fbuf, &sbuf_sz, &sbuf);
     assert(sbuf_sz > 0);
     double t_start = MPI_Wtime();
-    MPI_Request req;
-    err = MPI_Isend(sbuf, (int)sbuf_sz, MPI_BYTE, reader_root, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm, &req);
+    dtf_msg_t *msg = new_dtf_msg(sbuf, sbuf_sz, DTF_UNDEFINED, FILE_INFO_TAG);
+    err = MPI_Isend(sbuf, (int)sbuf_sz, MPI_BYTE, reader_root, FILE_INFO_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
     CHECK_MPI(err);
-    err = MPI_Wait(&req, MPI_STATUS_IGNORE);
-    CHECK_MPI(err);
+    err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
+	CHECK_MPI(err);
+	ENQUEUE_ITEM(msg, gl_out_msg_q);
     gl_stats.t_comm += MPI_Wtime() - t_start;
-    dtf_free(sbuf, sbuf_sz);
 }
 
 
@@ -2140,8 +2141,12 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					
 					if(fbuf->my_mst_info->nread_completed == fbuf->my_mst_info->my_wg_sz){
 							DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root that my workgroup completed reading");
-							int err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm);
+							dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
+							int err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, READ_DONE_TAG, gl_comps[fbuf->writer_id].comm, &(msg->req));
 							CHECK_MPI(err);
+							err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
+							CHECK_MPI(err);
+							ENQUEUE_ITEM(msg, gl_out_msg_q);
 							fbuf->done_matching_flag = 1;
 							DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
 					}

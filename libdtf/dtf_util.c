@@ -498,7 +498,7 @@ int inquire_root(const char *filename)
 
 static void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
 {
-	int bufsz;
+	int bufsz, flag;
     void *buf;
     unsigned char *chbuf;
     int err;
@@ -519,9 +519,12 @@ static void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
 	memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
-	err = MPI_Send(buf, bufsz, MPI_BYTE, tgt_root, FILE_INFO_REQ_TAG, gl_comps[tgt_comp].comm);
+	dtf_msg_t *msg = new_dtf_msg(buf, bufsz, DTF_UNDEFINED, FILE_INFO_REQ_TAG);
+	err = MPI_Isend(buf, bufsz, MPI_BYTE, tgt_root, FILE_INFO_REQ_TAG, gl_comps[tgt_comp].comm, &(msg->req));
 	CHECK_MPI(err);
-	dtf_free(buf, bufsz);
+	err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
+	CHECK_MPI(err);
+	ENQUEUE_ITEM(msg, gl_out_msg_q);
 }
 
 void open_file(file_buffer_t *fbuf, MPI_Comm comm)
