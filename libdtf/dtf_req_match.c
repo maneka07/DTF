@@ -249,8 +249,8 @@ static void do_matching(file_buffer_t *fbuf)
 
     double t_st, t_idle = 0, t_start;
 
-    int n_matched_blocks = 0;{
-    if(!fbuf->my_mst_info->iodb->updated_flag) //no new info since last time matching was done, ignore
+    int n_matched_blocks = 0;
+    if(!fbuf->my_mst_info->iodb->updated_flag){ //no new info since last time matching was done, ignore
         DTF_DBG(VERBOSE_DBG_LEVEL, "1");
         return;
 	}
