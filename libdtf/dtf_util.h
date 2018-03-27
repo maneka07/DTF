@@ -112,7 +112,6 @@ typedef struct stats{
     double          t_hdr;
     double          parse_ioreq_time;
     size_t          data_msg_sz;      /*Accumulated size of messages */
-    double          transfer_time;  /*data transfer time=I/O calls+dtf_transfer */
     double          idle_time;
     double          idle_do_match_time;
     double          t_progr_comm;
@@ -133,6 +132,8 @@ typedef struct stats{
     double          user_timer_accum;
     int             nfiles;
     
+    double          transfer_time;  /*data transfer time=I/O calls+dtf_transfer */
+    double          dtf_time;       /*Total time spent inside DTF*/
     double          st_mtch_hist;
     double          end_mtch_hist;
     double          st_mtch_rest;
@@ -167,8 +168,8 @@ int mpitype2int(MPI_Datatype dtype);
 MPI_Datatype int2mpitype(int num);
 
 /*GLOBAL VARIABLES*/
-extern struct file_buffer* gl_filebuf_list;        /*List of all file buffers*/
-extern struct fname_pattern *gl_fname_ptrns;    /*Patterns for file name*/
+extern file_buffer_t* 	gl_filebuf_list;        /*List of all file buffers*/
+extern struct fname_pattern*	gl_fname_ptrns;    /*Patterns for file name*/
 extern struct component *gl_comps;                 /*List of components*/
 extern int gl_my_comp_id;                          /*Id of this compoinent*/
 extern int gl_ncomp;                               /*Number of components*/
@@ -184,32 +185,22 @@ extern dtf_msg_t *gl_out_msg_q;		//Queue of outgoing messages (pending requests)
 extern file_info_t *gl_finfo_list;
 char _buff[1024];
 
-
 char error_string[1024];
 
 
 /*FUNCTIONS*/
-void notify_file_ready(file_buffer_t *fbuf);
-void close_file(file_buffer_t *fbuf);
-void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header);
-MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
-int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
-void open_file(file_buffer_t *fbuf, MPI_Comm comm);
-MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord);
-void* dtf_malloc(size_t size);
-void dtf_free(void *ptr, size_t size);
-void find_fit_block(int ndims,
-		    int cur_dim,
-		    const MPI_Offset *start,
-		    const MPI_Offset *count,
-		    MPI_Offset *cur_start,
-		    MPI_Offset *cur_count,
-		    const size_t sbufsz,
-		    const size_t el_sz,
-		    MPI_Offset *cur_nelems,
-		    MPI_Offset tot_nelems);
-
-void get_put_data(dtf_var_t *var,
+void 		notify_file_ready(file_buffer_t *fbuf);
+void 		send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp);
+void* 		dtf_malloc(size_t size);
+void  		dtf_free(void *ptr, size_t size);
+void  		convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstbuf, int nelems);
+double 		compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype);
+dtf_msg_t*	new_dtf_msg(void *buf, size_t bufsz, int src, int tag);
+void 		print_stats();
+int 		inquire_root(const char *filename);
+MPI_Offset 	to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord);
+int 		boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
+void 		get_put_data(dtf_var_t *var,
                   MPI_Datatype dtype,
                   unsigned char *block_data,
                   const MPI_Offset *block_start,
@@ -219,30 +210,6 @@ void get_put_data(dtf_var_t *var,
                   unsigned char *subbl_data,
                   int get_put_flag,
                   int convert_flag);
-
-void recur_get_put_data(dtf_var_t *var,
-                          MPI_Datatype dtype,
-                          unsigned char *block_data,
-                          const MPI_Offset *block_start,
-                          const MPI_Offset *block_count,
-                          const MPI_Offset subbl_start[],
-                          const MPI_Offset subbl_count[],
-                          int dim,
-                          MPI_Offset coord[],
-                          unsigned char *subbl_data,
-                          int get_put_flag,
-                          int convert_flag);
-void shift_coord(int ndims, const MPI_Offset *bl_start,
-                 const MPI_Offset *bl_count, MPI_Offset *subbl_start,
-                 MPI_Offset *subbl_count, MPI_Offset fit_nelems);
-void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstbuf, int nelems);
-double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype);
-dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag);
-void delete_dtf_msg(dtf_msg_t *msg);
-void print_stats();
-int inquire_root(const char *filename);
-int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
-
 void progress_send_queue();
 void progress_recv_queue();
 

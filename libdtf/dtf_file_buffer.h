@@ -3,6 +3,7 @@
 
 #include <mpi.h>
 #include "rb_red_black_tree.h"
+#include "dtf_var.h"
 
 //#include "dtf_req_match.h"
 
@@ -18,28 +19,49 @@
 #define RDR_NOTIF_POSTED   2
 #define RDR_NOTIFIED       3
 
+/*Structures related to I/O database that stores read and
+ * writ I/O requests*/
+typedef struct write_db_item{
+    int                    ndims;
+    void                   *dblocks; /*rb_red_blk_tree for ndims>0, block_t for ndims=0*/
+    MPI_Offset             nblocks;
+}write_db_item_t;
+
+typedef struct read_dblock{
+    int                     var_id;
+    int                     ndims;
+    MPI_Offset              *start;
+    MPI_Offset              *count;
+    struct read_dblock   *next;
+    struct read_dblock   *prev;
+}read_dblock_t;
+
+typedef struct read_db_item{
+    int                     rank;
+    read_dblock_t           *dblocks;
+    read_dblock_t           *last_block;
+    MPI_Offset              nblocks;
+    struct read_db_item     *next;
+    struct read_db_item     *prev;
+}read_db_item_t;
+
+typedef struct ioreq_db{
+    int                  updated_flag;
+    MPI_Offset           nritems;
+
+    struct write_db_item **witems;
+    struct read_db_item  *ritems;
+}ioreq_db_t;
 
 typedef struct master_info{
-    unsigned int         nread_completed;   /*Number of work groups that completed reading file*/
-    struct ioreq_db      *iodb;
-    int my_mst;     /*My master rank*/
-    int nmasters;   /*Number of master nodes that hold data for request matching*/
-    int *masters;   /*Ranks of master nodes on the writer's side*/
-    unsigned int my_wg_sz;
-    int *my_wg;
+    unsigned int        	nread_completed;   /*Number of work groups that completed reading file*/
+    struct ioreq_db     	*iodb;
+    int 					my_mst;     /*My master rank*/
+    int 					nmasters;   /*Number of master nodes that hold data for request matching*/
+    int 					*masters;   /*Ranks of master nodes on the writer's side*/
+    unsigned int 			my_wg_sz;
+    int 					*my_wg;
 } master_info_t;
-
-typedef struct dtf_var{
-    int                     id;         /* varid assigned by pnetcdf*/
-    MPI_Datatype            dtype;      /*Datatype of the variable*/
-    MPI_Offset              *shape;     /* dim->size of each dim */
-    int                     ndims;      /* number of dimensions */
-    struct io_req           *ioreqs;           /*Read or write I/O requests*/
-    int                     max_dim;    /*Along what dimension the variable is broken into subblocks?
-                                          Each master is responsible for metadata of a predefined subblock.
-                                          */
-    double                  checksum;   /*to check if what was written to the var is what was read*/
- }dtf_var_t;
 
 
 typedef struct file_buffer{
@@ -101,23 +123,20 @@ typedef struct fname_pattern{
     struct fname_pattern *next;
 }fname_pattern_t;
 
-file_buffer_t*		create_file_buffer(fname_pattern_t *pat, const char* file_path);
+file_buffer_t*		create_file_buffer(fname_pattern_t *pat, const char* file_path, MPI_Comm comm);
 void 				delete_file_buffer(file_buffer_t* buf);
 file_buffer_t* 		find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid);
+void 				finalize_files();
+void 				clean_iodb(ioreq_db_t *iodb, int nvars);
+void 				open_file(file_buffer_t *fbuf, MPI_Comm comm);
+void 				close_file(file_buffer_t *fbuf);
+void 				write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header);
+MPI_Offset 			read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
+void 				pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf);
 
 fname_pattern_t*	new_fname_pattern();
 fname_pattern_t*	find_fname_pattern(const char *filename);
 
-dtf_var_t* 			new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
-void 				add_var(file_buffer_t *fbuf, dtf_var_t *var);
-MPI_Offset 			read_write_var(file_buffer_t *fbuf,
-								   int varid,
-								   const MPI_Offset *start,
-								   const MPI_Offset *count,
-								   const MPI_Offset *stride,
-								   const MPI_Offset *imap,
-								   MPI_Datatype dtype,
-								   void *buf,
-								   int rw_flag);
+
 
 #endif

@@ -11,29 +11,31 @@
 #include <unistd.h>
 
 #include "dtf.h"
-#include "dtf_init_finalize.h"
+#include "dtf_config.h"
 #include "dtf_util.h"
-#include "dtf_nbuf_io.h"
+#include "dtf_file_buffer.h"
 #include "dtf_req_match.h"
+#include "dtf_component.h"
+#include "dtf_config.h"
 
 int lib_initialized=0;
 
-file_info_req_q_t *gl_finfo_req_q = NULL;
-file_info_t *gl_finfo_list = NULL;
-dtf_msg_t *gl_out_msg_q = NULL;
+file_info_req_q_t*	gl_finfo_req_q 	= NULL;
+file_info_t*		gl_finfo_list 	= NULL;
+dtf_msg_t*			gl_out_msg_q 	= NULL;
+file_buffer_t*		gl_filebuf_list = NULL;			/*List of all file buffers*/
+fname_pattern_t* 	gl_fname_ptrns 	= NULL;    		/*Patterns for file name*/
+component_t* 		gl_comps 		= NULL;         /*List of components*/
+int gl_my_comp_id = -1;                          	/*Id of this compoinent*/
+int gl_ncomp = 0;                               	/*Number of components*/
+int gl_verbose = 0;                         		/*For debug messages*/
+int gl_scale = 0;
+int gl_my_rank;
+struct dtf_config 	gl_conf;                 		/*DTF settings*/
+struct stats 		gl_stats;
+char*	gl_my_comp_name = NULL;
+void* 	gl_msg_buf = NULL;
 
-struct file_buffer* gl_filebuf_list = NULL;        /*List of all file buffers*/
-struct fname_pattern *gl_fname_ptrns = NULL;    /*Patterns for file name*/
-struct component *gl_comps = NULL;                 /*List of components*/
-int gl_my_comp_id;                          /*Id of this compoinent*/
-int gl_ncomp;                               /*Number of components*/
-int gl_verbose;
-int gl_my_rank;                         /*For debug messages*/
-int gl_scale;
-struct dtf_config gl_conf;                 /*Framework settings*/
-struct stats gl_stats;
-char *gl_my_comp_name = NULL;
-void* gl_msg_buf = NULL;
 
 /**
   @brief	Function to initialize the library. Should be called from inside
@@ -50,7 +52,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     int err, mpi_initialized;
     char* s;
     int verbose;
-
+    double t_start;
+    
     if(lib_initialized)
         return 0;
 
@@ -62,6 +65,9 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         fflush(stderr);
         exit(1);
     }
+    
+    t_start = MPI_Wtime();
+    
     MPI_Comm_rank(MPI_COMM_WORLD, &gl_my_rank);
 
     if(strlen(module_name)>MAX_COMP_NAME){
@@ -101,6 +107,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.t_open_rest = 0;
     gl_stats.t_mtch_hist = 0;
     gl_stats.t_mtch_rest = 0;
+	gl_stats.dtf_time = 0;
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     assert(gl_my_comp_name != NULL);
@@ -178,6 +185,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_verbose = verbose;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "DTF: Finished initializing");
+	DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time init %.3f",  MPI_Wtime() - t_start);
 
     return 0;
 
@@ -232,14 +240,14 @@ _EXTERN_C_ int dtf_finalize()
 	}
 		
     finalize_files();
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "1");
+   
     
     if(gl_out_msg_q != NULL)
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "Finalize message queue");
 	
     while(gl_out_msg_q != NULL)
 		progress_send_queue();
- DTF_DBG(VERBOSE_ERROR_LEVEL, "1");
+
     assert(gl_finfo_req_q == NULL);
    
 	finfo = gl_finfo_list;
@@ -254,7 +262,6 @@ _EXTERN_C_ int dtf_finalize()
     //destroy inrracomp communicator
     err = MPI_Comm_free(&gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
- DTF_DBG(VERBOSE_ERROR_LEVEL, "1");
 
     clean_config();
 
@@ -277,7 +284,9 @@ _EXTERN_C_ int dtf_finalize()
 
 _EXTERN_C_ int dtf_transfer_v2(const char *filename, int ncid, int it )
 {
+	if(!lib_initialized) return 0;
 	char *s = getenv("DTF_IGNORE_ITER");
+	
 	if(it < 0)
 		return dtf_transfer(filename, ncid);
 		
@@ -327,9 +336,9 @@ _EXTERN_C_ int dtf_transfer_complete_all()
 	t_start = MPI_Wtime();
 	match_ioreqs_multiple();
 	gl_stats.transfer_time += MPI_Wtime() - t_start;
-	
+	gl_stats.dtf_time += MPI_Wtime() - t_start;
 	DTF_DBG(VERBOSE_DBG_LEVEL, "End transfer_complete_all");
-
+	DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time complall %.3f",  MPI_Wtime() - t_start);
 	return 0;
 }
 
@@ -399,12 +408,11 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
 	}
 	 
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-
-    dtf_tstart();
     match_ioreqs(fbuf);
-    dtf_tend();
     
     gl_stats.transfer_time += MPI_Wtime() - t_start;
+    gl_stats.dtf_time += MPI_Wtime() - t_start;
+     DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer %.3f",  MPI_Wtime() - t_start);
     return 0;
 }
 
@@ -425,6 +433,7 @@ _EXTERN_C_ void dtf_time_start()
     
     
 }
+
 _EXTERN_C_ void dtf_time_end()
 {
     double tt;

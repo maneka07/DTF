@@ -19,23 +19,66 @@
 extern file_info_req_q_t *gl_finfo_req_q;
 extern dtf_msg_t *gl_out_msg_q;
 
-MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord)
+/*only support conversion double<->float*/
+static void recur_get_put_data(dtf_var_t *var,
+                          MPI_Datatype dtype,
+                          unsigned char *block_data,
+                          const MPI_Offset *block_start,
+                          const MPI_Offset *block_count,
+                          const MPI_Offset subbl_start[],
+                          const MPI_Offset subbl_count[],
+                          int dim,
+                          MPI_Offset coord[],
+                          unsigned char *subbl_data,
+                          int get_put_flag,
+                          int convert_flag)
 {
-      int i, j;
-      MPI_Offset idx = 0, mem=0;
+    int i;
+    //~ DTF_DBG(VERBOSE_DBG_LEVEL, "recur getput block:");
+    //~ for(i = 0; i < var->ndims; i++)
+		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "bl: %lld -> %lld, subbl: %lld -> %lld", block_start[i], block_count[i], subbl_start[i], subbl_count[i]);
 
-      if(ndims == 0) //scalar
-        return 0;
-      else if(ndims == 1) //1d array
-        return *coord - *block_start;
+    if(dim == var->ndims - 1){
+        int bl_type_sz, subbl_type_sz;
+        MPI_Type_size(dtype, &bl_type_sz);
+        MPI_Type_size(var->dtype, &subbl_type_sz);
+        MPI_Offset block_offt = to_1d_index(var->ndims, block_start, block_count, coord)*bl_type_sz;
+        MPI_Offset subbl_offt = to_1d_index(var->ndims, subbl_start, subbl_count, coord)*subbl_type_sz;
+        MPI_Offset nelems = subbl_count[var->ndims-1];
+        //MPI_Offset data_sz = subbl_count[var->ndims-1]*subbl_type_sz;    //data_sz
 
-      for(i = 0; i < ndims; i++){
-        mem = coord[i] - block_start[i];
-        for(j = i+1; j < ndims; j++)
-          mem *= block_count[j];
-        idx += mem;
-      }
-    return idx;
+        if(get_put_flag == DTF_READ){
+            if(convert_flag){
+                convertcpy(dtype, var->dtype, (void*)(block_data+block_offt), (void*)(subbl_data+subbl_offt), (int)nelems);
+//                for(i = 0; i < subbl_count[var->ndims-1]; i++)
+//                    ((float*)(subbl_data+subbl_offt))[i] = (float)((double*)(block_data+block_offt))[i];
+            } else
+                /*copy data block -> subblock*/
+                memcpy(subbl_data+subbl_offt, block_data+block_offt, nelems*subbl_type_sz);
+        } else { /*DTF_WRITE*/
+           /*copy data subblock -> block*/
+            if(convert_flag)
+                convertcpy(var->dtype, dtype, (void*)(subbl_data+subbl_offt),(void*)(block_data+block_offt), nelems);
+            else
+                memcpy(block_data+block_offt, subbl_data+subbl_offt, nelems*subbl_type_sz);
+        }
+        return;
+    }
+
+    for(i = 0; i < subbl_count[dim]; i++){
+        coord[dim] = subbl_start[dim] + i;
+        recur_get_put_data(var, dtype, block_data, block_start, block_count,
+                           subbl_start, subbl_count, dim+1, coord, subbl_data,
+                           get_put_flag, convert_flag);
+    }
+}
+
+
+static void delete_dtf_msg(dtf_msg_t *msg)
+{
+    if(msg->bufsz > 0)
+        dtf_free(msg->buf, msg->bufsz);
+    dtf_free(msg, sizeof(msg));
 }
 
 void notify_file_ready(file_buffer_t *fbuf)
@@ -94,19 +137,29 @@ void print_stats()
     walltime = MPI_Wtime() - gl_stats.walltime;
     MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &nranks);
 
-      if(gl_stats.accum_dbuff_sz > 0){
+    if(gl_stats.accum_dbuff_sz > 0){
     //    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering time: %.5f: %.4f", gl_stats.accum_dbuff_time,(gl_stats.accum_dbuff_time/gl_stats.timer_accum)*100);
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: buffering size: %lu",  gl_stats.accum_dbuff_sz);
     }
 
-
     if(gl_stats.timer_accum > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: library-measured I/O time: %.4f", gl_stats.timer_accum);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: pnetcdf I/O time: %.4f", gl_stats.timer_accum);
 	if(gl_stats.user_timer_accum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: user-measured I/O time: %.4f", gl_stats.user_timer_accum);
 
 	if(gl_stats.transfer_time > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: transfer time: %.4f", gl_stats.transfer_time);
+        
+    if(gl_stats.dtf_time > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: total dtf time: %.4f", gl_stats.dtf_time);
+
+	err = MPI_Reduce(&walltime, &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg walltime: %.4f", dblsum/nranks);
+
+	if(gl_my_rank == 0)
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: my progr time: %.4f", gl_stats.t_progr_comm);
 
     /*In scale-letkf the last ranks write mean files not treated by dtf, we don't need
       stats for that*/
@@ -149,6 +202,8 @@ void print_stats()
             gl_stats.end_mtch_rest=0;
             gl_stats.t_open_hist = 0;
             gl_stats.t_open_rest = 0;
+            gl_stats.dtf_time = 0;
+            gl_stats.transfer_time = 0;
         }
 
 		dev = 0;
@@ -239,18 +294,13 @@ void print_stats()
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: parse time %.4f (%.3f%%)", gl_stats.parse_ioreq_time, gl_stats.parse_ioreq_time/gl_stats.timer_accum*100);
 	}
 
-    err = MPI_Reduce(&walltime, &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
-    CHECK_MPI(err);
-    if(gl_my_rank == 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg walltime: %.4f", dblsum/nranks);
-
     err = MPI_Allreduce(&(gl_stats.timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     avglibt = dblsum/nranks;
     dev = stand_devi(gl_stats.timer_accum, dblsum, nranks);
 
     if(gl_my_rank==0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg total pnetcdf time: %.5f : %.5f", avglibt, dev);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg pnetcdf time: %.5f : %.5f", avglibt, dev);
 
     err = MPI_Allreduce(&(gl_stats.user_timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
@@ -259,17 +309,24 @@ void print_stats()
     if(gl_my_rank==0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg user timer time: %.5f : %.4f", avglibt, dev);
 
+
+    err = MPI_Reduce(&(gl_stats.dtf_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg dtf time: %.4f: (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
+
+
     err = MPI_Reduce(&(gl_stats.transfer_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank == 0 && dblsum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg transfer time: %.4f: (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
 
-	dblint_in.dbl = gl_stats.transfer_time;
+	dblint_in.dbl = gl_stats.dtf_time;
     dblint_in.intg = gl_my_rank;
     err = MPI_Reduce(&dblint_in, &dblint_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank == 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max transfer: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max dtf time: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
 
 
     //dblint_in.dbl = walltime;
@@ -279,12 +336,12 @@ void print_stats()
     //if(gl_my_rank == 0)
         //DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max walltime: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
 
-    dblint_in.dbl = gl_stats.timer_accum;
-    dblint_in.intg = gl_my_rank;
-    err = MPI_Reduce(&dblint_in, &dblint_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
-    CHECK_MPI(err);
-    if(gl_my_rank == 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max libtime: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
+    //~ dblint_in.dbl = gl_stats.timer_accum;
+    //~ dblint_in.intg = gl_my_rank;
+    //~ err = MPI_Reduce(&dblint_in, &dblint_out, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, gl_comps[gl_my_comp_id].comm);
+    //~ CHECK_MPI(err);
+    //~ if(gl_my_rank == 0)
+        //~ DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max libtime: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
 
     {
 		char *s=getenv("MAX_WORKGROUP_SIZE");
@@ -317,12 +374,11 @@ void print_stats()
         //DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg idle time: %.4f (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
 
 
-    //err = MPI_Reduce(&(gl_stats.t_progr_comm), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
-    //CHECK_MPI(err);
-    //if(gl_my_rank == 0 && dblsum > 0)
-        //DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg progr time: %.4f (%.4f%%)", dblsum/nranks,  (dblsum/nranks)/avglibt*100);
-	if(gl_my_rank == 0)
-		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: my progr time: %.4f (%.3f%%)", gl_stats.t_progr_comm, gl_stats.t_progr_comm/gl_stats.timer_accum*100);
+	err = MPI_Reduce(&(gl_stats.t_progr_comm), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
+    CHECK_MPI(err);
+    if(gl_my_rank == 0 && dblsum > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg progr time: %.4f", dblsum/nranks);
+	
     err = MPI_Reduce(&(gl_stats.t_rw_var), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
     if(gl_my_rank == 0 && dblsum > 0)
@@ -385,74 +441,6 @@ void print_stats()
 
 }
 
-
-void close_file(file_buffer_t *fbuf)
-{
-    if(fbuf->writer_id == gl_my_comp_id){
-
-		fbuf->is_ready = 1;
-
-        if(fbuf->iomode == DTF_IO_MODE_FILE) {
-			
-			//Check for any incoming messages
-			progress_comm();
-            if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
-				assert(fbuf->root_writer == gl_my_rank);
-				while(fbuf->root_reader == -1)
-					progress_comm();
-				notify_file_ready(fbuf);
-			}
-			
-			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-				//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-				//~ gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-
-			//~ char *s = getenv("DTF_SCALE");
-			//~ if(s != NULL)
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp close file %s", fbuf->file_path);
-
-        } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-
-			
-			 //~ if(!gl_scale){ 
-				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
-				//~ delete_ioreqs(fbuf, 1);
-			//~ }
-
-        }
-       
-    } else if (fbuf->reader_id == gl_my_comp_id){
-            assert(fbuf->rreq_cnt == 0);
-            assert(fbuf->wreq_cnt == 0);
-
-            //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
-				//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-					//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-				//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-					//~ gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-				//~ char *s = getenv("DTF_SCALE");
-				//~ if(s != NULL)
-					//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp close file %s", fbuf->file_path);
-
-			//~ }
-
-    }
-
-    if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-
-        if(fbuf->my_mst_info->iodb != NULL)
-			clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
-        
-		delete_ioreqs(fbuf,1); 
-    }
-    
-    fbuf->is_ready = 0;  //reset flag
-
-    //delete_file_buffer(fbuf);
-}
-
-
 int inquire_root(const char *filename)
 {
 	int i;
@@ -496,7 +484,7 @@ int inquire_root(const char *filename)
 	return root_writer;
 }
 
-static void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
+void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
 {
 	int bufsz, flag;
     void *buf;
@@ -527,257 +515,10 @@ static void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
 	ENQUEUE_ITEM(msg, gl_out_msg_q);
 }
 
-void open_file(file_buffer_t *fbuf, MPI_Comm comm)
-{
-    DTF_DBG(VERBOSE_DBG_LEVEL,   "Enter dtf_open %s", fbuf->file_path);
-
-    MPI_Status status;
-    int rank; //, notif_open=1;
-    int err;
-	double t_start;
-	
-    MPI_Comm_rank(comm, &rank);
-    
-    t_start = MPI_Wtime();
-    
-    if(fbuf->iomode == DTF_IO_MODE_FILE) fbuf->is_defined = 1;
-
-    if(fbuf->reader_id == gl_my_comp_id){
-        
-        if(fbuf->iomode == DTF_IO_MODE_FILE){
-			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp open file %s", fbuf->file_path);
-
-			if(rank == 0){
-				if(fbuf->root_writer == -1){
-					fbuf->root_writer = inquire_root(fbuf->file_path);
-					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
-				}
-				
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Waiting for file to become ready");
-				/*root reader rank will wait until writer finishes writing the file.
-				 then it will broadcast that the file is ready to everyone else*/
-
-				while(!fbuf->is_ready)
-					progress_comm();
-			}
-			MPI_Barrier(comm);
-            fbuf->is_ready = 1;
-			
-            //~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-				//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-				//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-			
-			
-			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp file ready %s", fbuf->file_path);
-
-        } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-			void *buf;
-			int bufsz;	
-
-            if(fbuf->header == NULL){
-				/*Zero rank will inquire the pnetcdf header/dtf vars info/masters info
-				from writer's global zero rank and then broadcast this info to other
-				readers that opened the file*/
-				if(rank == 0){
-					if(fbuf->root_writer == -1)
-						fbuf->root_writer = inquire_root(fbuf->file_path);					
-
-					
-					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
-					
-					DTF_DBG(VERBOSE_DBG_LEVEL, "Starting to wait for file info for %s", fbuf->file_path);
-					err = MPI_Probe(fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
-					CHECK_MPI(err);
-					MPI_Get_count(&status, MPI_BYTE, &bufsz);
-
-					buf = dtf_malloc(bufsz);
-					assert(buf != NULL);
-					err = MPI_Recv(buf, bufsz, MPI_BYTE, fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
-					CHECK_MPI(err);
-				}
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Bcast file info to others");
-				err = MPI_Bcast(&bufsz, 1, MPI_INT, 0, comm);
-				CHECK_MPI(err);
-				assert(bufsz > 0);
-
-				if(rank != 0){
-					buf = dtf_malloc(bufsz);
-					assert(buf != NULL);
-				}
-				err = MPI_Bcast(buf, bufsz, MPI_BYTE, 0, comm);
-				CHECK_MPI(err);
-
-				unpack_file_info(bufsz, buf);
-				dtf_free(buf, bufsz);
-				
-			}
-
-			fbuf->is_ready = 1;
-			fbuf->is_defined = 1;
-        }
-        
-		fbuf->cpl_info_shared = 1;
-    
-    } else if(fbuf->writer_id == gl_my_comp_id){
-
-		if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
-			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
-		assert(fbuf->is_defined);
-        /*reset all flags*/
-        //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
-			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-				//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-				//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-			//~ char *s = getenv("DTF_SCALE");
-			//~ if(s != NULL)
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp open file %s", fbuf->file_path);
-
-		//~ }
-    }
-
-	if(strstr(fbuf->file_path, "hist.d")!=NULL)
-		gl_stats.t_open_hist = MPI_Wtime()-gl_stats.walltime;
-	else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-		gl_stats.t_open_rest = MPI_Wtime()-gl_stats.walltime;
- 
-    DTF_DBG(VERBOSE_DBG_LEVEL,   "Exit dtf_open %s", fbuf->file_path);
-}
-
-int def_var(file_buffer_t *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
-{
-    int el_sz;
-    int i;
-    dtf_var_t *var = new_var(varid, ndims, dtype, shape);
-    add_var(fbuf, var);
-    MPI_Type_size(dtype, &el_sz);
-
-    DTF_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d, el_sz %d. shape:", varid, ndims, el_sz);
-    for(i = 0; i < ndims; i++)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "\t%lld", shape[i]);
-
-    return 0;
-}
-
-/*Write pnetcdf header*/
-void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header)
-{
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Writing header (sz %d)", (int)hdr_sz);
-    fbuf->hdr_sz = hdr_sz;
-    fbuf->header = dtf_malloc(hdr_sz);
-    assert(fbuf->header != NULL);
-    memcpy(fbuf->header, header, (size_t)hdr_sz);
-    return;
-}
-
-/*Read pnetcdf header*/
-MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
-{
-    if(offset+chunk_sz > fbuf->hdr_sz){
-        DTF_DBG(VERBOSE_ALL_LEVEL, "Warning: trying to read %llu at offt %llu but hdr sz is %llu", chunk_sz, offset, fbuf->hdr_sz);
-        chunk_sz = fbuf->hdr_sz - offset;
-    }
-
-    memcpy(chunk, (unsigned char*)fbuf->header+offset, (size_t)chunk_sz);
-    return chunk_sz;
-}
-
-/*Find the biggest subblock of data that can fit into given buffer size sbufsz
-  [INOUT] cur_count - the subblock that fits
-  [INOUT] cur_nelems - how many elements managed to fit. Zero means didn't fit anything.
-  [IN] the rest
-*/
-void find_fit_block(int ndims,
-		    int cur_dim,
-		    const MPI_Offset *start,
-		    const MPI_Offset *count,
-		    MPI_Offset *cur_start,
-		    MPI_Offset *cur_count,
-		    const size_t sbufsz,
-		    const size_t el_sz,
-		    MPI_Offset *cur_nelems,
-		    MPI_Offset tot_nelems)
-{
-  int i;
-
-  if(*cur_nelems == tot_nelems)
-    return;
-  if(sbufsz == 0)
-    return;
-
-  /*Compute if current subblock can fit*/
-  MPI_Offset full_subbl = 1;
-  for(i = 0; i < ndims; i++)
-    if(i != cur_dim)
-      full_subbl *= cur_count[i];
-
-  DTF_DBG(VERBOSE_DBG_LEVEL, "full subblock %lld, cur dim %d, ndims %d", full_subbl, cur_dim, ndims);
-
-  for(i = count[cur_dim] - (cur_start[cur_dim] - start[cur_dim]); i > 0; i--){
-    //DTF_DBG(VERBOSE_DBG_LEVEL, "left %lld, right %lld", full_subbl * i * el_sz, (MPI_Offset)sbufsz);
-    if(full_subbl * i * el_sz <= (MPI_Offset)sbufsz)
-      break;
-  }
-
-  cur_count[cur_dim] = i;
-  assert(cur_count[cur_dim] > 0);
-
-  *cur_nelems = 1;
-  for(i = 0; i < ndims; i++){
-    *cur_nelems *= cur_count[i];
-  }
-
-  if(cur_count[cur_dim] == count[cur_dim]){
-    if(cur_dim == 0){
-      assert(*cur_nelems == tot_nelems);
-      return;
-    } else {
-      DTF_DBG(VERBOSE_DBG_LEVEL, "Go higher. Cur nelems %lld. Cur count:", *cur_nelems);
-      for(i=0; i < ndims; i++)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "  %lld", cur_count[i]);
-      /*Go higher one dimension*/
-      find_fit_block(ndims, cur_dim - 1, start, count, cur_start, cur_count, sbufsz, el_sz, cur_nelems, tot_nelems);
-    }
-  }
-}
-
-void shift_coord(int ndims, const MPI_Offset *bl_start,
-                 const MPI_Offset *bl_count, MPI_Offset *subbl_start,
-                 MPI_Offset *subbl_count, MPI_Offset fit_nelems)
-{
-    int i;
-
-    /*Shift the start position*/
-    if(fit_nelems == 1){ //special case
-      subbl_start[ndims-1]++;
-    } else {
-        for(i = 0; i < ndims; i++)
-            if(subbl_count[i] > 1)
-                  subbl_start[i] += subbl_count[i];
-    }
-    DTF_DBG(VERBOSE_ALL_LEVEL, "New start before adjustment:");
-    for(i = 0; i < ndims; i++)
-        DTF_DBG(VERBOSE_ALL_LEVEL, "\t %lld", subbl_start[i]);
-
-    for(i = ndims - 1; i > 0; i--)
-        if(subbl_start[i] == bl_start[i] + bl_count[i]){
-            subbl_start[i] = bl_start[i];
-            if( (subbl_start[i-1] != bl_start[i-1] + bl_count[i-1]) && (subbl_count[i-1] == 1)){
-                subbl_start[i-1]++;
-            }
-        } else
-            break;
-
-    DTF_DBG(VERBOSE_ALL_LEVEL, "New start after adjustment:");
-    for(i = 0; i < ndims; i++)
-        DTF_DBG(VERBOSE_ALL_LEVEL, "\t %lld", subbl_start[i]);
 
 
-//    DTF_DBG(VERBOSE_DBG_LEVEL, "Copied subblock. Shift start:");
-//    for(i = 0; i < var->ndims; i++)
-//        DTF_DBG(VERBOSE_DBG_LEVEL, "   %lld\t -->\t %lld", bl_start[i], subbl_start[i]);
-}
+
+
 
 double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype)
 {
@@ -810,110 +551,6 @@ double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datat
     return sum;
 }
 
-/*only support conversion double<->float*/
-void get_put_data(dtf_var_t *var,
-                  MPI_Datatype dtype,
-                  unsigned char *block_data,
-                  const MPI_Offset *block_start,
-                  const MPI_Offset *block_count,
-                  const MPI_Offset subbl_start[],
-                  const MPI_Offset subbl_count[],
-                  unsigned char *subbl_data,
-                  int get_put_flag,
-                  int convert_flag)
-{
-    int i;
-    MPI_Offset *cur_coord;
-    int nelems;
-
-    if(var->ndims == 0){
-        nelems = 1;
-        int el_sz;
-        MPI_Type_size(var->dtype, &el_sz);
-
-        if(get_put_flag == DTF_READ){
-            if(convert_flag)
-                convertcpy(dtype, var->dtype, (void*)block_data, (void*)subbl_data, nelems);
-            else
-                memcpy(subbl_data, block_data, el_sz);
-
-        } else { /*DTF_WRITE*/
-           /*copy data subblock -> block*/
-            if(convert_flag)
-                convertcpy(var->dtype, dtype, (void*)subbl_data,(void*)block_data, nelems);
-            else
-                memcpy(block_data, subbl_data, el_sz);
-        }
-        gl_stats.ngetputcall++;
-        return;
-    }
-
-    cur_coord = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-    for(i = 0; i < var->ndims; i++){
-        cur_coord[i] = subbl_start[i];
-    }
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Call getput data");
-    /*read from user buffer to send buffer*/
-    recur_get_put_data(var, dtype, block_data, block_start,
-                       block_count, subbl_start, subbl_count, 0,
-                       cur_coord, subbl_data, get_put_flag, convert_flag);
-    dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
-    gl_stats.ngetputcall++;
-}
-
-/*only support conversion double<->float*/
-void recur_get_put_data(dtf_var_t *var,
-                          MPI_Datatype dtype,
-                          unsigned char *block_data,
-                          const MPI_Offset *block_start,
-                          const MPI_Offset *block_count,
-                          const MPI_Offset subbl_start[],
-                          const MPI_Offset subbl_count[],
-                          int dim,
-                          MPI_Offset coord[],
-                          unsigned char *subbl_data,
-                          int get_put_flag,
-                          int convert_flag)
-{
-    int i;
-    //~ DTF_DBG(VERBOSE_DBG_LEVEL, "recur getput block:");
-    //~ for(i = 0; i < var->ndims; i++)
-		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "bl: %lld -> %lld, subbl: %lld -> %lld", block_start[i], block_count[i], subbl_start[i], subbl_count[i]);
-
-    if(dim == var->ndims - 1){
-        int bl_type_sz, subbl_type_sz;
-        MPI_Type_size(dtype, &bl_type_sz);
-        MPI_Type_size(var->dtype, &subbl_type_sz);
-        MPI_Offset block_offt = to_1d_index(var->ndims, block_start, block_count, coord)*bl_type_sz;
-        MPI_Offset subbl_offt = to_1d_index(var->ndims, subbl_start, subbl_count, coord)*subbl_type_sz;
-        MPI_Offset nelems = subbl_count[var->ndims-1];
-        //MPI_Offset data_sz = subbl_count[var->ndims-1]*subbl_type_sz;    //data_sz
-
-        if(get_put_flag == DTF_READ){
-            if(convert_flag){
-                convertcpy(dtype, var->dtype, (void*)(block_data+block_offt), (void*)(subbl_data+subbl_offt), (int)nelems);
-//                for(i = 0; i < subbl_count[var->ndims-1]; i++)
-//                    ((float*)(subbl_data+subbl_offt))[i] = (float)((double*)(block_data+block_offt))[i];
-            } else
-                /*copy data block -> subblock*/
-                memcpy(subbl_data+subbl_offt, block_data+block_offt, nelems*subbl_type_sz);
-        } else { /*DTF_WRITE*/
-           /*copy data subblock -> block*/
-            if(convert_flag)
-                convertcpy(var->dtype, dtype, (void*)(subbl_data+subbl_offt),(void*)(block_data+block_offt), nelems);
-            else
-                memcpy(block_data+block_offt, subbl_data+subbl_offt, nelems*subbl_type_sz);
-        }
-        return;
-    }
-
-    for(i = 0; i < subbl_count[dim]; i++){
-        coord[dim] = subbl_start[dim] + i;
-        recur_get_put_data(var, dtype, block_data, block_start, block_count,
-                           subbl_start, subbl_count, dim+1, coord, subbl_data,
-                           get_put_flag, convert_flag);
-    }
-}
 
 int mpitype2int(MPI_Datatype dtype)
 {
@@ -1004,13 +641,6 @@ dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag)
     msg->prev = NULL;
     msg->src = src; 
     return msg;
-}
-
-void delete_dtf_msg(dtf_msg_t *msg)
-{
-    if(msg->bufsz > 0)
-        dtf_free(msg->buf, msg->bufsz);
-    dtf_free(msg, sizeof(msg));
 }
 
 void progress_send_queue()
@@ -1107,3 +737,71 @@ int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start, cons
     return 0;
 }
 
+void get_put_data(dtf_var_t *var,
+                  MPI_Datatype dtype,
+                  unsigned char *block_data,
+                  const MPI_Offset *block_start,
+                  const MPI_Offset *block_count,
+                  const MPI_Offset subbl_start[],
+                  const MPI_Offset subbl_count[],
+                  unsigned char *subbl_data,
+                  int get_put_flag,
+                  int convert_flag)
+{
+    int i;
+    MPI_Offset *cur_coord;
+    int nelems;
+
+    if(var->ndims == 0){
+        nelems = 1;
+        int el_sz;
+        MPI_Type_size(var->dtype, &el_sz);
+
+        if(get_put_flag == DTF_READ){
+            if(convert_flag)
+                convertcpy(dtype, var->dtype, (void*)block_data, (void*)subbl_data, nelems);
+            else
+                memcpy(subbl_data, block_data, el_sz);
+
+        } else { /*DTF_WRITE*/
+           /*copy data subblock -> block*/
+            if(convert_flag)
+                convertcpy(var->dtype, dtype, (void*)subbl_data,(void*)block_data, nelems);
+            else
+                memcpy(block_data, subbl_data, el_sz);
+        }
+        gl_stats.ngetputcall++;
+        return;
+    }
+
+    cur_coord = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+    for(i = 0; i < var->ndims; i++){
+        cur_coord[i] = subbl_start[i];
+    }
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Call getput data");
+    /*read from user buffer to send buffer*/
+    recur_get_put_data(var, dtype, block_data, block_start,
+                       block_count, subbl_start, subbl_count, 0,
+                       cur_coord, subbl_data, get_put_flag, convert_flag);
+    dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
+    gl_stats.ngetputcall++;
+}
+
+MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord)
+{
+      int i, j;
+      MPI_Offset idx = 0, mem=0;
+
+      if(ndims == 0) //scalar
+        return 0;
+      else if(ndims == 1) //1d array
+        return *coord - *block_start;
+
+      for(i = 0; i < ndims; i++){
+        mem = coord[i] - block_start[i];
+        for(j = i+1; j < ndims; j++)
+          mem *= block_count[j];
+        idx += mem;
+      }
+    return idx;
+}

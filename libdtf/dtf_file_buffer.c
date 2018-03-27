@@ -6,6 +6,89 @@
 #include "dtf_file_buffer.h"
 #include "dtf.h"
 
+static void unpack_file_info(MPI_Offset bufsz, void *buf)
+{
+    int i, varid, nvars;
+    file_buffer_t *fbuf;
+    int ndims;
+    dtf_var_t *var;
+    MPI_Offset offt = 0;
+    int type;
+    MPI_Datatype dtype;
+    MPI_Offset *shape;
+    unsigned char *chbuf = (unsigned char*)buf;
+    char filename[MAX_FILE_NAME];
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Start unpackinf file info for of sz %d", (int)bufsz);
+    /*Unpack:
+       - file name
+       - file header size
+       - header
+       - number of masters
+       - master list
+       - number of vars
+       - vars
+    */
+
+    /*filename*/
+    memcpy(filename, chbuf, MAX_FILE_NAME);
+    offt += MAX_FILE_NAME ;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "unpack filename %s", filename);
+    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    assert(fbuf != NULL);
+    /*ncid*/
+    fbuf->ncid = -1;
+    /*header size*/
+    fbuf->hdr_sz = *((MPI_Offset*)(chbuf+offt));
+    offt += sizeof(MPI_Offset);
+    /*header*/
+    fbuf->header = dtf_malloc(fbuf->hdr_sz);
+    assert(fbuf->header != NULL);
+    memcpy(fbuf->header, chbuf+offt, fbuf->hdr_sz);
+    offt += fbuf->hdr_sz + fbuf->hdr_sz%sizeof(MPI_Offset);
+    if(gl_scale){
+		/*skip all the master related info since 
+		 * we assume it's the same*/
+		 offt+= sizeof(MPI_Offset)*(fbuf->cpl_mst_info->nmasters+1);
+		 assert(fbuf->root_writer == fbuf->cpl_mst_info->masters[0]);
+	} else {
+		/*number of masters*/
+		fbuf->cpl_mst_info->nmasters = (int)(*((MPI_Offset*)(chbuf+offt)));
+		DTF_DBG(VERBOSE_DBG_LEVEL, "unpack %d masters", fbuf->cpl_mst_info->nmasters);
+		offt += sizeof(MPI_Offset);
+		/*list of masters*/
+		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+		assert(fbuf->cpl_mst_info->masters != NULL);
+		memcpy(fbuf->cpl_mst_info->masters, chbuf+offt, fbuf->cpl_mst_info->nmasters*sizeof(int));
+		offt += fbuf->cpl_mst_info->nmasters*sizeof(MPI_Offset);
+		//init root master
+		fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
+	}
+   
+    /*number of vars*/
+    nvars = (int)(*((MPI_Offset*)(chbuf+offt)));
+    offt += sizeof(MPI_Offset);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "unpack nvars %d", nvars);
+    /*vars*/
+    for(i = 0; i < nvars; i++){
+        varid = (int)(*((MPI_Offset*)(chbuf+offt)));
+        offt += sizeof(MPI_Offset);
+        assert(varid >= fbuf->nvars);
+
+        type = (int)(*((MPI_Offset*)(chbuf+offt)));
+        dtype = int2mpitype(type);
+        offt+=sizeof(MPI_Offset);
+        ndims = (int)(*((MPI_Offset*)(chbuf+offt)));
+        offt += sizeof(MPI_Offset);
+        shape = (MPI_Offset*)(chbuf+offt);
+        offt += sizeof(MPI_Offset)*ndims;
+
+        var = new_var(varid, ndims, dtype, shape);
+        add_var(fbuf, var);
+    }
+    assert(offt == bufsz);
+    DTF_DBG(VERBOSE_ALL_LEVEL, "Finished unpacking");
+}
+
 static int match_str(char* pattern, const char* filename)
 {
     int ret = 0;
@@ -63,6 +146,163 @@ static void init_mst_info(master_info_t* mst_info)
     mst_info->nread_completed = 0;
 }
 
+static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
+{
+    int wg, nranks, myrank, i, err;
+    char* s = getenv("MAX_WORKGROUP_SIZE");
+    MPI_Group glob_group, file_group;
+    int my_master, my_master_glob;
+    int *masters, *ranks;
+
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Init masters");
+
+    if(s == NULL)
+        wg = MAX_WORKGROUP_SIZE;
+    else
+        wg = atoi(s);
+    assert(wg > 0);
+
+    /* First, find out my master and, if I am a master, find out the size of my
+       workgroup. Create the list of masters. */
+    MPI_Comm_size(comm, &nranks);
+    MPI_Comm_rank(comm, &myrank);
+
+    MPI_Comm_group(gl_comps[gl_my_comp_id].comm, &glob_group);
+    MPI_Comm_group(comm, &file_group);
+
+    if(nranks <= wg){
+        my_master = 0;
+        mst_info->my_wg_sz = nranks;
+        mst_info->nmasters = 1;
+    } else {
+        my_master = (int)(myrank/wg) * wg;
+        mst_info->my_wg_sz = wg;
+        mst_info->nmasters = (int)(nranks/wg);
+        if(nranks % wg > 0){
+            mst_info->nmasters++;
+            if(myrank >= (mst_info->nmasters-1)*wg)
+                mst_info->my_wg_sz = nranks % wg;
+        }
+    }
+
+    if(myrank == 0)
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Nmasters %d", mst_info->nmasters);
+
+    /*Translate the rank of my master*/
+    err = MPI_Group_translate_ranks(file_group, 1, &my_master, glob_group, &my_master_glob);
+    CHECK_MPI(err);
+    mst_info->my_mst = my_master_glob;
+
+    mst_info->masters = (int*)dtf_malloc(mst_info->nmasters * sizeof(int));
+    assert(mst_info->masters != NULL);
+    masters = (int*)dtf_malloc(mst_info->nmasters * sizeof(int));
+    assert(masters != NULL);
+
+    masters[0] = 0;
+    for(i = 1; i < mst_info->nmasters; i++){
+        masters[i] = masters[i-1] + wg;
+    }
+    /*Translate rank from subcommunicator to the global rank in mpi_comm_world*/
+    err = MPI_Group_translate_ranks(file_group, mst_info->nmasters, masters, glob_group, mst_info->masters);
+    CHECK_MPI(err);
+
+    if(myrank == 0){
+        for(i = 0; i < mst_info->nmasters; i++)
+            DTF_DBG(VERBOSE_ALL_LEVEL, "Rank %d is a master", mst_info->masters[i]);
+    }
+
+    dtf_free(masters, mst_info->nmasters * sizeof(int));
+
+    if(mst_info->my_mst == gl_my_rank){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "My wg size %d", mst_info->my_wg_sz);
+        //Translate my workgroup ranks
+        if(mst_info->my_wg_sz == 1){
+            //master is the only rank in the wg
+            mst_info->my_wg = NULL;
+        } else {
+            nranks = mst_info->my_wg_sz - 1;
+            mst_info->my_wg = dtf_malloc(nranks*sizeof(int));
+            assert(mst_info->my_wg != NULL);
+            ranks = dtf_malloc(nranks*sizeof(int));
+            assert(ranks != NULL);
+
+            for(i = 0; i < nranks; i++)
+                ranks[i] = myrank + i + 1;
+
+            err = MPI_Group_translate_ranks(file_group, nranks, ranks, glob_group, mst_info->my_wg);
+            CHECK_MPI(err);
+            dtf_free(ranks, nranks*sizeof(int));
+        }
+
+    } else {
+        mst_info->my_wg = NULL;
+    }
+    MPI_Group_free(&file_group);
+    MPI_Group_free(&glob_group);
+
+    mst_info->nread_completed = 0;
+    return 0;
+}
+
+static void init_iodb(ioreq_db_t *iodb)
+{
+    iodb->ritems = NULL;
+    iodb->witems = NULL;
+    iodb->nritems = 0;
+    iodb->updated_flag = 0;
+}
+
+/***************************File name pattern structure**************************************/
+
+fname_pattern_t* new_fname_pattern()
+{
+    fname_pattern_t *pat = dtf_malloc(sizeof(fname_pattern_t));
+    assert(pat != NULL);
+	pat->fname[0]='\0';
+    pat->iomode = DTF_UNDEFINED;
+    pat->excl_fnames = NULL;
+    pat->nexcls = 0;
+    pat->next = NULL;
+    pat->comp1 = DTF_UNDEFINED;
+    pat->comp2 = DTF_UNDEFINED;
+    pat->ignore_io = 0;
+    pat->replay_io = 0;
+    pat->rdr_recorded = DTF_UNDEFINED;
+    pat->wrt_recorded = DTF_UNDEFINED;
+    pat->write_only = 0;
+    pat->io_pats = NULL;
+    return pat;
+}
+
+
+fname_pattern_t *find_fname_pattern(const char *filename)
+{
+	int i;
+	fname_pattern_t *pat;
+	int found = 0;
+	
+	if (strlen (filename) == 0) return NULL;
+		
+    pat = gl_fname_ptrns;
+	while(pat != NULL){
+		
+		if(match_str(pat->fname, filename)){
+			found = 1;
+		 /*First see if the filename matches against any of the exclude patterns*/
+			for(i = 0; i < pat->nexcls; i++)
+				if(match_str(pat->excl_fnames[i], filename)){
+					found = 0;
+					break;					
+				}
+		}
+		if(found)
+			break;
+		pat = pat->next;
+	}
+	return pat;
+}
+
+
 /***************************File structure**************************************/
 
 file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid)
@@ -87,29 +327,6 @@ file_buffer_t* find_file_buffer(file_buffer_t* buflist, const char* file_path, i
 
 	//DTF_DBG(VERBOSE_DBG_LEVEL, "Return fbuf %p", (void*)ptr);
     return ptr;
-}
-
-/***************************File structure**************************************/
-
-void delete_var(file_buffer_t *fbuf, dtf_var_t* var)
-{
-	assert(var->ioreqs == NULL);
-    dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
-    dtf_free(var, sizeof(dtf_var_t));
-    fbuf->nvars--;
-}
-
-void add_var(file_buffer_t *fbuf, dtf_var_t *var)
-{
-    assert(var->id == fbuf->nvars);
-    dtf_var_t **tmp = (dtf_var_t**)realloc(fbuf->vars, (fbuf->nvars+1)*sizeof(dtf_var_t*));
-    assert(tmp != NULL);
-    fbuf->vars = tmp;
-    fbuf->nvars++;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "var id %d, cnt %d", var->id, fbuf->nvars);
-
-    fbuf->vars[fbuf->nvars-1] = var;
-    gl_stats.malloc_size += sizeof(dtf_var_t*);
 }
 
 void delete_file_buffer(file_buffer_t* fbuf)
@@ -185,29 +402,8 @@ void delete_file_buffer(file_buffer_t* fbuf)
     gl_stats.nfiles--;
 }
 
-fname_pattern_t *new_fname_pattern()
-{
-    fname_pattern_t *pat = dtf_malloc(sizeof(fname_pattern_t));
-    assert(pat != NULL);
-	pat->fname[0]='\0';
-    pat->iomode = DTF_UNDEFINED;
-    pat->excl_fnames = NULL;
-    pat->nexcls = 0;
-    pat->next = NULL;
-    pat->comp1 = DTF_UNDEFINED;
-    pat->comp2 = DTF_UNDEFINED;
-    pat->ignore_io = 0;
-    pat->replay_io = DTF_UNDEFINED;
-    pat->rdr_recorded = DTF_UNDEFINED;
-    pat->wrt_recorded = DTF_UNDEFINED;
-    pat->write_only = 0;
-    pat->io_pats = NULL;
-    return pat;
-}
 
-
-
-file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
+file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, MPI_Comm comm)
 {
 
 	file_buffer_t *buf;
@@ -259,6 +455,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 	buf->has_unsent_ioreqs = 0;
 	buf->t_last_sent_ioreqs = 0;
 	buf->is_transfering = 0;
+	buf->comm = comm;
 	//insert
 	if(gl_filebuf_list == NULL)
 		gl_filebuf_list = buf;
@@ -267,224 +464,405 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path)
 		buf->next->prev = buf;
 		gl_filebuf_list = buf;
 	}
+	
+	init_req_match_masters(comm, buf->my_mst_info);
+	
 	gl_stats.nfiles++;
 	return buf;
 }
 
-dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
+void finalize_files()
 {
-    int i;
+    int file_cnt = 0;
+    file_buffer_t *fbuf = gl_filebuf_list;
 
-    dtf_var_t *var = (dtf_var_t*)dtf_malloc(sizeof(dtf_var_t));
-    assert(var!=NULL);
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize files");
+    while(fbuf != NULL){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, fready_notif_flag %d", fbuf->file_path,  fbuf->fready_notify_flag);
+        if(fbuf->iomode == DTF_IO_MODE_FILE){
+			 if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOTIF_POSTED)
+				file_cnt++;
+        } 
 
-    /*Initialize whatever we can initialize at this stage*/
-    var->id = varid;
-    if(ndims > 0){ //non scalar
-        var->shape = (MPI_Offset*)dtf_malloc(ndims*sizeof(MPI_Offset));
-        //~ int max_dim = 0;
+        fbuf = fbuf->next;
+    }
 
-        for(i=0; i<ndims;i++){
-            var->shape[i] = shape[i];
-            //~ if(shape[i] > shape[max_dim])
-				//~ max_dim = i;
-		}
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Process has to finalize notifications for %d files (out of %d files)", file_cnt, gl_stats.nfiles);
+    assert(file_cnt <= gl_stats.nfiles);
 
-        var->max_dim = 0; //max_dim; //0;
-        //~ if(var->shape[0] ==  DTF_UNLIMITED && ndims > 1){
-			//~ var->max_dim = 1;
-		//~ }
-        //~ DTF_DBG(VERBOSE_DBG_LEVEL, "Maxdim for var id %d is %d", varid, var->max_dim);
+	file_cnt = 0;
+	fbuf = gl_filebuf_list;
+	while(fbuf != NULL){
 
-    } else {
-        var->shape = NULL;
-		var->max_dim = -1;
+		if(fbuf->iomode == DTF_IO_MODE_FILE){
+
+			//~ if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
+				//~ while(fbuf->root_reader == -1)
+					//~ progress_comm();
+				//~ notify_file_ready(fbuf);
+			//~ }
+			if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOTIF_POSTED)
+				while(fbuf->fready_notify_flag != DTF_UNDEFINED)
+					progress_comm();
+			 
+		} 
+		file_cnt++;
+		fbuf = fbuf->next;
 	}
-    var->ndims = ndims;
-    var->dtype = dtype;
-    var->checksum = 0;
-    var->ioreqs = NULL;
-    return var;
+	assert(file_cnt == gl_stats.nfiles);
+
+    //MPI_Barrier(gl_comps[gl_my_comp_id].comm);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Finished finalizing notifications. Will delete file bufs");
+    /*Now, delete all file buffers*/
+    fbuf = gl_filebuf_list;
+    while(fbuf != NULL){
+        delete_file_buffer(fbuf);
+        fbuf = gl_filebuf_list;
+    }
 }
 
-
-
-fname_pattern_t *find_fname_pattern(const char *filename)
+void clean_iodb(ioreq_db_t *iodb, int nvars)
 {
 	int i;
-	fname_pattern_t *pat;
-	int found = 0;
-	
-	if (strlen (filename) == 0) return NULL;
-		
-    pat = gl_fname_ptrns;
-	while(pat != NULL){
-		
-		if(match_str(pat->fname, filename)){
-			found = 1;
-		 /*First see if the filename matches against any of the exclude patterns*/
-			for(i = 0; i < pat->nexcls; i++)
-				if(match_str(pat->excl_fnames[i], filename)){
-					found = 0;
-					break;					
-				}
-		}
-		if(found)
-			break;
-		pat = pat->next;
+	write_db_item_t *witem;
+	read_db_item_t *ritem;
+
+    if(iodb == NULL){
+		return;
 	}
-	return pat;
-}
+//    DTF_DBG(VERBOSE_DBG_LEVEL, "Clean iodb: memuse %lu, peak %lu", gl_stats.iodb_cur_memuse, gl_stats.iodb_peak_memuse);
 
+	if(iodb->witems != NULL){
+		for(i = 0; i < nvars; i++){
 
-MPI_Offset read_write_var(file_buffer_t *fbuf,
-                               int varid,
-                               const MPI_Offset *start,
-                               const MPI_Offset *count,
-                               const MPI_Offset *stride,
-                               const MPI_Offset *imap,
-                               MPI_Datatype dtype,
-                               void *buf,
-                               int rw_flag)
-{
-    MPI_Offset ret;
-    int el_sz;
-    io_req_t *req;
-    int i;
-    int def_el_sz, req_el_sz;
-    MPI_Offset nelems;
-    double t_start = MPI_Wtime();
+			if(iodb->witems[i] == NULL)
+				continue;
 
-    if(rw_flag == DTF_READ){
-        if(fbuf->reader_id==gl_my_comp_id){
-          assert(fbuf->is_ready);
-        } else{
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: writer process tries to read file %s (var %d)", fbuf->file_path, varid);
-            //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-        }
-    }
-    if(imap != NULL){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: writing mapped vars is not impelemented yet. Ignore.");
-        return 0;
-    }
+			witem = iodb->witems[i];
 
-    if(stride != NULL){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: writing vars at a stride is not impelemented yet. Ignore.");
-        return 0;
-    }
+			if(witem->ndims > 0){
+				RBTreeDestroy(witem->dblocks);
+				gl_stats.malloc_size -= witem->nblocks*(sizeof(block_t)+sizeof(MPI_Offset)*2*witem->ndims);
+			} else
+				dtf_free(witem->dblocks, sizeof(block_t));
 
-    dtf_var_t *var = fbuf->vars[varid];
-    DTF_DBG(VERBOSE_DBG_LEVEL, "rw call %d for %s (ncid %d) var %d", rw_flag,fbuf->file_path, fbuf->ncid, var->id);
-    for(i = 0; i < var->ndims; i++)
-			DTF_DBG(VERBOSE_DBG_LEVEL, "  %lld --> %lld", start[i], count[i]);
-    /*check number of elements to read*/
-    nelems = 0;
-    if(var->ndims == 0)
-        nelems = 1;
-    else
-        if(count != NULL){
-            int i;
-            nelems = count[0];
-            for(i = 1; i < var->ndims; i++)
-                nelems *= count[i];
+			dtf_free(witem, sizeof(write_db_item_t));
+			iodb->witems[i] = NULL;
+		}
+		
+        dtf_free(iodb->witems, nvars*sizeof(write_db_item_t*));
+        iodb->witems = NULL;
+	}
 
-            if(nelems == 0){
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Nothing to read or write");
-                return 0;
+	ritem = iodb->ritems;
+    while(ritem != NULL){
+        if(ritem->dblocks != NULL){
+            read_dblock_t *block = ritem->dblocks;
+            while(block != NULL){
+
+                dtf_free(block->start, block->ndims*sizeof(MPI_Offset));
+                dtf_free(block->count, block->ndims*sizeof(MPI_Offset));
+                ritem->dblocks = ritem->dblocks->next;
+                dtf_free(block, sizeof(read_dblock_t));
+                block = ritem->dblocks;
+                ritem->nblocks--;
             }
+            assert(ritem->nblocks == 0);
         }
-    assert(nelems != 0);
 
-    MPI_Type_size(var->dtype, &def_el_sz);
-    MPI_Type_size(dtype, &req_el_sz);
+        iodb->ritems = iodb->ritems->next;
+        dtf_free(ritem, sizeof(read_db_item_t));
+        ritem = iodb->ritems;
+        iodb->nritems--;
+    }
 
-    if(def_el_sz != req_el_sz)
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Warning: var %d el_sz mismatch (def %d-bit, access %d).", var->id, def_el_sz, req_el_sz);
-    
-    //assert(var->dtype == dtype);
+    iodb->updated_flag = 0;
 
-	//~ if(rw_flag == DTF_WRITE){
-		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "------------WRITE IOREQ--------:");
-		
-		//~ for(i = 0; i < nelems; i++)
-			//~ printf("%.2f\t", ((double*)buf)[i]);
-		//~ printf("\n");
-	//~ }
-        
-	/*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
-	we ignore it. Start and count parameters are supposed to be with respect to
-	element size for var->dtype*/
-	int buffered = gl_conf.buffered_req_match;
-
-	if(rw_flag == DTF_READ)
-		buffered = 0;
-
-	if( gl_scale && (var->ndims <= 1) && (rw_flag == DTF_WRITE))
-		 /*This is specifically for SCALE-LETKF since they overwrite the
-		  user buffer in every time frame iteration */
-		buffered = 1;
-
-	req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, buffered);
-	
-	if( gl_scale && (var->ndims <= 1) && (rw_flag == DTF_WRITE))
-		 /*This is specifically for SCALE-LETKF since they overwrite the
-		  user buffer in every time frame iteration */
-		req->is_permanent = 1; //dont delete this req when cleaning the list of ioreqs
-
-	if(gl_conf.do_checksum && (rw_flag == DTF_WRITE))
-		var->checksum += req->checksum;
-
-	if(rw_flag == DTF_READ)
-		fbuf->rreq_cnt++;
-	else
-		fbuf->wreq_cnt++;
-
-	/*Enqueue the request to the head*/
-	if(var->ioreqs == NULL)
-		var->ioreqs = req;
-	else{
-		/*Check if some data is overwritten (just to print out a warning message).
-		  Becase the new I/O req is pushed to the head of the queue, the
-		  writer will access the newest data.*/
-		io_req_t *tmpreq = var->ioreqs;
-		while(tmpreq != NULL){
-			if(req->rw_flag == DTF_WRITE){
-				int overlap = 0;
-				for(i = 0; i < var->ndims; i++ )
-					if( (req->start[i] >= tmpreq->start[i]) && (req->start[i] < tmpreq->start[i] + tmpreq->count[i]))
-						overlap++;
-					else
-						break;
-
-				if(overlap == var->ndims){
-					DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: overwriting var %d data: (old (start,count) --> new (start,count)", var->id);
-					for(i = 0; i < var->ndims; i++)
-						DTF_DBG(VERBOSE_DBG_LEVEL, "(%lld, %lld) --> (%lld, %lld)", tmpreq->start[i], tmpreq->count[i], req->start[i], req->count[i]);
-				}
-			}
-			tmpreq = tmpreq->next;
-		}
-		var->ioreqs->prev = req;
-		req->next = var->ioreqs;
-		var->ioreqs = req;
-	}
-    
-    fbuf->has_unsent_ioreqs = 1;
-    
-    if(MPI_Wtime() - fbuf->t_last_sent_ioreqs >= gl_conf.t_send_ioreqs_freq){
-		//Send request to master immediately
-		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
-			send_ioreqs_by_var(fbuf);
-		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
-			send_ioreqs_by_block(fbuf);
-	}
-
-    MPI_Type_size(dtype, &el_sz);
-    ret = 1;
-    for(i = 0; i < var->ndims; i++)
-        ret *= count[i];
-    ret *= el_sz;
-
-    gl_stats.t_rw_var += MPI_Wtime() - t_start;
-    return ret;
+	DTF_DBG(VERBOSE_DBG_LEVEL, "iodb clean");
 }
+
+
+void close_file(file_buffer_t *fbuf)
+{
+    if(fbuf->writer_id == gl_my_comp_id){
+
+		fbuf->is_ready = 1;
+
+        if(fbuf->iomode == DTF_IO_MODE_FILE) {
+			
+			//Check for any incoming messages
+			progress_comm();
+            if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
+				assert(fbuf->root_writer == gl_my_rank);
+				while(fbuf->root_reader == -1)
+					progress_comm();
+				notify_file_ready(fbuf);
+			}
+			
+			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
+				//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+				//~ gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+
+			//~ char *s = getenv("DTF_SCALE");
+			//~ if(s != NULL)
+				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp close file %s", fbuf->file_path);
+
+        } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
+
+			
+			 //~ if(!gl_scale){ 
+				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
+				//~ delete_ioreqs(fbuf, 1);
+			//~ }
+
+        }
+       
+    } else if (fbuf->reader_id == gl_my_comp_id){
+            assert(fbuf->rreq_cnt == 0);
+            assert(fbuf->wreq_cnt == 0);
+
+            //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
+				//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
+					//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+				//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+					//~ gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+				//~ char *s = getenv("DTF_SCALE");
+				//~ if(s != NULL)
+					//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp close file %s", fbuf->file_path);
+
+			//~ }
+
+    }
+
+    //~ if(fbuf->iomode == DTF_IO_MODE_MEMORY){
+
+        //~ if(fbuf->my_mst_info->iodb != NULL)
+			//~ clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
+        
+		//~ delete_ioreqs(fbuf,1); 
+    //~ }
+    
+    fbuf->is_ready = 0;  //reset flag
+
+    //delete_file_buffer(fbuf);
+}
+
+void open_file(file_buffer_t *fbuf, MPI_Comm comm)
+{
+    DTF_DBG(VERBOSE_DBG_LEVEL,   "Enter dtf_open %s", fbuf->file_path);
+
+    MPI_Status status;
+    int rank; //, notif_open=1;
+    int err;
+	
+    MPI_Comm_rank(comm, &rank);
+    
+    if(fbuf->iomode == DTF_IO_MODE_FILE) fbuf->is_defined = 1;
+
+    if(fbuf->reader_id == gl_my_comp_id){
+        
+        if(fbuf->iomode == DTF_IO_MODE_FILE){
+			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp open file %s", fbuf->file_path);
+
+			if(rank == 0){
+				if(fbuf->root_writer == -1){
+					fbuf->root_writer = inquire_root(fbuf->file_path);
+					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
+				}
+				
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Waiting for file to become ready");
+				/*root reader rank will wait until writer finishes writing the file.
+				 then it will broadcast that the file is ready to everyone else*/
+
+				while(!fbuf->is_ready)
+					progress_comm();
+			}
+			MPI_Barrier(comm);
+            fbuf->is_ready = 1;
+			
+            //~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
+				//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+				//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+			
+			
+			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp file ready %s", fbuf->file_path);
+
+        } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
+			void *buf;
+			int bufsz;	
+
+            if(fbuf->header == NULL){
+				/*Zero rank will inquire the pnetcdf header/dtf vars info/masters info
+				from writer's global zero rank and then broadcast this info to other
+				readers that opened the file*/
+				if(rank == 0){
+					if(fbuf->root_writer == -1)
+						fbuf->root_writer = inquire_root(fbuf->file_path);					
+
+					
+					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
+					
+					DTF_DBG(VERBOSE_DBG_LEVEL, "Starting to wait for file info for %s", fbuf->file_path);
+					err = MPI_Probe(fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
+					CHECK_MPI(err);
+					MPI_Get_count(&status, MPI_BYTE, &bufsz);
+
+					buf = dtf_malloc(bufsz);
+					assert(buf != NULL);
+					err = MPI_Recv(buf, bufsz, MPI_BYTE, fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
+					CHECK_MPI(err);
+				}
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Bcast file info to others");
+				err = MPI_Bcast(&bufsz, 1, MPI_INT, 0, comm);
+				CHECK_MPI(err);
+				assert(bufsz > 0);
+
+				if(rank != 0){
+					buf = dtf_malloc(bufsz);
+					assert(buf != NULL);
+				}
+				err = MPI_Bcast(buf, bufsz, MPI_BYTE, 0, comm);
+				CHECK_MPI(err);
+
+				unpack_file_info(bufsz, buf);
+				dtf_free(buf, bufsz);
+				
+			}
+
+			fbuf->is_ready = 1;
+			fbuf->is_defined = 1;
+        }
+        
+		fbuf->cpl_info_shared = 1;
+    
+    } else if(fbuf->writer_id == gl_my_comp_id){
+
+		if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
+			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
+		assert(fbuf->is_defined);
+        /*reset all flags*/
+        //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
+			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
+				//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+				//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+			//~ char *s = getenv("DTF_SCALE");
+			//~ if(s != NULL)
+				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp open file %s", fbuf->file_path);
+
+		//~ }
+    }
+
+	if(strstr(fbuf->file_path, "hist.d")!=NULL)
+		gl_stats.t_open_hist = MPI_Wtime()-gl_stats.walltime;
+	else if(strstr(fbuf->file_path, "anal.d")!=NULL)
+		gl_stats.t_open_rest = MPI_Wtime()-gl_stats.walltime;
+ 
+    DTF_DBG(VERBOSE_DBG_LEVEL,   "Exit dtf_open %s", fbuf->file_path);
+}
+
+/*Write pnetcdf header*/
+void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header)
+{
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Writing header (sz %d)", (int)hdr_sz);
+    fbuf->hdr_sz = hdr_sz;
+    fbuf->header = dtf_malloc(hdr_sz);
+    assert(fbuf->header != NULL);
+    memcpy(fbuf->header, header, (size_t)hdr_sz);
+    return;
+}
+
+/*Read pnetcdf header*/
+MPI_Offset read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
+{
+    if(offset+chunk_sz > fbuf->hdr_sz){
+        DTF_DBG(VERBOSE_ALL_LEVEL, "Warning: trying to read %llu at offt %llu but hdr sz is %llu", chunk_sz, offset, fbuf->hdr_sz);
+        chunk_sz = fbuf->hdr_sz - offset;
+    }
+
+    memcpy(chunk, (unsigned char*)fbuf->header+offset, (size_t)chunk_sz);
+    return chunk_sz;
+}
+
+void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
+{
+    dtf_var_t *var;
+    MPI_Offset sz = 0, offt = 0;
+    unsigned char *chbuf;
+    int i;
+ //   rb_red_blk_node *var_node;
+    /*Pack:
+       - file name
+       - file header size
+       - header
+       - number of masters
+       - master list
+       - number of vars
+       - vars
+    */
+
+    sz =   MAX_FILE_NAME + fbuf->hdr_sz +
+           fbuf->my_mst_info->nmasters*sizeof(MPI_Offset) +
+           sizeof(MPI_Offset)*3;
+
+    sz += sz%sizeof(MPI_Offset); //padding
+
+    for(i = 0; i < fbuf->nvars; i++){
+//        tmp_var.id = i;
+//        var_node = RBExactQuery(fbuf->vars, &tmp_var);
+//        assert(var_node != NULL);
+//        var = (dtf_var_t*)(var_node->key);
+        /*sz += sizeof(var->id) + sizeof(var->el_sz) +
+        sizeof(var->ndims) + sizeof(MPI_Offset)*var->ndims;*/
+        sz += sizeof(MPI_Offset)*3+ sizeof(MPI_Offset)*fbuf->vars[i]->ndims;
+    }
+
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Packing info: sz %lld", sz);
+    *buf = dtf_malloc(sz);
+    assert(*buf != NULL);
+    chbuf = (unsigned char*)(*buf);
+
+    /*filename*/
+    memcpy(chbuf, fbuf->file_path, MAX_FILE_NAME);
+    offt += MAX_FILE_NAME;
+    /*header size*/
+    *((MPI_Offset*)(chbuf+offt)) = fbuf->hdr_sz;
+    offt += sizeof(MPI_Offset);
+    /*header*/
+    memcpy(chbuf+offt, fbuf->header, fbuf->hdr_sz);
+    offt += fbuf->hdr_sz + fbuf->hdr_sz%sizeof(MPI_Offset);
+    /*number of masters*/
+    *((MPI_Offset*)(chbuf+offt)) = fbuf->my_mst_info->nmasters;
+    offt += sizeof(MPI_Offset);
+    if(fbuf->my_mst_info->nmasters){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->my_mst_info->nmasters);
+        /*list of masters*/
+        memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
+        offt += fbuf->my_mst_info->nmasters*sizeof(MPI_Offset); //sizeof(int) + padding for MPI_Offset
+    }
+
+    /*number of vars*/
+    *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)fbuf->nvars;
+    offt += sizeof(MPI_Offset);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d vars", fbuf->nvars);
+    /*vars*/
+
+    for(i = 0; i < fbuf->nvars; i++){
+        var = fbuf->vars[i];
+        *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)var->id;
+        offt += sizeof(MPI_Offset);
+        *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)mpitype2int(var->dtype);
+        offt += sizeof(MPI_Offset);
+        *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)var->ndims;
+        offt += sizeof(MPI_Offset);
+        memcpy((void*)(chbuf+offt), (void*)var->shape, sizeof(MPI_Offset)*var->ndims);
+        offt += sizeof(MPI_Offset)*var->ndims;
+    }
+    DTF_DBG(VERBOSE_ALL_LEVEL, "offt %lld", offt);
+    assert(offt == sz);
+    *bufsz = sz;
+}
+
+

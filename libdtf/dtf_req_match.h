@@ -51,42 +51,6 @@ typedef struct io_req{
   This is done for simplicity of matching and sending
   data requests to writer ranks*/
 
-
-
-typedef struct write_db_item{
-    int                    ndims;
-    void                   *dblocks; /*rb_red_blk_tree for ndims>0, block_t for ndims=0*/
-    MPI_Offset             nblocks;
-}write_db_item_t;
-
-
-typedef struct read_dblock{
-    int                     var_id;
-    int                     ndims;
-    MPI_Offset              *start;
-    MPI_Offset              *count;
-    struct read_dblock   *next;
-    struct read_dblock   *prev;
-}read_dblock_t;
-
-typedef struct read_db_item{
-    int                     rank;
-    read_dblock_t           *dblocks;
-    read_dblock_t           *last_block;
-    MPI_Offset              nblocks;
-    struct read_db_item     *next;
-    struct read_db_item     *prev;
-}read_db_item_t;
-
-typedef struct ioreq_db{
-    int                  updated_flag;
-    MPI_Offset           nritems;
-
-    struct write_db_item **witems;
-    struct read_db_item  *ritems;
-}ioreq_db_t;
-
-
 typedef struct file_info_req_q{
     char filename[MAX_FILE_NAME];
     void *buf;  /*consists of
@@ -115,11 +79,6 @@ void progress_comm();
 void progress_transfer();
 int  match_ioreqs(file_buffer_t *fbuf);
 void match_ioreqs_multiple();
-//void match_ioreqs_all(int rw_flag);
-int  init_req_match_masters(MPI_Comm comm, master_info_t *mst_info);
-void init_iodb(ioreq_db_t *iodb);
-void clean_iodb(ioreq_db_t *iodb, int nvars);
-void unpack_file_info(MPI_Offset bufsz, void *buf);
 void send_file_info(file_buffer_t *fbuf, int reader_root);
 void notify_complete_multiple(file_buffer_t *fbuf);
 void log_ioreq(file_buffer_t *fbuf,
@@ -130,7 +89,7 @@ void log_ioreq(file_buffer_t *fbuf,
 			  void *buf,
 			  int rw_flag);
 void send_data(file_buffer_t *fbuf, void* buf, int bufsz);
-int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued);
+int  parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued);
 void send_ioreqs_by_block(file_buffer_t *fbuf);
 void send_ioreqs_by_var(file_buffer_t *fbuf);
 #endif // dtf_REQ_MATCH_H_INCLUDED
