@@ -278,6 +278,8 @@ int load_config(const char *ini_name, const char *comp_name){
                 gl_comps[i].in_msg_q = NULL;
                 gl_comps[i].name[0] = 0;
                 gl_comps[i].comm = MPI_COMM_NULL;
+                gl_comps[i].finalized = 0;
+                gl_comps[i].out_msg_q = NULL;
             }
 
         } else if(strcmp(param, "comp_name") == 0){

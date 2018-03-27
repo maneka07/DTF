@@ -17,7 +17,6 @@
 #include "rb_red_black_tree.h"
 
 extern file_info_req_q_t *gl_finfo_req_q;
-extern dtf_msg_t *gl_out_msg_q;
 
 /*only support conversion double<->float*/
 static void recur_get_put_data(dtf_var_t *var,
@@ -99,7 +98,7 @@ void notify_file_ready(file_buffer_t *fbuf)
 	DTF_DBG(VERBOSE_DBG_LEVEL,   "Notify reader root rank %d that file %s is ready", fbuf->root_reader, fbuf->file_path);
 	err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_READY_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
 	CHECK_MPI(err);
-	ENQUEUE_ITEM(msg, gl_out_msg_q);
+	ENQUEUE_ITEM(msg, gl_comps[fbuf->reader_id].out_msg_q);
 	fbuf->fready_notify_flag = RDR_NOTIF_POSTED;
 	progress_send_queue();
 }
@@ -512,13 +511,8 @@ void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
 	CHECK_MPI(err);
 	err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
 	CHECK_MPI(err);
-	ENQUEUE_ITEM(msg, gl_out_msg_q);
+	ENQUEUE_ITEM(msg, gl_comps[tgt_comp].out_msg_q);
 }
-
-
-
-
-
 
 double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype)
 {
@@ -645,39 +639,64 @@ dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag)
 
 void progress_send_queue()
 {
-    dtf_msg_t *msg;
     int flag, err;
     MPI_Status status;
     double t_st;
 
-    if(gl_out_msg_q == NULL)
-       return;
-
-    msg = gl_out_msg_q;
-    while(msg != NULL){
-        t_st = MPI_Wtime();
-        err = MPI_Test(&(msg->req), &flag, &status);
-        CHECK_MPI(err);
-        if(flag){
-            gl_stats.t_comm += MPI_Wtime() - t_st;
-            dtf_msg_t *tmp = msg->next;
-            DEQUEUE_ITEM(msg, gl_out_msg_q);
-            if(msg->tag == FILE_READY_TAG){
-                file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, (char*)msg->buf, -1);
-                if(fbuf == NULL)
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Error: cant find %s", (char*)msg->buf);
-                assert(fbuf != NULL);
-                assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
-                fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Completed sending file ready notif for %s", (char*)msg->buf);
-            }
-            delete_dtf_msg(msg);
-            msg = tmp;
-        } else{
-            gl_stats.idle_time += MPI_Wtime() - t_st;
-            msg = msg->next;
-        }
-    }
+	int comp;
+	dtf_msg_t *msg, *tmp;
+	
+	for(comp = 0; comp < gl_ncomp; comp++){
+		if(gl_comps[comp].out_msg_q == NULL)
+			continue;
+		msg = gl_comps[comp].out_msg_q;
+		
+		if(gl_comps[comp].finalized){
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "Component %s finishd running. Cancel all messages:", gl_comps[comp].name);
+			while(msg != NULL){
+				tmp = msg->next;
+				DEQUEUE_ITEM(msg, gl_comps[comp].out_msg_q);
+				if(msg->tag == FILE_READY_TAG){
+					file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, (char*)msg->buf, -1);
+					if(fbuf == NULL)
+						DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Error: cant find %s", (char*)msg->buf);
+					assert(fbuf != NULL);
+					assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
+					fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
+				}
+				err = MPI_Cancel(&(msg->req));
+				CHECK_MPI(err);
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "Cancel %p (tag %d)", (void*)msg, msg->tag);
+				delete_dtf_msg(msg);
+				msg = tmp;
+			}
+		} else {
+			while(msg != NULL){
+				t_st = MPI_Wtime();
+				err = MPI_Test(&(msg->req), &flag, &status);
+				CHECK_MPI(err);
+				if(flag){
+					gl_stats.t_comm += MPI_Wtime() - t_st;
+					tmp = msg->next;
+					DEQUEUE_ITEM(msg, gl_comps[comp].out_msg_q);
+					if(msg->tag == FILE_READY_TAG){
+						file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, (char*)msg->buf, -1);
+						if(fbuf == NULL)
+							DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Error: cant find %s", (char*)msg->buf);
+						assert(fbuf != NULL);
+						assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
+						fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
+						DTF_DBG(VERBOSE_DBG_LEVEL, "Completed sending file ready notif for %s", (char*)msg->buf);
+					}
+					delete_dtf_msg(msg);
+					msg = tmp;
+				} else{
+					gl_stats.idle_time += MPI_Wtime() - t_st;
+					msg = msg->next;
+				}
+			}
+		}
+	}
 }
 
 void progress_recv_queue()

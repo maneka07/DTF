@@ -383,7 +383,7 @@ static void do_matching(file_buffer_t *fbuf)
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Send data req to wrt %d", writers[i]);
                     err = MPI_Isend((void*)sbuf[i], offt[i], MPI_BYTE, writers[i], IO_DATA_REQ_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
                     CHECK_MPI(err);
-                    ENQUEUE_ITEM(msg, gl_out_msg_q);
+                    ENQUEUE_ITEM(msg, gl_comps[gl_my_comp_id].out_msg_q);
                 }
             }
 
@@ -735,7 +735,7 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
 		CHECK_MPI(err);
 		err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
 		CHECK_MPI(err);
-		ENQUEUE_ITEM(msg, gl_out_msg_q);
+		ENQUEUE_ITEM(msg, gl_comps[fbuf->reader_id].out_msg_q);
 		
 		if(gl_my_rank != fbuf->root_reader){
 			fbuf->done_matching_flag = 1;
@@ -799,7 +799,7 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
             CHECK_MPI(err);
             err = MPI_Test(&(msg->req), &flag, &status);
             CHECK_MPI(err);
-            ENQUEUE_ITEM(msg, gl_out_msg_q);
+            ENQUEUE_ITEM(msg, gl_comps[fbuf->writer_id].out_msg_q);
         }
     }
     
@@ -891,7 +891,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 		CHECK_MPI(err);
 		err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
 		CHECK_MPI(err);
-		ENQUEUE_ITEM(msg, gl_out_msg_q);
+		ENQUEUE_ITEM(msg, gl_comps[fbuf->reader_id].out_msg_q);
 		
 		if(gl_my_rank != fbuf->root_reader){
 			fbuf->done_matching_flag = 1;
@@ -1036,7 +1036,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
             CHECK_MPI(err);
             err = MPI_Test(&(msg->req), &flag, &status);
             CHECK_MPI(err);
-            ENQUEUE_ITEM(msg, gl_out_msg_q);
+            ENQUEUE_ITEM(msg, gl_comps[fbuf->writer_id].out_msg_q);
         }
     }
 
@@ -1766,7 +1766,7 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
 					dtf_free(msg, sizeof(dtf_msg_t));
 					fbuf->done_matching_flag = 1;
 				} else
-					ENQUEUE_ITEM(msg, gl_out_msg_q);
+					ENQUEUE_ITEM(msg, gl_comps[gl_my_comp_id].out_msg_q);
             }
         }
     } //while(bufsz)
@@ -1790,7 +1790,7 @@ void send_file_info(file_buffer_t *fbuf, int reader_root)
     CHECK_MPI(err);
     err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
 	CHECK_MPI(err);
-	ENQUEUE_ITEM(msg, gl_out_msg_q);
+	ENQUEUE_ITEM(msg, gl_comps[fbuf->reader_id].out_msg_q);
     gl_stats.t_comm += MPI_Wtime() - t_start;
 }
 
@@ -1876,6 +1876,9 @@ static void print_recv_msg(int tag, int src)
         case COMP_SYNC_TAG:
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag COMP_SYNC_TAG from %d", src);
 			break;
+		case COMP_FINALIZED_TAG:
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag COMP_FINALIZED_TAG from %d", src);
+			break;	
         default:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag unknown %d from %d", tag, src);
             assert(0);
@@ -1890,6 +1893,11 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 	char filename[MAX_FILE_NAME];
 	int ret = 1;
 	
+	if(tag == COMP_FINALIZED_TAG){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Comp %s finalized", gl_comps[comp].name);
+		gl_comps[comp].finalized = 1;
+		return 0;
+	}
 	memcpy(filename, rbuf, MAX_FILE_NAME);
 	offt += MAX_FILE_NAME ;
 	fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
@@ -1961,7 +1969,7 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 							CHECK_MPI(err);
 							err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
 							CHECK_MPI(err);
-							ENQUEUE_ITEM(msg, gl_out_msg_q);
+							ENQUEUE_ITEM(msg, gl_comps[fbuf->writer_id].out_msg_q);
 							fbuf->done_matching_flag = 1;
 							DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
 					}
@@ -1977,7 +1985,7 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Sync tag for file %s", (char*)rbuf);
 				fbuf->sync_comp_flag = 1;
 				break;
-			case FILE_READY_TAG:
+		   case FILE_READY_TAG:
 				DTF_DBG(VERBOSE_DBG_LEVEL,   "Process FILE_READY notif for %s", (char*)rbuf);
 				fbuf->is_ready = 1;
 				break;

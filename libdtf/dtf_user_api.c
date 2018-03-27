@@ -22,7 +22,6 @@ int lib_initialized=0;
 
 file_info_req_q_t*	gl_finfo_req_q 	= NULL;
 file_info_t*		gl_finfo_list 	= NULL;
-dtf_msg_t*			gl_out_msg_q 	= NULL;
 file_buffer_t*		gl_filebuf_list = NULL;			/*List of all file buffers*/
 fname_pattern_t* 	gl_fname_ptrns 	= NULL;    		/*Patterns for file name*/
 component_t* 		gl_comps 		= NULL;         /*List of components*/
@@ -168,7 +167,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_fname_ptrns = NULL;
     gl_filebuf_list = NULL;
     gl_finfo_req_q = NULL;
-    gl_out_msg_q = NULL;
 	
     /*Parse ini file and initialize components*/
     err = load_config(filename, module_name);
@@ -204,7 +202,7 @@ panic_exit:
  */
 _EXTERN_C_ int dtf_finalize()
 {
-    int mpi_initialized, err;
+    int mpi_initialized, err, comp;
     file_info_t *finfo;
 
     if(!lib_initialized) return 0;
@@ -224,30 +222,60 @@ _EXTERN_C_ int dtf_finalize()
 	DTF_DBG(VERBOSE_ERROR_LEVEL,"time_stamp DTF: finalize");
 	MPI_Barrier(gl_comps[gl_my_comp_id].comm);
     gl_stats.st_fin = MPI_Wtime() - gl_stats.walltime;
-	
+		
     /*Send any unsent file notifications
-      and delete buf files*/
-    if(gl_out_msg_q != NULL){
-		DTF_DBG(VERBOSE_ERROR_LEVEL, "Send msg queue not empty:");
-		dtf_msg_t *msg = gl_out_msg_q;
-		while(msg != NULL){
-			//DTF_DBG(VERBOSE_DBG_LEVEL, "%p", (void*)msg);
-			DTF_DBG(VERBOSE_ERROR_LEVEL, "%d", msg->tag);
-			msg = msg->next;
-		}
-		while(gl_out_msg_q != NULL)
-			progress_send_queue();
-	}
+      //~ and delete buf files*/
+    //~ if(gl_out_msg_q != NULL){
+		//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "Send msg queue not empty:");
+		//~ dtf_msg_t *msg = gl_out_msg_q;
+		//~ while(msg != NULL){
+			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "%p (tag %d)", (void*)msg, msg->tag);
+			//~ msg = msg->next;
+		//~ }
+		//~ while(gl_out_msg_q != NULL){
+			//~ //progress_send_queue();
+			//~ progress_comm();
+		//~ }
+	//~ }
+	
+	progress_send_queue();
 		
     finalize_files();
-   
     
-    if(gl_out_msg_q != NULL)
-		DTF_DBG(VERBOSE_ERROR_LEVEL, "Finalize message queue");
-	
-    while(gl_out_msg_q != NULL)
-		progress_send_queue();
-
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Notify other components that I finalized");
+    for(comp = 0; comp < gl_ncomp; comp++){
+		if(comp == gl_my_comp_id)
+			continue;
+		int ncomm_my, ncomm_cpl; 
+		MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &ncomm_my);
+		MPI_Comm_remote_size(gl_comps[comp].comm, &ncomm_cpl);
+		if(gl_my_rank < ncomm_cpl){
+			dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG);
+			err = MPI_Isend(NULL, 0, MPI_INT, gl_my_rank, COMP_FINALIZED_TAG, gl_comps[comp].comm, &(msg->req));
+			CHECK_MPI(err);
+			ENQUEUE_ITEM(msg, gl_comps[comp].out_msg_q);
+		}
+		
+		if( (ncomm_cpl > ncomm_my) && (gl_my_rank == 0)){
+			int i;
+			for(i = gl_my_rank; i < ncomm_cpl; i++){
+				dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG);
+				err = MPI_Isend(NULL, 0, MPI_INT, gl_my_rank, COMP_FINALIZED_TAG, gl_comps[comp].comm, &(msg->req));
+				CHECK_MPI(err);
+				ENQUEUE_ITEM(msg, gl_comps[comp].out_msg_q);
+			}
+		} 
+	}
+    
+    for(comp = 0; comp < gl_ncomp; comp++){
+		if(gl_comps[comp].out_msg_q == NULL)
+			continue;
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "Finalize message queue for comp %s", gl_comps[comp].name);
+		while(gl_comps[comp].out_msg_q != NULL)
+			progress_comm();	
+	}
+		
+    
     assert(gl_finfo_req_q == NULL);
    
 	finfo = gl_finfo_list;
@@ -257,11 +285,16 @@ _EXTERN_C_ int dtf_finalize()
 		finfo = gl_finfo_list;
 	}
 	
+	gl_comps[gl_my_comp_id].finalized = 1;
+    
     finalize_comp_comm();
     print_stats();
     //destroy inrracomp communicator
     err = MPI_Comm_free(&gl_comps[gl_my_comp_id].comm);
     CHECK_MPI(err);
+    
+	for(comp = 0; comp < gl_ncomp; comp++)
+		assert(gl_comps[comp].out_msg_q == NULL);
 
     clean_config();
 
@@ -271,9 +304,7 @@ _EXTERN_C_ int dtf_finalize()
   //  if(gl_stats.malloc_size != MAX_COMP_NAME )
     //  DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_stats.malloc_size - MAX_COMP_NAME);
     assert(gl_finfo_req_q == NULL);
-    assert(gl_out_msg_q == NULL);
-
-
+    
 	DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalized");
     dtf_free(gl_my_comp_name, MAX_COMP_NAME);
     lib_initialized = 0;

@@ -3,6 +3,7 @@
 
 #include <mpi.h>
 #include "dtf_file_buffer.h"
+#include "dtf_component.h"
 #include <string.h>
 #include <assert.h>
 
@@ -10,8 +11,6 @@
 
 #define CONNECT_MODE_SERVER     1
 #define CONNECT_MODE_CLIENT     0
-
-#define MAX_COMP_NAME 32
 #define ASCIILINESZ   1024
 
 #define FILE_READY_TAG      0       /*writer rank -> reader rank*/
@@ -24,6 +23,7 @@
 #define MATCH_DONE_TAG      7
 #define IO_REQS_TAG         8
 #define COMP_SYNC_TAG		9
+#define COMP_FINALIZED_TAG   10
 
 #define IODB_BUILD_VARID    0  /*Distribute ioreqs based on var id*/
 #define IODB_BUILD_BLOCK    1  /*Distribute ioreqs by dividing var to blocks*/
@@ -84,13 +84,7 @@
         }                                                                   \
 } while(0)
 
-typedef struct component{
-    unsigned int    id;
-    char            name[MAX_COMP_NAME];
-    int             connect_mode; /*0 - I am server, 1 - I am client, -1 - undefined (no interconnection)*/
-    struct dtf_msg  *in_msg_q;   /*Queue of incoming messages (those that cannot be processed right now)*/
-    MPI_Comm        comm;   /*intra or inter component communicator*/
-}component_t;
+
 
 typedef struct dtf_config{
     int         distr_mode;
@@ -180,8 +174,7 @@ extern struct dtf_config gl_conf;                 /*Framework settings*/
 extern struct stats gl_stats;
 extern char *gl_my_comp_name;
 extern void* gl_msg_buf;
-extern struct file_info_req_q *gl_finfo_req_q;
-extern dtf_msg_t *gl_out_msg_q;		//Queue of outgoing messages (pending requests)     
+extern struct file_info_req_q *gl_finfo_req_q;    
 extern file_info_t *gl_finfo_list;
 char _buff[1024];
 
