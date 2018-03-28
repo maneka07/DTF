@@ -2042,13 +2042,13 @@ void progress_comm()
     int comp, flag, err, bufsz, tag, src;
     gl_stats.nprogress_call++;
     double t_st, t_start_comm;
-    void *rbuf;
+    void *rbuf = NULL;
 	t_st = MPI_Wtime();
 	progress_recv_queue();
     progress_send_queue();
 
     for(comp = 0; comp < gl_ncomp; comp++){
-        if( gl_comps[comp].comm == MPI_COMM_NULL || comp == gl_my_comp_id){
+        if( (gl_comps[comp].comm == MPI_COMM_NULL) || (comp == gl_my_comp_id)){
             continue;
         }
 
@@ -2063,9 +2063,10 @@ void progress_comm()
             tag = status.MPI_TAG;
             src = status.MPI_SOURCE;
 			MPI_Get_count(&status, MPI_BYTE, &bufsz);
-			
-			rbuf = dtf_malloc(bufsz);
-			assert(rbuf != NULL);
+			if(bufsz > 0){
+				rbuf = dtf_malloc(bufsz);
+				assert(rbuf != NULL);
+			}
             print_recv_msg(tag, src);
             t_start_comm = MPI_Wtime();
 			err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_comps[comp].comm, &status);
@@ -2074,6 +2075,7 @@ void progress_comm()
 			parce_msg(comp, src, tag, rbuf, bufsz, 0);
         }
     }
+    rbuf = NULL;
     //check messages in my component
     comp = gl_my_comp_id;
     while(1){
@@ -2087,9 +2089,10 @@ void progress_comm()
 			tag = status.MPI_TAG;
 			src = status.MPI_SOURCE;
 			MPI_Get_count(&status, MPI_BYTE, &bufsz);
-			
-			rbuf = dtf_malloc(bufsz);
-			assert(rbuf != NULL);
+			if(bufsz > 0){
+				rbuf = dtf_malloc(bufsz);
+				assert(rbuf != NULL);
+			}
             print_recv_msg(tag, src);
             t_start_comm = MPI_Wtime();
 			err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_comps[comp].comm, &status);

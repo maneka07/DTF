@@ -506,7 +506,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
 	}
     ret = read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-     DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time rwvar %.3f",  MPI_Wtime() - t_start);
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time rwvar %.3f",  MPI_Wtime() - t_start);
     fbuf->is_transfering = 1;
     return ret;
 }

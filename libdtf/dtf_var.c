@@ -164,7 +164,6 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 		fbuf->rreq_cnt++;
 	else
 		fbuf->wreq_cnt++;
-DTF_DBG(VERBOSE_DBG_LEVEL, "0");
 	/*Enqueue the request to the head*/
 	if(var->ioreqs == NULL)
 		var->ioreqs = req;
@@ -196,7 +195,6 @@ DTF_DBG(VERBOSE_DBG_LEVEL, "0");
 	}
     
     fbuf->has_unsent_ioreqs = 1;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "1");
     if(MPI_Wtime() - fbuf->t_last_sent_ioreqs >= gl_conf.t_send_ioreqs_freq){
 		//Send request to master immediately
 		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
@@ -204,13 +202,12 @@ DTF_DBG(VERBOSE_DBG_LEVEL, "0");
 		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
 			send_ioreqs_by_block(fbuf);
 	}
-DTF_DBG(VERBOSE_DBG_LEVEL, "2");
     MPI_Type_size(dtype, &el_sz);
     ret = 1;
     for(i = 0; i < var->ndims; i++)
         ret *= count[i];
     ret *= el_sz;
-
+    	
     gl_stats.t_rw_var += MPI_Wtime() - t_start;
     return ret;
 }
