@@ -416,7 +416,7 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
 			else
 				fbuf->wreq_cnt--;
 			
-			if(gl_conf.buffered_req_match && (ioreq->rw_flag == DTF_WRITE)) dtf_free(ioreq->user_buf, ioreq->user_buf_sz);
+			if(gl_conf.buffer_data && (ioreq->rw_flag == DTF_WRITE)) dtf_free(ioreq->user_buf, ioreq->user_buf_sz);
 			if(ioreq->start != NULL) dtf_free(ioreq->start, ioreq->ndims*sizeof(MPI_Offset));
 			if(ioreq->count != NULL)dtf_free(ioreq->count, ioreq->ndims*sizeof(MPI_Offset));
 			dtf_free(ioreq, sizeof(io_req_log_t));

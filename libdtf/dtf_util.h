@@ -88,7 +88,7 @@
 
 typedef struct dtf_config{
     int         distr_mode;
-    int         buffered_req_match;    /*Should we buffer the data if request matching is enabled?*/
+    int         buffer_data;    /*Should we buffer the data if request matching is enabled?*/
     int         data_msg_size_limit;
     int         detect_overlap_flag;    /*should master process detect write overlap by different processes?*/
     int         do_checksum;

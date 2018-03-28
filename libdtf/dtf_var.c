@@ -140,7 +140,7 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 	/*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
 	we ignore it. Start and count parameters are supposed to be with respect to
 	element size for var->dtype*/
-	int buffered = gl_conf.buffered_req_match;
+	int buffered = gl_conf.buffer_data;
 
 	if(rw_flag == DTF_READ)
 		buffered = 0;

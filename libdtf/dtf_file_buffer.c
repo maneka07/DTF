@@ -379,7 +379,7 @@ void delete_file_buffer(file_buffer_t* fbuf)
 			else
 				fbuf->wreq_cnt--;
 
-			if(gl_conf.buffered_req_match && (ior->rw_flag == DTF_WRITE)) dtf_free(ior->user_buf, ior->user_buf_sz);
+			if(gl_conf.buffer_data && (ior->rw_flag == DTF_WRITE)) dtf_free(ior->user_buf, ior->user_buf_sz);
 			if(ior->start != NULL) dtf_free(ior->start, ior->ndims*sizeof(MPI_Offset));
 			if(ior->count != NULL)dtf_free(ior->count, ior->ndims*sizeof(MPI_Offset));
 			dtf_free(ior, sizeof(io_req_log_t));

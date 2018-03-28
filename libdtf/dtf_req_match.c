@@ -2145,7 +2145,7 @@ void log_ioreq(file_buffer_t *fbuf,
         req->user_buf_sz = el_sz;
     }
 	/*buffering*/
-	if(gl_conf.buffered_req_match && (rw_flag == DTF_WRITE)){
+	if(gl_conf.buffer_data && (rw_flag == DTF_WRITE)){
         req->user_buf = dtf_malloc((size_t)req->user_buf_sz);
         assert(req->user_buf != NULL);
         memcpy(req->user_buf, buf, (size_t)req->user_buf_sz);

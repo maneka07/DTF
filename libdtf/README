@@ -19,7 +19,7 @@ TODO: general description of what the middleware does
 2) Modify each component: 
    - Include "dtf.h" 
    - Add dtf_init() and dtf_finalize() (see description in the API description section) in each component. 
-   - add dtf_match_io() in corresponding place in each component
+   - add any of the transfer functions in corresponding place in each component
 
 3) Before run set set global variable DTF_GLOBAL_PATH to some path accessible by all processes in all components:
 
@@ -39,10 +39,9 @@ TODO: general description of what the middleware does
 *** DTF_SCALE - special flag for SCALE-LETKF, should be set to 1 for SCALE-LETKF executions (default 0)
 *** SCALE_ENSEMBLE_SZ - number of processes in one ensemble in SCALE-LETKF. Should be set to 
     corresponding number in order to exclude the last ensemble (mean) from calculating the timing statistics.
-*** DTF_IGNORE_ITER - used in combination with dtf_match_io_v2(). If set, any match function 
+*** DTF_IGNORE_ITER - used in combination with dtf_transfer_v2(). If set, any transfer function 
     for iterations up this iteration will be ignored. Used in SCALE-LETKF. 
-*** DTF_INI_FILE - instead of passing the DTF configuration file via dtf_init() user may set 
-    the path to the file using this variable.
+*** DTF_INI_FILE - if this is set, the value will overrride the path to the ini file passed in dtf_init()
 
 *** MAX_WORKGROUP_SIZE - number of processes I/O requests from which are handled by one master 
     (i.e. number of masters in the execution = number of processes per component / MAX_WORKGROUP_SIZE) (default 64)
@@ -82,40 +81,66 @@ NOTE:
 	Fortran API has an additional parameter error (integer):
         call dtf_finalize(error)	
 
-*** int dtf_match_io(const char *filename, int ncid, int intracomp_io_flag )
-    int dtf_match_io_v2(const char *filename, int ncid, int intracomp_io_flag, int it )
+*** int dtf_transfer(const char *filename, int ncid)
+    int dtf_transfer_v2(const char *filename, int ncid, int it )
+    int dtf_transfer_complete_all()
 
 DESCRIPTION: 
 
-	Data transfer function. Should be called in each component participating in 
+	Data transfer functions. Should be called in each component participating in 
         the data transfer. For performance reasons it is recommended to call this 
         function as few times as possible, ideally, one time per file right after the 
-        PnetCDF I/O calls but before the file is closed. In case, several files are 
-        transfered between the components, the order in which the matching functions 
+        PnetCDF I/O calls but before the file is closed. All functions will block until 
+	the data transfer is complete. 
+
+NOTES 
+	* dtf_transfer() and dtf_transfer_v2():
+	In case, several files are 
+        transfered between the components, the order in which the transfer functions 
         are called should be the same in both components. I.e., if component 1 first 
-	calls the match function for file A and then, file B, component 2 should call
-	the matching function in the same order. 
-	dtf_match_io_v2() is used in combination with DTF_IGNORE_ITER. Any match functions 
+	calls the transfer function for file A and then, file B, component 2 should call
+	the transfer function in the same order. 
+	dtf_transfer_v2() is used in combination with DTF_IGNORE_ITER. Any transfer functions 
 	for iterations up to the iteration set via DTF_IGNORE_ITER will be ignored (Used
 	in SCALE-LETKF).
-
+	* dtf_transfer_complete_all()
+	completes all active transfers for all files. May be used instead of calling dtf_transfer
+	for each file separately. 
 
 PARAMETERS:
 	[IN] filename - name of the file for which the data transfer should be performed. 
 	     File must be listed in the DTF configuration file.
 	[IN] ncid - file ncid. Not necessary, -1 may be passed. 
-	[IN] intracomp_io_flag - if set to 1, the data transfer is performed not between 
-	     components but within the same component. Used in cases when writer component tries
-	     to read the file it's currently writing to.
 	[IN] it - current iteration
 	
 RETURN:
 	Always 0. If an error occurs, the program aborts.
-NOTE: 
-	Intracomponent data transfer has not been tested for a while, no guaranty 
-	it still works. 
 
+EXAMPLE: For example, if there are two files A and B passed between the 
+	the components the possible combinations of transfer functions are: 
 
+	Component 1:		Component 2:
+	-------------		-----------
+	I/O for file A		I/O for file A
+	dtf_transfer(A)		
+	I/O for file B		I/O for file B
+	dtf_transfer(B)		dtf_transfer_complete_all()
+
+	Component 1:		Component 2:
+	-------------		-----------
+	I/O for file A		I/O for file B
+	dtf_transfer(A)		
+	I/O for file B		I/O for file A
+	dtf_transfer(B)		dtf_transfer_complete_all()
+
+	Component 1:		Component 2:
+	-------------		-----------
+	I/O for file A		I/O for file A
+	dtf_transfer(A)		dtf_transfer(A)
+	I/O for file B		I/O for file B
+	dtf_transfer(B)		dtf_transfer(B)
+
+	(*dtf_transfer_v2 may be used instead of dtf_transfer)
 
 *** void dtf_print(const char *str)
 

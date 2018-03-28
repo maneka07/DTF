@@ -211,7 +211,7 @@ int load_config(const char *ini_name, const char *comp_name){
 
 
   gl_conf.log_ioreqs = 0;
-  gl_conf.buffered_req_match = 0;
+  gl_conf.buffer_data = 0;
   gl_conf.do_checksum = 0;
   gl_conf.iodb_build_mode = IODB_BUILD_BLOCK; // default
 
@@ -305,15 +305,15 @@ int load_config(const char *ini_name, const char *comp_name){
         } else if(strcmp(param, "iodb_range") == 0){
 			gl_conf.iodb_range = (MPI_Offset)atoi(value);
 			assert(gl_conf.iodb_range > 0);
-		} else if(strcmp(param, "buffered_req_match") == 0){
+		} else if(strcmp(param, "buffer_data") == 0){
 
-            gl_conf.buffered_req_match = atoi(value);
-            if(gl_conf.buffered_req_match == 0)
-                DTF_DBG(VERBOSE_DBG_LEVEL, "buffered_req_match disabled");
-            else if(gl_conf.buffered_req_match == 1)
-                DTF_DBG(VERBOSE_DBG_LEVEL, "buffered_req_match enabled");
+            gl_conf.buffer_data = atoi(value);
+            if(gl_conf.buffer_data == 0)
+                DTF_DBG(VERBOSE_DBG_LEVEL, "buffer_data disabled");
+            else if(gl_conf.buffer_data == 1)
+                DTF_DBG(VERBOSE_DBG_LEVEL, "buffer_data enabled");
             else {
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: Value for buffered_req_match should be 0 or 1.");
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: Value for buffer_data should be 0 or 1.");
                 goto panic_exit;
             }
         } else if(strcmp(param, "do_checksum") == 0){
