@@ -908,7 +908,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 			if(ioreq->sent_flag){
 				break;
 			}
-			DTF_DBG(VERBOSE_ALL_LEVEL, "Will send ioreq for var %d:", varid);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Will send ioreq for var %d:", varid);
 			for(i = 0; i < var->ndims; i++)
 				DTF_DBG(VERBOSE_ALL_LEVEL, "%lld  ->  %lld", ioreq->start[i], ioreq->count[i]);
 
@@ -1091,6 +1091,13 @@ void match_ioreqs_multiple()
 		
 		fbuf = gl_filebuf_list;
 		while(fbuf != NULL){
+			
+			if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
+				((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
+				fbuf->done_matching_flag = 1;
+			}
+			
 			if(fbuf->is_transfering && fbuf->done_matching_flag){
 				
 				compl_file_cnt++;
@@ -1123,6 +1130,7 @@ void match_ioreqs_multiple()
 
 				fbuf->cur_transfer_epoch++;
 			}
+						
 			fbuf = fbuf->next;
 		}
 		progress_comm();
@@ -1225,6 +1233,12 @@ int match_ioreqs(file_buffer_t *fbuf)
 			progress_comm();
 			if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->my_mst_info->my_mst == gl_my_rank)  )
 				do_matching(fbuf);
+			
+			if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
+				((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
+				fbuf->done_matching_flag = 1;
+			}
 		}
 	}
 	
