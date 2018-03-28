@@ -31,6 +31,7 @@
 #define VERBOSE_ERROR_LEVEL   0
 #define VERBOSE_DBG_LEVEL     1
 #define VERBOSE_ALL_LEVEL     2
+#define VERBOSE_RB_TREE_LEVEL 3
 
 #define DTF_TIMEOUT       60 
 
