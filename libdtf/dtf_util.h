@@ -96,7 +96,7 @@ typedef struct dtf_config{
     MPI_Offset  iodb_range;  		  /*the size of the data block in the first dimension*/
     int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
     int         log_ioreqs;
-	double          t_send_ioreqs_freq;  /*time out upon reaching which I/O reqs must be sent*/
+	double      t_send_ioreqs_freq;  /*time out upon reaching which I/O reqs must be sent*/
 }dtf_config_t;
 
 typedef struct stats{

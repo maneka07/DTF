@@ -201,6 +201,7 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 			send_ioreqs_by_var(fbuf);
 		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
 			send_ioreqs_by_block(fbuf);
+		fbuf->t_last_sent_ioreqs = MPI_Wtime();
 	}
     MPI_Type_size(dtype, &el_sz);
     ret = 1;

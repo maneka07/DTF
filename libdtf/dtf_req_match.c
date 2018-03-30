@@ -223,7 +223,7 @@ static void do_matching(file_buffer_t *fbuf)
                 if(wblock == NULL){
 
                     //didn't find
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "didnt find block for var %d", var_id);
+                    DTF_DBG(VERBOSE_ALL_LEVEL, "didnt find block for var %d", var_id);
                     gl_stats.idle_time += MPI_Wtime() - t_st;
                     t_idle += MPI_Wtime() - t_st;
                     gl_stats.idle_do_match_time += MPI_Wtime() - t_st;
@@ -410,7 +410,7 @@ static void do_matching(file_buffer_t *fbuf)
             fbuf->my_mst_info->iodb->nritems--;
         } else {
 //            DTF_DBG(VERBOSE_DBG_LEVEL, "Not all chunks for rreq from rank %d have been matched (%d left)", ritem->rank, (int)ritem->nchunks);
-           DTF_DBG(VERBOSE_DBG_LEVEL, "Haven't matched all blocks for rank %d, %d left", ritem->rank, (int)ritem->nblocks);
+           DTF_DBG(VERBOSE_ALL_LEVEL, "Haven't matched all blocks for rank %d, %d left", ritem->rank, (int)ritem->nblocks);
            // print_read_dbitem(ritem);
 
             ritem = ritem->next;
@@ -600,7 +600,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int rank, MP
 	fbuf->my_mst_info->iodb->updated_flag = 1;
     gl_stats.parse_ioreq_time += MPI_Wtime() - t_st;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_stats.malloc_size);
-    
+	//TODO trigger do_matching only at certain periods
     do_matching(fbuf);
 }
 
@@ -1097,6 +1097,8 @@ void match_ioreqs_multiple()
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
 				fbuf->done_matching_flag = 1;
 			}
+			
+			do_matching(fbuf);
 			
 			if(fbuf->is_transfering && fbuf->done_matching_flag){
 				
