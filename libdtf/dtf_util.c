@@ -491,13 +491,15 @@ void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
     int err;
 	size_t offt = 0;
 	//pack my master info and send it to the other component
-	bufsz = MAX_FILE_NAME+fbuf->my_mst_info->nmasters*sizeof(int)+sizeof(int);
+	bufsz = MAX_FILE_NAME+sizeof(int)+fbuf->my_mst_info->nmasters*sizeof(int)+sizeof(int);
 	buf = dtf_malloc(bufsz);
 	assert(buf != NULL);
 	chbuf = (unsigned char*)buf;
 	
 	memcpy(chbuf, fbuf->file_path, MAX_FILE_NAME);
 	offt += MAX_FILE_NAME;
+	memcpy(chbuf+offt, &(fbuf->my_mst_info->comm_sz), sizeof(int));
+	offt += sizeof(int);
 	/*number of masters*/
 	memcpy(chbuf+offt, &(fbuf->my_mst_info->nmasters), sizeof(int));
 	offt += sizeof(int);
@@ -823,4 +825,22 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offse
         idx += mem;
       }
     return idx;
+}
+
+void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm to_comm, int *to_ranks)
+{
+	MPI_Group from_group, to_group;
+	int err;
+	
+	assert(from_ranks != NULL);
+	assert(to_ranks != NULL);
+	
+	MPI_Comm_group(from_comm, &from_group);
+    MPI_Comm_group(to_comm, &to_group);
+    
+    err = MPI_Group_translate_ranks(from_group, nranks, from_ranks, to_group, to_ranks);
+    CHECK_MPI(err);
+    
+    MPI_Group_free(&from_group);
+    MPI_Group_free(&to_group);
 }

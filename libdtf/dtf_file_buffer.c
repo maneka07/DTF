@@ -21,6 +21,7 @@ static void unpack_file_info(MPI_Offset bufsz, void *buf)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start unpackinf file info for of sz %d", (int)bufsz);
     /*Unpack:
        - file name
+       - how many ranks created the file
        - file header size
        - header
        - number of masters
@@ -37,6 +38,10 @@ static void unpack_file_info(MPI_Offset bufsz, void *buf)
     assert(fbuf != NULL);
     /*ncid*/
     fbuf->ncid = -1;
+    /*how many ranks created the file*/
+    fbuf->cpl_mst_info->comm_sz = (int)(*((MPI_Offset*)(chbuf+offt)));
+    offt += sizeof(MPI_Offset);
+    assert(fbuf->cpl_mst_info->comm_sz > 0);
     /*header size*/
     fbuf->hdr_sz = *((MPI_Offset*)(chbuf+offt));
     offt += sizeof(MPI_Offset);
@@ -135,7 +140,7 @@ static int match_str(char* pattern, const char* filename)
     return ret;
 }
 
-static void init_mst_info(master_info_t* mst_info)
+static void init_mst_info(master_info_t* mst_info, int comm_sz)
 {
     mst_info->masters = NULL;
     mst_info->my_mst = -1;
@@ -144,13 +149,13 @@ static void init_mst_info(master_info_t* mst_info)
     mst_info->nmasters = 0;
     mst_info->iodb = NULL;
     mst_info->nread_completed = 0;
+    mst_info->comm_sz = comm_sz;
 }
 
 static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
 {
-    int wg, nranks, myrank, i, err;
+    int wg, nranks, myrank, i;
     char* s = getenv("MAX_WORKGROUP_SIZE");
-    MPI_Group glob_group, file_group;
     int my_master, my_master_glob;
     int *masters, *ranks;
 
@@ -166,9 +171,6 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
        workgroup. Create the list of masters. */
     MPI_Comm_size(comm, &nranks);
     MPI_Comm_rank(comm, &myrank);
-
-    MPI_Comm_group(gl_comps[gl_my_comp_id].comm, &glob_group);
-    MPI_Comm_group(comm, &file_group);
 
     if(nranks <= wg){
         my_master = 0;
@@ -188,9 +190,7 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     if(myrank == 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Nmasters %d", mst_info->nmasters);
 
-    /*Translate the rank of my master*/
-    err = MPI_Group_translate_ranks(file_group, 1, &my_master, glob_group, &my_master_glob);
-    CHECK_MPI(err);
+    translate_ranks(&my_master, 1, comm, gl_comps[gl_my_comp_id].comm, &my_master_glob);
     mst_info->my_mst = my_master_glob;
 
     mst_info->masters = (int*)dtf_malloc(mst_info->nmasters * sizeof(int));
@@ -201,10 +201,8 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     masters[0] = 0;
     for(i = 1; i < mst_info->nmasters; i++){
         masters[i] = masters[i-1] + wg;
-    }
-    /*Translate rank from subcommunicator to the global rank in mpi_comm_world*/
-    err = MPI_Group_translate_ranks(file_group, mst_info->nmasters, masters, glob_group, mst_info->masters);
-    CHECK_MPI(err);
+    }    
+    translate_ranks(masters, mst_info->nmasters, comm, gl_comps[gl_my_comp_id].comm, mst_info->masters);
 
     if(myrank == 0){
         for(i = 0; i < mst_info->nmasters; i++)
@@ -221,25 +219,22 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
             mst_info->my_wg = NULL;
         } else {
             nranks = mst_info->my_wg_sz - 1;
-            mst_info->my_wg = dtf_malloc(nranks*sizeof(int));
+            mst_info->my_wg = dtf_malloc(nranks*sizeof(int));  //TODO do we really need this?
             assert(mst_info->my_wg != NULL);
             ranks = dtf_malloc(nranks*sizeof(int));
             assert(ranks != NULL);
 
             for(i = 0; i < nranks; i++)
                 ranks[i] = myrank + i + 1;
-
-            err = MPI_Group_translate_ranks(file_group, nranks, ranks, glob_group, mst_info->my_wg);
-            CHECK_MPI(err);
+                
+            translate_ranks(ranks, nranks, comm, gl_comps[gl_my_comp_id].comm, mst_info->my_wg);
             dtf_free(ranks, nranks*sizeof(int));
         }
 
     } else {
         mst_info->my_wg = NULL;
     }
-    MPI_Group_free(&file_group);
-    MPI_Group_free(&glob_group);
-
+    
     mst_info->nread_completed = 0;
     return 0;
 }
@@ -345,7 +340,7 @@ void delete_file_buffer(file_buffer_t* fbuf)
     if(fbuf->my_mst_info != NULL){
 
         if(fbuf->my_mst_info->iodb != NULL){
-            clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
+            clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars, fbuf->cpl_mst_info->comm_sz);
             dtf_free(fbuf->my_mst_info->iodb, sizeof(ioreq_db_t));
         }
 
@@ -407,7 +402,8 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
 {
 
 	file_buffer_t *buf;
-
+	int comm_sz;
+	
 	DTF_DBG(VERBOSE_ALL_LEVEL, "Create file buffer for file %s", file_path);
 
 	if(strlen(file_path) > MAX_FILE_NAME){
@@ -432,16 +428,18 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
     buf->sync_comp_flag = 0;
     buf->comm = MPI_COMM_NULL;
     buf->cpl_info_shared = 0;
+    
+    MPI_Comm_size(comm, &comm_sz);
     buf->my_mst_info = dtf_malloc(sizeof(master_info_t));
     assert(buf->my_mst_info != NULL);
-    init_mst_info(buf->my_mst_info);    
+    init_mst_info(buf->my_mst_info, comm_sz);    
 	buf->my_mst_info->iodb = dtf_malloc(sizeof(struct ioreq_db));
 	assert(buf->my_mst_info->iodb != NULL);
 	init_iodb(buf->my_mst_info->iodb);
             
     buf->cpl_mst_info = dtf_malloc(sizeof(master_info_t));
     assert(buf->cpl_mst_info != NULL);
-    init_mst_info(buf->cpl_mst_info);
+    init_mst_info(buf->cpl_mst_info, 0);
 	strcpy(buf->file_path, file_path);
 	buf->reader_id = -1;
 	buf->writer_id = -1;
@@ -521,7 +519,7 @@ void finalize_files()
     }
 }
 
-void clean_iodb(ioreq_db_t *iodb, int nvars)
+void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
 {
 	int i;
 	write_db_item_t *witem;
@@ -553,28 +551,29 @@ void clean_iodb(ioreq_db_t *iodb, int nvars)
         dtf_free(iodb->witems, nvars*sizeof(write_db_item_t*));
         iodb->witems = NULL;
 	}
+    
+    if(iodb->ritems != NULL){
+		for(i = 0; i < cpl_comm_sz; i++){
+			if(iodb->ritems[i] != NULL){
+				ritem = iodb->ritems[i];
+				read_dblock_t *block = ritem->dblocks;
+				while(block != NULL){
 
-	ritem = iodb->ritems;
-    while(ritem != NULL){
-        if(ritem->dblocks != NULL){
-            read_dblock_t *block = ritem->dblocks;
-            while(block != NULL){
-
-                dtf_free(block->start, block->ndims*sizeof(MPI_Offset));
-                dtf_free(block->count, block->ndims*sizeof(MPI_Offset));
-                ritem->dblocks = ritem->dblocks->next;
-                dtf_free(block, sizeof(read_dblock_t));
-                block = ritem->dblocks;
-                ritem->nblocks--;
-            }
-            assert(ritem->nblocks == 0);
-        }
-
-        iodb->ritems = iodb->ritems->next;
-        dtf_free(ritem, sizeof(read_db_item_t));
-        ritem = iodb->ritems;
-        iodb->nritems--;
-    }
+					dtf_free(block->start, block->ndims*sizeof(MPI_Offset));
+					dtf_free(block->count, block->ndims*sizeof(MPI_Offset));
+					ritem->dblocks = ritem->dblocks->next;
+					dtf_free(block, sizeof(read_dblock_t));
+					block = ritem->dblocks;
+					ritem->nblocks--;
+				}
+				assert(ritem->nblocks == 0);
+				dtf_free(ritem, sizeof(read_db_item_t));
+				iodb->nritems--;
+			}
+		}
+		dtf_free(iodb->ritems, cpl_comm_sz*sizeof(read_db_item_t*));
+		iodb->ritems = NULL;
+	}
 
     iodb->updated_flag = 0;
 
@@ -795,6 +794,7 @@ void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
  //   rb_red_blk_node *var_node;
     /*Pack:
        - file name
+       - how many ranks opened it
        - file header size
        - header
        - number of masters
@@ -805,7 +805,7 @@ void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
 
     sz =   MAX_FILE_NAME + fbuf->hdr_sz +
            fbuf->my_mst_info->nmasters*sizeof(MPI_Offset) +
-           sizeof(MPI_Offset)*3;
+           sizeof(MPI_Offset)*4;
 
     sz += sz%sizeof(MPI_Offset); //padding
 
@@ -827,6 +827,9 @@ void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     /*filename*/
     memcpy(chbuf, fbuf->file_path, MAX_FILE_NAME);
     offt += MAX_FILE_NAME;
+    /*how many ranks created the file*/
+    *((MPI_Offset*)(chbuf+offt)) = (MPI_Offset)fbuf->my_mst_info->comm_sz;
+    offt += sizeof(MPI_Offset);
     /*header size*/
     *((MPI_Offset*)(chbuf+offt)) = fbuf->hdr_sz;
     offt += sizeof(MPI_Offset);

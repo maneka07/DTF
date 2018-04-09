@@ -37,20 +37,19 @@ typedef struct read_dblock{
 }read_dblock_t;
 
 typedef struct read_db_item{
-    int                     rank;
+    int                     global_rank;
     read_dblock_t           *dblocks;
-    read_dblock_t           *last_block;
+//    read_dblock_t           *last_block;
     MPI_Offset              nblocks;
-    struct read_db_item     *next;
-    struct read_db_item     *prev;
+//    struct read_db_item     *next;
+//    struct read_db_item     *prev;
 }read_db_item_t;
 
 typedef struct ioreq_db{
     int                  updated_flag;
     MPI_Offset           nritems;
-
     struct write_db_item **witems;
-    struct read_db_item  *ritems;
+    struct read_db_item  **ritems;
 }ioreq_db_t;
 
 typedef struct master_info{
@@ -59,6 +58,7 @@ typedef struct master_info{
     int 					my_mst;     /*My master rank*/
     int 					nmasters;   /*Number of master nodes that hold data for request matching*/
     int 					*masters;   /*Ranks of master nodes on the writer's side*/
+    int                     comm_sz;    /*How many ranks opened the file*/
     unsigned int 			my_wg_sz;
     int 					*my_wg;
 } master_info_t;
@@ -127,7 +127,7 @@ file_buffer_t*		create_file_buffer(fname_pattern_t *pat, const char* file_path, 
 void 				delete_file_buffer(file_buffer_t* buf);
 file_buffer_t* 		find_file_buffer(file_buffer_t* buflist, const char* file_path, int ncid);
 void 				finalize_files();
-void 				clean_iodb(ioreq_db_t *iodb, int nvars);
+void 				clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz);
 void 				open_file(file_buffer_t *fbuf, MPI_Comm comm);
 void 				close_file(file_buffer_t *fbuf);
 void 				write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header);

@@ -206,5 +206,6 @@ void 		get_put_data(dtf_var_t *var,
                   int convert_flag);
 void progress_send_queue();
 void progress_recv_queue();
+void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm to_comm, int *to_ranks);
 
 #endif

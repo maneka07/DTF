@@ -121,6 +121,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
 		assert(fbuf->cpl_mst_info->masters != NULL);
 		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
+		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
 		/*Set root reader immediately only for file I/O. If mode is transfer
 		 * we need to force scale receive FILE_INFO_REQ_TAG so won't set the root reader.*/
 		if(fbuf->iomode == DTF_IO_MODE_FILE){
@@ -236,6 +237,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 			assert(fbuf->cpl_mst_info->masters != NULL);
 			memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
 			fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
+			fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
 			fbuf->cpl_info_shared = 1;
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Root writer set to %d", fbuf->root_writer);
 		 }
@@ -277,24 +279,30 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
   * processes in this component. */
   
     if( !(omode & NC_WRITE) && fbuf->writer_id == gl_my_comp_id && !fbuf->cpl_info_shared){
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about other component");
-			if(fbuf->root_writer == gl_my_rank)
-				assert(fbuf->cpl_mst_info->nmasters > 0);
+		int err;
 		
-			int err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
-			CHECK_MPI(err);
-			
-			if(gl_my_rank != fbuf->root_writer){
-				assert(fbuf->cpl_mst_info->masters== NULL);
-				fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-				assert(fbuf->cpl_mst_info->masters != NULL);	
-			}
-			
-			err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
-			CHECK_MPI(err);
-			
-			fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
-			fbuf->cpl_info_shared = 1;
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about other component");
+		assert(0); //TODO remove this code block later
+		if(fbuf->root_writer == gl_my_rank)
+			assert(fbuf->cpl_mst_info->nmasters > 0);
+	
+		err = MPI_Bcast(&(fbuf->cpl_mst_info->comm_sz), 1, MPI_INT, 0, comm);
+		CHECK_MPI(err);
+	
+		err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
+		CHECK_MPI(err);
+		
+		if(gl_my_rank != fbuf->root_writer){
+			assert(fbuf->cpl_mst_info->masters== NULL);
+			fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+			assert(fbuf->cpl_mst_info->masters != NULL);	
+		}
+		
+		err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
+		CHECK_MPI(err);
+		
+		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
+		fbuf->cpl_info_shared = 1;
 	}
 	
 	/*Set who's the reader and writer component in this session*/
