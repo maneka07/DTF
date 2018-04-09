@@ -41,6 +41,31 @@ static void shift_coord(int ndims, const MPI_Offset *bl_start,
 //        DTF_DBG(VERBOSE_DBG_LEVEL, "   %lld\t -->\t %lld", bl_start[i], subbl_start[i]);
 }
 
+static void invalidate_old_ioreqs(file_buffer_t *fbuf)
+{
+	io_req_t *ioreq, *tmp;
+    int varid;
+    dtf_var_t *var;
+    
+	for(varid=0; varid < fbuf->nvars; varid++){
+		var = fbuf->vars[varid];
+		ioreq = var->ioreqs;
+		while(ioreq != NULL){
+			
+			if(ioreq->sent_flag) break;
+			
+			if((fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ)){
+				DTF_DBG(VERBOSE_ALL_LEVEL, "Invalidate ioreq %d", ioreq->id);
+				assert(!ioreq->sent_flag);
+				tmp = ioreq->next;
+				delete_ioreq(fbuf, varid, &ioreq);
+				ioreq = tmp;
+			} else 
+				ioreq = ioreq->next;
+		}
+	}
+}
+
 void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
 {
 	DTF_DBG(VERBOSE_ALL_LEVEL, "Delete req %d, cur wreqs %d, rreqs %d", (*ioreq)->id,
@@ -692,6 +717,8 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
         sbuf[mst] = NULL;
     }
 
+	invalidate_old_ioreqs(fbuf);
+	
     nrreqs = 0;
     for(varid=0; varid < fbuf->nvars; varid++){
 		var = fbuf->vars[varid];
@@ -807,7 +834,6 @@ fn_exit:
     dtf_free(offt, nmasters*sizeof(unsigned char*));
 }
 
-
 /*This version divides the variable data among masters along the var's biggest dimension.
   If there is an unlimited dimension, the division happens along it*/
 void send_ioreqs_by_block(file_buffer_t *fbuf)
@@ -856,6 +882,8 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
         offt[mst] = 0;
         sbuf[mst] = NULL;
     }
+
+	invalidate_old_ioreqs(fbuf);
 
     nrreqs = 0;
 	for(varid=0; varid < fbuf->nvars; varid++){

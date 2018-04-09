@@ -314,7 +314,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	if(gl_scale)
 		cpl_root = fbuf->cpl_mst_info->masters[0];
 	
-	if( omode & NC_WRITE && !pat->write_only){
+	if( omode & NC_WRITE && !fbuf->is_write_only){
 		//fbuf->omode = DTF_WRITE;
 		fbuf->writer_id = gl_my_comp_id;
 		fbuf->reader_id = cpl_cmp;
@@ -472,10 +472,6 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     progress_comm();
     
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-	if(fbuf->ignore_io){ 
-		DTF_DBG(VERBOSE_ERROR_LEVEL, "ignore io call for %s", filename);
-		return 0;
-	}
 	
 	if(varid >= fbuf->nvars){
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: variable with id %d does not exist. Abort.", varid);
@@ -488,6 +484,19 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: rw_flag value incorrect (%d)", rw_flag);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
+    
+	if(fbuf->ignore_io or fbuf->write_only){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "ignore_io or write_only options are set for this file. I/O for this file will be ignored");
+		int el_sz, i;
+        dtf_var_t *var = fbuf->vars[varid];
+        MPI_Type_size(dtype, &el_sz);
+		ret = 1;
+		for(i = 0; i < var->ndims; i++)
+			ret *= count[i];
+		ret *= el_sz;
+		return ret;
+	}
+    
     if(rw_flag==DTF_WRITE && fbuf->reader_id == gl_my_comp_id){
         int el_sz, i;
         dtf_var_t *var = fbuf->vars[varid];
@@ -501,17 +510,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
 
-    if(fbuf->ignore_io){
-		DTF_DBG(VERBOSE_DBG_LEVEL, "I/O for this file will be ignored");
-		int el_sz, i;
-        dtf_var_t *var = fbuf->vars[varid];
-        MPI_Type_size(dtype, &el_sz);
-		ret = 1;
-		for(i = 0; i < var->ndims; i++)
-			ret *= count[i];
-		ret *= el_sz;
-		return ret;
-	}
+
     ret = read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
     gl_stats.dtf_time += MPI_Wtime() - t_start;
     DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time rwvar %.3f",  MPI_Wtime() - t_start);

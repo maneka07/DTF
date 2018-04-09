@@ -79,6 +79,7 @@ typedef struct file_buffer{
 												- finished being written (mode = DTF_IO_MODE_FILE)
 												*/
   int                       is_transfering;   /*Set to 1 when active transfer phase is happening*/
+  int 						is_write_only;
   int                       iomode;    /*Do normal File I/O or direct data transfer?*/
   //int                       omode;     /*open mode (read/write/undefined)*/ 
   int 						ignore_io; 
@@ -89,7 +90,7 @@ typedef struct file_buffer{
   int                       root_reader;
   struct master_info        *cpl_mst_info;     /*Master info of the coupled component*/
   struct master_info        *my_mst_info;      /*Master info of this component*/
-  struct io_req_log         *ioreq_log;        /*Used for debugging*/
+
   unsigned int              rreq_cnt;
   unsigned int              wreq_cnt;
   int                       done_matching_flag;     	/*Flag used to complete matching requests*/
@@ -100,7 +101,10 @@ typedef struct file_buffer{
                                                                      2 - The file is ready, reader has been notified */
   int                       cpl_info_shared;
   double                    t_last_sent_ioreqs;  /*timestamp when last sent I/O request*/
-  int                       has_unsent_ioreqs;                                          
+  int                       has_unsent_ioreqs;  
+  
+  struct io_req_log         *ioreq_log;        /*Used for debugging*/
+                                          
   struct file_buffer        *next;
   struct file_buffer        *prev;
 }file_buffer_t;

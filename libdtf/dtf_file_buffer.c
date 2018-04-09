@@ -428,7 +428,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
     buf->sync_comp_flag = 0;
     buf->comm = MPI_COMM_NULL;
     buf->cpl_info_shared = 0;
-    
+    buf->is_write_only = pat->write_only;
     MPI_Comm_size(comm, &comm_sz);
     buf->my_mst_info = dtf_malloc(sizeof(master_info_t));
     assert(buf->my_mst_info != NULL);
