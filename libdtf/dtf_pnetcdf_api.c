@@ -91,7 +91,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 	}
 
 	if(fbuf == NULL){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "Creating file %s. File is not treated by DTF", filename);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "Created file %s. File is not treated by DTF", filename);
         return;
     } else {
         DTF_DBG(VERBOSE_ERROR_LEVEL, "Created file %s (ncid %d)", filename, ncid);
@@ -212,6 +212,8 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s. File is not treated by DTF", filename);
         return;
     }
+
+	fbuf->is_transfering = 0; //reset just in case 
 
 	progress_comm();
    
@@ -485,7 +487,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     
-	if(fbuf->ignore_io or fbuf->write_only){
+	if(fbuf->ignore_io || fbuf->is_write_only){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "ignore_io or write_only options are set for this file. I/O for this file will be ignored");
 		int el_sz, i;
         dtf_var_t *var = fbuf->vars[varid];
@@ -527,7 +529,7 @@ _EXTERN_C_ void dtf_log_ioreq(const char *filename,
                                           void *buf,
                                           int rw_flag)
 {
-	int i;
+	int i, type_sz;
 	if(!lib_initialized) return;
 	if(!gl_conf.log_ioreqs) return;
 	double t_start = MPI_Wtime();
@@ -535,10 +537,11 @@ _EXTERN_C_ void dtf_log_ioreq(const char *filename,
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
     if(fbuf->iomode != DTF_IO_MODE_FILE) return;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "log ioreq for var %d", varid);
+    MPI_Type_size(dtype, &type_sz);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "log ioreq for var %d, type sz %d, rw %d", varid, type_sz, rw_flag);
     for(i=0; i < ndims; i++)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", start[i], count[i]);
-    log_ioreq(fbuf, varid, ndims, start, count, dtype, buf, rw_flag);
+  //  log_ioreq(fbuf, varid, ndims, start, count, dtype, buf, rw_flag);
 	gl_stats.dtf_time += MPI_Wtime() - t_start;
 	 DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time logreq %.3f",  MPI_Wtime() - t_start);
 }

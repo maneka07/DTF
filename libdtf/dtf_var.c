@@ -74,7 +74,6 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
                                int rw_flag)
 {
     MPI_Offset ret;
-    int el_sz;
     io_req_t *req;
     int i;
     int def_el_sz, req_el_sz;
@@ -124,9 +123,32 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
     MPI_Type_size(var->dtype, &def_el_sz);
     MPI_Type_size(dtype, &req_el_sz);
 
-    if(def_el_sz != req_el_sz)
+	
+    if(def_el_sz != req_el_sz){
+		
         DTF_DBG(VERBOSE_DBG_LEVEL, "Warning: var %d el_sz mismatch (def %d-bit, access %d).", var->id, def_el_sz, req_el_sz);
-    
+        
+        /*Small hack for derived data types.*/
+        if(dtype != MPI_DOUBLE && dtype != MPI_FLOAT){
+			int el_sz = (int)(req_el_sz/nelems);
+			assert(el_sz > 0);
+			if( el_sz == def_el_sz){
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Ioreq dtype is a derived datatype consisting of elements of size %d, same as var type", def_el_sz);
+				dtype = var->dtype;
+			} else	if(el_sz == def_el_sz*2){
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: assume conversion float->double for var %d in file %s", var->id, fbuf->file_path);
+				dtype = MPI_DOUBLE;
+			} else if (el_sz == (int)(def_el_sz/2)){
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: assume conversion double->float for var %d in file %s", var->id, fbuf->file_path);
+				dtype = MPI_FLOAT;
+			} else {
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: cannot handle conversion from derived datatype for var %d in file %s", var->id, fbuf->file_path);
+				MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+			}
+			MPI_Type_size(dtype, &req_el_sz);
+		}d
+		
+    }
     //assert(var->dtype == dtype);
 
 	//~ if(rw_flag == DTF_WRITE){
@@ -203,11 +225,8 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 			send_ioreqs_by_block(fbuf);
 		fbuf->t_last_sent_ioreqs = MPI_Wtime();
 	}
-    MPI_Type_size(dtype, &el_sz);
-    ret = 1;
-    for(i = 0; i < var->ndims; i++)
-        ret *= count[i];
-    ret *= el_sz;
+
+    ret = nelems*req_el_sz;
     	
     gl_stats.t_rw_var += MPI_Wtime() - t_start;
     return ret;

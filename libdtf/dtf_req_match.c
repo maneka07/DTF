@@ -41,32 +41,7 @@ static void shift_coord(int ndims, const MPI_Offset *bl_start,
 //        DTF_DBG(VERBOSE_DBG_LEVEL, "   %lld\t -->\t %lld", bl_start[i], subbl_start[i]);
 }
 
-static void invalidate_old_ioreqs(file_buffer_t *fbuf)
-{
-	io_req_t *ioreq, *tmp;
-    int varid;
-    dtf_var_t *var;
-    
-	for(varid=0; varid < fbuf->nvars; varid++){
-		var = fbuf->vars[varid];
-		ioreq = var->ioreqs;
-		while(ioreq != NULL){
-			
-			if(ioreq->sent_flag) break;
-			
-			if((fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ)){
-				DTF_DBG(VERBOSE_ALL_LEVEL, "Invalidate ioreq %d", ioreq->id);
-				assert(!ioreq->sent_flag);
-				tmp = ioreq->next;
-				delete_ioreq(fbuf, varid, &ioreq);
-				ioreq = tmp;
-			} else 
-				ioreq = ioreq->next;
-		}
-	}
-}
-
-void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
+static void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
 {
 	DTF_DBG(VERBOSE_ALL_LEVEL, "Delete req %d, cur wreqs %d, rreqs %d", (*ioreq)->id,
 			fbuf->wreq_cnt, fbuf->rreq_cnt);
@@ -95,6 +70,31 @@ void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
     dtf_free((*ioreq), sizeof(io_req_t));
     DTF_DBG(VERBOSE_ALL_LEVEL, "Deleted, cur wreqs %d, rreqs %d",
 			fbuf->wreq_cnt, fbuf->rreq_cnt);
+}
+
+static void invalidate_old_ioreqs(file_buffer_t *fbuf)
+{
+	io_req_t *ioreq, *tmp;
+    int varid;
+    dtf_var_t *var;
+    
+	for(varid=0; varid < fbuf->nvars; varid++){
+		var = fbuf->vars[varid];
+		ioreq = var->ioreqs;
+		while(ioreq != NULL){
+			
+			if(ioreq->sent_flag) break;
+			
+			if((fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ)){
+				DTF_DBG(VERBOSE_ALL_LEVEL, "Invalidate ioreq %d", ioreq->id);
+				assert(!ioreq->sent_flag);
+				tmp = ioreq->next;
+				delete_ioreq(fbuf, varid, &ioreq);
+				ioreq = tmp;
+			} else 
+				ioreq = ioreq->next;
+		}
+	}
 }
 
 void delete_ioreqs(file_buffer_t *fbuf, int finalize)
@@ -489,7 +489,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
 		var = fbuf->vars[var_id];
 
         if(rw_flag == DTF_READ){
-			assert(comm == gl_comps[fbuf->reader_id].comm);
+			//assert(comm == gl_comps[fbuf->reader_id].comm);
 			if(fbuf->my_mst_info->iodb->ritems == NULL){
 				assert(fbuf->cpl_mst_info->comm_sz > 0);
 
@@ -546,7 +546,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
 			int i;
             write_db_item_t *witem;
             /*Allow write requests only from the writer*/
-            assert(comm == gl_comps[fbuf->writer_id].comm);
+            //assert(comm == gl_comps[fbuf->writer_id].comm);
             
             if(fbuf->my_mst_info->iodb->witems == NULL){
 				fbuf->my_mst_info->iodb->witems = dtf_malloc(fbuf->nvars*sizeof(write_db_item_t*));
@@ -1988,13 +1988,17 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 				break;
 			case IO_REQS_TAG:
 				if( (comp != gl_my_comp_id) && (fbuf->cpl_mst_info->comm_sz == 0)) goto fn_exit;
+				if(!fbuf->is_transfering) goto fn_exit;  //Not ready to process this message yet
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Received reqs from %d, comp %d (my comp %d), bufsz %d", src, comp,gl_my_comp_id, (int)bufsz);
 				parse_ioreqs(fbuf, (unsigned char*)rbuf+offt, bufsz - offt, src, gl_comps[comp].comm);
 				break;
 			case IO_DATA_REQ_TAG:
+				if(!fbuf->is_transfering) goto fn_exit;  //Not ready to process this message yet
 				send_data(fbuf, (unsigned char*)rbuf+offt, bufsz - offt);
 				break;
 			case IO_DATA_TAG:
+				if(!fbuf->is_transfering) goto fn_exit;  //Not ready to process this message yet
+				//TODO in message replay need to handle here
 				recv_data_rdr(fbuf, (unsigned char*)rbuf + offt, bufsz - offt);
 				break;
 			case READ_DONE_TAG:
