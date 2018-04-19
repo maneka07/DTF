@@ -17,13 +17,13 @@
 #define IO_DATA_REQ_TAG     1       /*master -> writer*/
 #define IO_DATA_TAG         2       /*writer -> reader*/
 #define READ_DONE_TAG       3
-#define READ_DONE_CONFIRM_TAG       4
+#define DONE_MULTIPLE_TAG   4
 #define FILE_INFO_TAG       5
 #define FILE_INFO_REQ_TAG   6
 #define MATCH_DONE_TAG      7
 #define IO_REQS_TAG         8
 #define COMP_SYNC_TAG		9
-#define COMP_FINALIZED_TAG   10
+#define COMP_FINALIZED_TAG  10
 
 #define IODB_BUILD_VARID    0  /*Distribute ioreqs based on var id*/
 #define IODB_BUILD_BLOCK    1  /*Distribute ioreqs by dividing var to blocks*/

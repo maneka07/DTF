@@ -1082,7 +1082,7 @@ fn_exit:
     dtf_free(offt, nmasters*sizeof(unsigned char*));
 }
 
-void match_ioreqs_multiple()
+void match_ioreqs_all_files()
 {
 	file_buffer_t *fbuf;
 	int compl_file_cnt = 0;
@@ -1283,27 +1283,6 @@ int match_ioreqs(file_buffer_t *fbuf)
 
 		delete_ioreqs(fbuf,0);
 	}
-	
-	/*Synchronize finishing the matching*/
-    //~ if(gl_my_comp_id == fbuf->writer_id){
-		//~ MPI_Barrier(fbuf->comm);
-		//~ if(fbuf->root_writer == gl_my_rank){
-			//~ err = MPI_Send(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, READ_DONE_CONFIRM_TAG, gl_comps[fbuf->reader_id].comm);
-			//~ CHECK_MPI(err);
-		//~ }
-	//~ } else { /*reader*/
-		//~ if(fbuf->root_reader == gl_my_rank){
-			//~ char filename[MAX_FILE_NAME];
-			
-			//~ err = MPI_Recv(filename, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, READ_DONE_CONFIRM_TAG, gl_comps[fbuf->writer_id].comm, MPI_STATUS_IGNORE);
-			//~ CHECK_MPI(err);
-			//~ assert(strcmp(filename, fbuf->file_path) == 0);
-		//~ }
-		//~ MPI_Barrier(fbuf->comm);
-	//~ }
-	
-//    t_part2 = MPI_Wtime() - t_part2;
-//    t_part3 = MPI_Wtime();
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
 
@@ -1895,9 +1874,6 @@ static void print_recv_msg(int tag, int src)
         case READ_DONE_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_TAG from %d", src);
             break;
-        case READ_DONE_CONFIRM_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_CONFIRM_TAG from %d", src);
-            break;
         case FILE_INFO_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_TAG from %d", src);
             break;
@@ -1906,6 +1882,9 @@ static void print_recv_msg(int tag, int src)
             break;
         case MATCH_DONE_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag MATCH_DONE_TAG from %d", src);
+            break;
+        case DONE_MULTIPLE_TAG:
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag DONE_MULTIPLE_TAG from %d", src);
             break;
         case IO_REQS_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_REQS_TAG from %d", src);
@@ -2042,6 +2021,16 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					notify_workgroup(fbuf, NULL, 0, MATCH_DONE_TAG);
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
 				fbuf->done_matching_flag = 1;
+				break;
+			case DONE_MULTIPLE_TAG:
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Recv done multiple tag for %s", fbuf->file_path);
+
+				if(fbuf->my_mst_info->my_mst == gl_my_rank){
+					DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writers that multiple matching for %s completed", fbuf->file_path);
+					/*Tell other writer ranks that they can complete matching*/
+					notify_workgroup(fbuf, NULL, 0, DONE_MULTIPLE_TAG);
+				}
+				fbuf->done_multiple_flag = 1;
 				break;
 			case COMP_SYNC_TAG:
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Sync tag for file %s", (char*)rbuf);
@@ -2216,4 +2205,21 @@ void log_ioreq(file_buffer_t *fbuf,
 		req->next = fbuf->ioreq_log;
 		fbuf->ioreq_log = req;
 	}
+}
+
+void notify_complete_multiple(file_buffer_t *fbuf)
+{
+    int i, err;
+    
+    if(fbuf->root_reader == gl_my_rank){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify writer masters that completed multiple for %s", fbuf->file_path);
+        for(i = 0; i < fbuf->cpl_mst_info->nmasters; i++){
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Notify mst %d", fbuf->cpl_mst_info->masters[i]);
+            dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, DONE_MULTIPLE_TAG);
+            err = MPI_Isend(fbuf->file_path,MAX_FILE_NAME, MPI_CHAR, fbuf->cpl_mst_info->masters[i], DONE_MULTIPLE_TAG, gl_comps[fbuf->writer_id].comm, &(msg->req));
+            CHECK_MPI(err);
+            ENQUEUE_ITEM(msg, gl_comps[gl_my_comp_id].out_msg_q);
+        }
+		progress_send_queue();
+    }
 }

@@ -146,7 +146,7 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 				MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 			}
 			MPI_Type_size(dtype, &req_el_sz);
-		}d
+		}
 		
     }
     //assert(var->dtype == dtype);

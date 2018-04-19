@@ -348,24 +348,16 @@ _EXTERN_C_ int dtf_transfer_v2(const char *filename, int ncid, int it )
 //}
 
 /*
- * Process will block until the data transfer for this file is completed.
- * */
-_EXTERN_C_ int dtf_transfer_complete(const char *filename, int ncid)
-{
-	return 0;
-}
-
-/*
  * Process will block until all active data transfers are completed.
  * */
-_EXTERN_C_ int dtf_transfer_complete_all()
+_EXTERN_C_ int dtf_transfer_all_files()
 {
 	double t_start;
 	if(!lib_initialized) return 0;
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Start transfer_complete_all");
 	t_start = MPI_Wtime();
-	match_ioreqs_multiple();
+	match_ioreqs_all_files();
 	gl_stats.transfer_time += MPI_Wtime() - t_start;
 	gl_stats.dtf_time += MPI_Wtime() - t_start;
 	DTF_DBG(VERBOSE_DBG_LEVEL, "End transfer_complete_all");
@@ -443,8 +435,65 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
     
     gl_stats.transfer_time += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-     DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer %.3f",  MPI_Wtime() - t_start);
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer %.3f",  MPI_Wtime() - t_start);
     return 0;
+}
+
+/*Supposed to be called by the writer process.
+  Used to match against several dtf_match_io functions on the reader side*/
+_EXTERN_C_ void dtf_transfer_multiple(const char* filename, int ncid)
+{
+	//TODO figure out with cleaning iodb and notifications
+    if(!lib_initialized) return;
+
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
+    if(fbuf == NULL){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: file %s ncid %d is not treated by DTF( \
+                not in configuration file). Explicit matching ignored.", filename, ncid);
+        return;
+    }
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+	double t_start = MPI_Wtime();
+    if( gl_my_comp_id != fbuf->writer_id){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_transfer_multiple can only be called by writer component.");
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching multiple");
+   
+    fbuf->done_multiple_flag = 0;
+    while(!fbuf->done_multiple_flag)
+        match_ioreqs(fbuf);
+    //reset
+    fbuf->done_multiple_flag = 0;
+    
+    gl_stats.transfer_time += MPI_Wtime() - t_start;
+    gl_stats.dtf_time += MPI_Wtime() - t_start;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Finish matching multiple");
+    return;
+}
+
+/*Used by reader to notify writer that it can complete dtf_match_multiple*/
+_EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
+{
+    double t_start = MPI_Wtime();
+    if(!lib_initialized) return;
+
+    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
+    if(fbuf == NULL){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). matching ignored.", filename, ncid);
+        return;
+    }
+
+    if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+    if(fbuf->reader_id != gl_my_comp_id){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_complete_multiple for file %s can only be called by reader", filename);
+        MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+    }
+    
+    MPI_Barrier(fbuf->comm); //TODO remove barrier?
+    notify_complete_multiple(fbuf);
+    gl_stats.transfer_time += MPI_Wtime() - t_start;
+    gl_stats.dtf_time += MPI_Wtime() - t_start;
 }
 
 _EXTERN_C_ void dtf_print(const char *str)
@@ -504,14 +553,24 @@ void dtf_transfer_(const char *filename, int *ncid, int *ierr)
     *ierr = dtf_transfer(filename, *ncid);
 }
 
-void dtf_transfer_complete_(const char *filename, int *ncid)
+void dtf_transfer_v2_(const char *filename, int *ncid, int *it, int *ierr )
 {
-	dtf_transfer_complete(filename, *ncid);
+	*ierr = dtf_transfer_v2(filename, *ncid, *it);
 }
 
-void dtf_transfer_complete_all_()
+void dtf_transfer_all_files_()
 {
-	dtf_transfer_complete_all();
+	dtf_transfer_all_files();
+}
+
+void dtf_transfer_multiple_(const char *filename, int *ncid)
+{
+    dtf_transfer_multiple(filename, *ncid);
+}
+
+void dtf_complete_multiple_(const char *filename, int *ncid)
+{
+    dtf_complete_multiple(filename, *ncid);
 }
 
 void dtf_print_(const char *str)

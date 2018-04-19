@@ -624,14 +624,3 @@ _EXTERN_C_ void dtf_tend()
    // DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat %.6f", tt);
  
 }
-
-/************************************************  Fortran Interfaces  *********************************************************/
-
-_EXTERN_C_ void dtf_tstart_()
-{
-    dtf_tstart();
-}
-_EXTERN_C_ void dtf_tend_()
-{
-    dtf_tend();
-}

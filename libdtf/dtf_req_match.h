@@ -78,7 +78,7 @@ void delete_ioreqs(file_buffer_t *fbuf, int finalize);
 void progress_comm();
 void progress_transfer();
 int  match_ioreqs(file_buffer_t *fbuf);
-void match_ioreqs_multiple();
+void match_ioreqs_all_files();
 void send_file_info(file_buffer_t *fbuf, int reader_root);
 void notify_complete_multiple(file_buffer_t *fbuf);
 void log_ioreq(file_buffer_t *fbuf,

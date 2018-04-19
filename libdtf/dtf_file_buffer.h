@@ -66,42 +66,41 @@ typedef struct master_info{
 
 typedef struct file_buffer{
   char                      file_path[MAX_FILE_NAME];    /* path of the file */
-  int                       ncid;            /*handler that pnetcdf assigns to a file*/
-  MPI_Comm                  comm;            /*MPI_Communicator used to open the file*/
-  void                      *header;         /*buffer to store netcdf header*/
-  MPI_Offset                hdr_sz;          /*size of the netcdf header*/
-  dtf_var_t                 **vars;
-  int                       nvars;            /*Number of defined variables*/
+  int                       ncid;        /*handler that pnetcdf assigns to a file*/
+  MPI_Comm                  comm;        /*MPI_Communicator used to open the file*/
+  void                      *header;     /*buffer to store netcdf header*/
+  MPI_Offset                hdr_sz;      /*size of the netcdf header*/
+  dtf_var_t                 **vars;      
+  int                       nvars;       /*Number of defined variables*/
   int                       writer_id;
   int                       reader_id;
-  int                       is_ready;           /*Used to let the reader know that the file is either
-												- received from the writer (mode = DTF_IO_MODE_MEMORY)
-												- finished being written (mode = DTF_IO_MODE_FILE)
-												*/
-  int                       is_transfering;   /*Set to 1 when active transfer phase is happening*/
-  int 						is_write_only;
-  int                       iomode;    /*Do normal File I/O or direct data transfer?*/
-  //int                       omode;     /*open mode (read/write/undefined)*/ 
+  int                       is_ready;    /*Used to let the reader know that the file is either
+										- received file header and var info from the writer (mode = DTF_IO_MODE_MEMORY)
+										- finished being written (mode = DTF_IO_MODE_FILE)
+										*/
+  int                       is_transfering;	   /*Set to 1 when active transfer phase is happening*/
+  int 						is_write_only;     /*If set, two components only write to this file.*/
+  int                       iomode;            /*Do normal File I/O or direct data transfer?*/ 
   int 						ignore_io; 
-  int                       is_defined;   /*is the file structure already defined?*/    
+  int                       is_defined;        /*is the file structure already defined?*/   //TODO use is_ready/is_transferring instead?? 
   int 						cur_transfer_epoch;      
-
-  int                       root_writer;           /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
+  int                       root_writer;       /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
   int                       root_reader;
   struct master_info        *cpl_mst_info;     /*Master info of the coupled component*/
   struct master_info        *my_mst_info;      /*Master info of this component*/
 
   unsigned int              rreq_cnt;
   unsigned int              wreq_cnt;
-  int                       done_matching_flag;     	/*Flag used to complete matching requests*/
-  int                       sync_comp_flag;		/*Used for syncing two components*/
-  int                       fready_notify_flag;   /*flag used to notify the reader that the file is ready for reading.
+  int                       done_matching_flag;  /*Flag used to complete matching requests*/
+  int                       done_multiple_flag;  /*Flag used to complete multiple transferes for the same file*/
+  int                       sync_comp_flag;		 /*Used for syncing two components*/     //TODO remove?
+  int                       fready_notify_flag;  /*flag used to notify the reader that the file is ready for reading.
                                                     Possible values: 0 - the ps does not write to this file
                                                                      1 - the ps writes to this file. The file is not ready yet.
                                                                      2 - The file is ready, reader has been notified */
-  int                       cpl_info_shared;
+  int                       cpl_info_shared;     //TODO See if possible to remove this
   double                    t_last_sent_ioreqs;  /*timestamp when last sent I/O request*/
-  int                       has_unsent_ioreqs;  
+  int                       has_unsent_ioreqs;   //TODO remove this
   
   struct io_req_log         *ioreq_log;        /*Used for debugging*/
                                           
