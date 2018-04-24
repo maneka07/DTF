@@ -122,12 +122,8 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		assert(fbuf->cpl_mst_info->masters != NULL);
 		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
 		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
-		/*Set root reader immediately only for file I/O. If mode is transfer
-		 * we need to force scale receive FILE_INFO_REQ_TAG so won't set the root reader.*/
-		if(fbuf->iomode == DTF_IO_MODE_FILE){
-			fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
-			fbuf->cpl_info_shared = 1;
-		}
+		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
+		fbuf->cpl_info_shared = 1;
 	 }
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s (ncid %d) is %d", filename, ncid, fbuf->root_writer);
@@ -233,16 +229,16 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		/*Open for the first time*/        
         /*In scale-letkf we assume completely mirrorer file handling. 
          * Hence, will simply duplicate the master structre*/
-         if(gl_scale && (fbuf->cpl_mst_info->nmasters == 0)){
-			fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
-			fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-			assert(fbuf->cpl_mst_info->masters != NULL);
-			memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
-			fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
-			fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
-			fbuf->cpl_info_shared = 1;
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Root writer set to %d", fbuf->root_writer);
-		 }
+	 if(gl_scale && (fbuf->cpl_mst_info->nmasters == 0)){
+		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
+		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+		assert(fbuf->cpl_mst_info->masters != NULL);
+		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
+		fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
+		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
+		fbuf->cpl_info_shared = 1;
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Root writer set to %d", fbuf->root_writer);
+	 }
     //~ } else {
 		//~ /*do a simple check that the same set of processes as before opened the file*/
 		//~ int rank;
@@ -264,7 +260,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		assert(pat != NULL);
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Pat comp1 %d, comp2 %d, fname %s, replay %d", pat->comp1, pat->comp2, pat->fname, pat->replay_io);
 	}
-	
+	 
 	if(pat->replay_io){
 		 if(pat->wrt_recorded == IO_PATTERN_RECORDING || pat->rdr_recorded == IO_PATTERN_RECORDING)
 			DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: Opening file %s but have not finished recording the I/O pattern for \

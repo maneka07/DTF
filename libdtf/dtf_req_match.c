@@ -559,7 +559,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
                 assert(fbuf->my_mst_info->iodb->witems[var_id] != NULL);
                 witem = fbuf->my_mst_info->iodb->witems[var_id];
 
-                if(var->ndims > 0)
+                if(var->ndims > 0)     //TODO why void* ????
                     witem->dblocks = (void*)RBTreeCreateBlocks(rb_key_cmp, NullFunction, rb_destroy_node_info, rb_print_key, rb_print_info, 0);
                 else{
                     witem->dblocks = dtf_malloc(sizeof(block_t));
@@ -581,7 +581,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
 				info->blck->rank = global_rank;
 				info->blck->start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
                 assert(info->blck->start != NULL);
-                info->blck->count = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+                info->blck->count = dtf_malloc(var->ndims*sizeof(MPI_Offset)); 
                 assert(info->blck->count != NULL);
                 memcpy(info->blck->start, chbuf+offt, var->ndims*sizeof(MPI_Offset));
                 offt += var->ndims*sizeof(MPI_Offset);
@@ -1746,6 +1746,7 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
 
         DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, var_id, (int)ioreq->get_sz, (int)ioreq->user_buf_sz);
         assert(ioreq->get_sz<=ioreq->user_buf_sz);
+        
         if(ioreq->get_sz == ioreq->user_buf_sz){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Complete req %d (left %d), var %d, ", ioreq->id, fbuf->rreq_cnt-1, var->id);
             //for(i = 0; i < var->ndims; i++)
@@ -1949,20 +1950,20 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 				
 					if(fbuf->iomode == DTF_IO_MODE_MEMORY) 
 						send_file_info(fbuf, fbuf->root_reader);
-					/*Distribute to other masters*/
-					for(i = 1; i < fbuf->my_mst_info->nmasters; i++){
-						void *sbuf = dtf_malloc(bufsz);
-						assert(sbuf != NULL);
-						memcpy(sbuf, rbuf, bufsz);
-						dtf_msg_t *msg = new_dtf_msg(sbuf, bufsz, DTF_UNDEFINED, FILE_INFO_REQ_TAG);
-						assert(msg != NULL);
-						err = MPI_Isend(sbuf, bufsz, MPI_BYTE, fbuf->my_mst_info->masters[i], FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
-						CHECK_MPI(err);
-						ENQUEUE_ITEM(msg, gl_comps[gl_my_comp_id].out_msg_q);
-					}	
+					//~ /*Distribute to other masters*/
+					//~ for(i = 1; i < fbuf->my_mst_info->nmasters; i++){
+						//~ void *sbuf = dtf_malloc(bufsz);
+						//~ assert(sbuf != NULL);
+						//~ memcpy(sbuf, rbuf, bufsz);
+						//~ dtf_msg_t *msg = new_dtf_msg(sbuf, bufsz, DTF_UNDEFINED, FILE_INFO_REQ_TAG);
+						//~ assert(msg != NULL);
+						//~ err = MPI_Isend(sbuf, bufsz, MPI_BYTE, fbuf->my_mst_info->masters[i], FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
+						//~ CHECK_MPI(err);
+						//~ ENQUEUE_ITEM(msg, gl_comps[gl_my_comp_id].out_msg_q);
+					//~ }	
 				} else 
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Got info about the other component from master");
-				fbuf->cpl_info_shared = 1;
+				//fbuf->cpl_info_shared = 1;
 				
 				break;
 			case IO_REQS_TAG:
