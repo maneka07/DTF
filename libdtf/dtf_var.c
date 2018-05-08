@@ -16,6 +16,8 @@ static dtype_params_t *get_dtype_params(MPI_Datatype dtype, int ndims, /*out*/ M
 	err = MPI_Type_get_envelope( dtype, &num_ints, &num_adds, &num_dtypes, &combiner); 
 	CHECK_MPI(err);
 	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "nint %d, nadd %d, ndtype %d, combiner %d", num_ints, num_adds, num_dtypes, combiner);
+	
 	if(combiner == MPI_COMBINER_NAMED)
 		return NULL;
 	else if(combiner != MPI_COMBINER_SUBARRAY){
@@ -30,7 +32,7 @@ static dtype_params_t *get_dtype_params(MPI_Datatype dtype, int ndims, /*out*/ M
 	
 	if(num_adds > 0)
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dispacement addresses are provided in derived data type. Data extraction result might be incorrect.");
-		
+	assert(num_ints == ndims*3+2);
 	array_of_ints   = (int *)dtf_malloc( num_ints * sizeof(int) ); 
 	assert(array_of_ints != NULL);
 	array_of_adds   =  (MPI_Aint *) dtf_malloc( num_adds * sizeof(MPI_Aint) ); 
@@ -42,22 +44,9 @@ static dtype_params_t *get_dtype_params(MPI_Datatype dtype, int ndims, /*out*/ M
 					 array_of_ints, array_of_adds, array_of_dtypes ); 
 	CHECK_MPI(err);
 	
-	//~ if(array_of_ints[num_ints-1] == MPI_ORDER_FORTRAN)
-		//~ params->eltype  = MPI_Type_f2c(((MPI_Fint*)array_of_dtypes)[0]);
-	//~ else
-	
-	//TODO temporary solution. what about other fortran->ctype conversions?
-	*eltype = array_of_dtypes[0];
-	if(*eltype == MPI_DOUBLE_PRECISION) *eltype = MPI_DOUBLE;
-	else if(*eltype == MPI_REAL) *eltype = MPI_FLOAT;
-		
-	{
-		//TODO remove this later
-		int len=0;
-		char typename[32];
-		MPI_Type_get_name(*eltype, typename, &len);
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Type name %s", typename);
-	}
+	DTF_DBG(VERBOSE_DBG_LEVEL, "I/O call for a derived datatype - subblock of array of size:");
+	for(i = 0; i < num_ints; i++)
+		DTF_DBG(VERBOSE_DBG_LEVEL, "%d", array_of_ints[i]);
 	
 	params = dtf_malloc(sizeof(dtype_params_t));
 	assert(params != NULL);
@@ -66,11 +55,7 @@ static dtype_params_t *get_dtype_params(MPI_Datatype dtype, int ndims, /*out*/ M
 	assert(params->orig_array_size != NULL);
 	params->orig_start = dtf_malloc(ndims*sizeof(MPI_Offset));
 	assert(params->orig_start != NULL);
-	
-	DTF_DBG(VERBOSE_DBG_LEVEL, "I/O call for a derived datatype - subblock of array of size:");
-	for(i = 0; i < num_ints; i++)
-		DTF_DBG(VERBOSE_DBG_LEVEL, "%d", array_of_ints[i]);
-
+		
 	assert(array_of_ints[0] == ndims);
 	
 	if(array_of_ints[num_ints-1] == MPI_ORDER_C){
@@ -80,13 +65,18 @@ static dtype_params_t *get_dtype_params(MPI_Datatype dtype, int ndims, /*out*/ M
 		}
 	} else { /*MPI_ORDER_FORTRAN*/
 		for(i = 0; i < ndims; i++){
-			params->orig_array_size[i] = (MPI_Offset)array_of_ints[num_ints-2- ndims*2 - i];
+			params->orig_array_size[i] = (MPI_Offset)array_of_ints[num_ints-2-ndims*2 - i];
 			params->orig_start[i] = (MPI_Offset)array_of_ints[num_ints-2-i];
 		}
 	}
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Original size -> subarray:");
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Original size -> subarray start from:");
 	for(i = 0; i < ndims; i++)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", params->orig_array_size[i], params->orig_start[i]);
+	
+	//TODO temporary solution. what about other fortran->ctype conversions?
+	*eltype = array_of_dtypes[0];
+	if(*eltype == MPI_DOUBLE_PRECISION) *eltype = MPI_DOUBLE;
+	else if(*eltype == MPI_REAL) *eltype = MPI_FLOAT;
 	
 	dtf_free(array_of_ints, num_ints*sizeof(int));
 	dtf_free(array_of_dtypes, num_dtypes * sizeof(MPI_Datatype));
