@@ -21,11 +21,17 @@ typedef struct io_req_log{
 	MPI_Datatype 	dtype;
 	int				rw_flag;
 	void 			*user_buf;
-	MPI_Offset      user_buf_sz;
+	MPI_Offset      req_data_sz;
 	MPI_Offset 		*start;
 	MPI_Offset 		*count;
+	MPI_Offset      *glob_arr_size;  /*In case dtype is a subarray (derived datatype), we need to know the size of the global array to copy the data correctly*/
 	struct io_req_log *next;
 }io_req_log_t;
+
+typedef struct dtype_params{
+	MPI_Offset  *orig_array_size;
+	MPI_Offset  *orig_start; 
+} dtype_params_t;
 
 typedef struct io_req{
     unsigned int            id;
@@ -35,9 +41,10 @@ typedef struct io_req{
     MPI_Datatype            dtype;                /*save the type passed in the request
                                                     in case there is mismatch with the type passed
                                                     when the var was defined*/
-    MPI_Offset              user_buf_sz;
+    MPI_Offset              req_data_sz;
     MPI_Offset              *start;
     MPI_Offset              *count;
+    dtype_params_t          *derived_params;  /*In case it's a derived datatype, need to know original array size and shift within the array where the data should be written to/read from*/
     MPI_Offset              get_sz;         /*size of data received from writer ranks*/
     unsigned                is_buffered;    /*1 if the data is buffered. 0 otherwise*/
     unsigned                is_permanent;  /*needed for SCALE-LETKF as the timeframe var is constantly overwritten in the new iteration but we need to keep the last value*/
@@ -62,16 +69,14 @@ typedef struct file_info_req_q{
 }file_info_req_q_t;
 
 io_req_t *new_ioreq(int id,
-                    int var_id,
                     int ndims,
-                    MPI_Datatype dtyp,
+                    MPI_Datatype dtype,
                     const MPI_Offset *start,
                     const MPI_Offset *count,
+                    dtype_params_t *derived_params,
                     void *buf,
                     int rw_flag,
                     int buffered);
-
-
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
 //void delete_ioreqs(file_buffer_t *fbuf);
 void delete_ioreqs(file_buffer_t *fbuf, int finalize);

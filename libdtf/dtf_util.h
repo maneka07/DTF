@@ -159,8 +159,6 @@ typedef struct file_info{
 
 struct file_buffer;
 struct file_info_req_q;
-int mpitype2int(MPI_Datatype dtype);
-MPI_Datatype int2mpitype(int num);
 
 /*GLOBAL VARIABLES*/
 extern file_buffer_t* 	gl_filebuf_list;        /*List of all file buffers*/
@@ -194,11 +192,11 @@ void 		print_stats();
 int 		inquire_root(const char *filename);
 MPI_Offset 	to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offset *block_count, const MPI_Offset *coord);
 int 		boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start,const MPI_Offset *count );
-void 		get_put_data(dtf_var_t *var,
-                  MPI_Datatype dtype,
-                  unsigned char *block_data,
-                  const MPI_Offset *block_start,
-                  const MPI_Offset *block_count,
+void get_put_data(int ndims, 
+				  MPI_Datatype orig_dtype,
+                  MPI_Datatype tgt_dtype,
+				  const MPI_Offset  block_count[], 
+                  unsigned char    *block_data,
                   const MPI_Offset subbl_start[],
                   const MPI_Offset subbl_count[],
                   unsigned char *subbl_data,
@@ -207,5 +205,7 @@ void 		get_put_data(dtf_var_t *var,
 void progress_send_queue();
 void progress_recv_queue();
 void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm to_comm, int *to_ranks);
-
+int mpitype2int(MPI_Datatype dtype);
+MPI_Datatype int2mpitype(int num);
+const char *mpi_type_name(MPI_Datatype dtype);
 #endif

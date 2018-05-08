@@ -19,55 +19,57 @@
 extern file_info_req_q_t *gl_finfo_req_q;
 
 /*only support conversion double<->float*/
-static void recur_get_put_data(dtf_var_t *var,
-                          MPI_Datatype dtype,
+static void recur_get_put_data(int ndims, 
+						  MPI_Datatype orig_dtype,
+                          MPI_Datatype tgt_dtype,
+						  const MPI_Offset *block_count,
                           unsigned char *block_data,
-                          const MPI_Offset *block_start,
-                          const MPI_Offset *block_count,
                           const MPI_Offset subbl_start[],
                           const MPI_Offset subbl_count[],
-                          int dim,
+						  unsigned char *subbl_data,
+                          int dim, /*current dimension*/
                           MPI_Offset coord[],
-                          unsigned char *subbl_data,
                           int get_put_flag,
                           int convert_flag)
 {
     int i;
-    //~ DTF_DBG(VERBOSE_DBG_LEVEL, "recur getput block:");
-    //~ for(i = 0; i < var->ndims; i++)
-		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "bl: %lld -> %lld, subbl: %lld -> %lld", block_start[i], block_count[i], subbl_start[i], subbl_count[i]);
-
-    if(dim == var->ndims - 1){
-        int bl_type_sz, subbl_type_sz;
-        MPI_Type_size(dtype, &bl_type_sz);
-        MPI_Type_size(var->dtype, &subbl_type_sz);
-        MPI_Offset block_offt = to_1d_index(var->ndims, block_start, block_count, coord)*bl_type_sz;
-        MPI_Offset subbl_offt = to_1d_index(var->ndims, subbl_start, subbl_count, coord)*subbl_type_sz;
-        MPI_Offset nelems = subbl_count[var->ndims-1];
-        //MPI_Offset data_sz = subbl_count[var->ndims-1]*subbl_type_sz;    //data_sz
+ 
+    if(dim == ndims - 1){
+        int orig_type_sz, tgt_type_sz;
+        MPI_Offset block_offt, subbl_offt;
+        
+        MPI_Type_size(orig_dtype, &orig_type_sz);
+		MPI_Type_size(tgt_dtype, &tgt_type_sz);
+        int nelems = (int)subbl_count[ndims-1];
 
         if(get_put_flag == DTF_READ){
-            if(convert_flag){
-                convertcpy(dtype, var->dtype, (void*)(block_data+block_offt), (void*)(subbl_data+subbl_offt), (int)nelems);
-//                for(i = 0; i < subbl_count[var->ndims-1]; i++)
-//                    ((float*)(subbl_data+subbl_offt))[i] = (float)((double*)(block_data+block_offt))[i];
-            } else
-                /*copy data block -> subblock*/
-                memcpy(subbl_data+subbl_offt, block_data+block_offt, nelems*subbl_type_sz);
-        } else { /*DTF_WRITE*/
-           /*copy data subblock -> block*/
+			
+			/*copy data from user buffer*/
+			block_offt = to_1d_index(ndims, NULL, block_count, coord)*orig_type_sz;
+			subbl_offt = to_1d_index(ndims, subbl_start, subbl_count, coord)*tgt_type_sz;
+			
             if(convert_flag)
-                convertcpy(var->dtype, dtype, (void*)(subbl_data+subbl_offt),(void*)(block_data+block_offt), nelems);
+                convertcpy(orig_dtype, tgt_dtype, (void*)(block_data+block_offt), (void*)(subbl_data+subbl_offt), nelems);             
             else
-                memcpy(block_data+block_offt, subbl_data+subbl_offt, nelems*subbl_type_sz);
+                memcpy(subbl_data+subbl_offt, block_data+block_offt, nelems*orig_type_sz);
+                
+        } else { /*DTF_WRITE*/
+           /*put data into user buffer*/
+			block_offt = to_1d_index(ndims, NULL, block_count, coord)*tgt_type_sz;	
+			subbl_offt = to_1d_index(ndims, subbl_start, subbl_count, coord)*orig_type_sz;
+			
+            if(convert_flag)
+                convertcpy(orig_dtype, tgt_dtype, (void*)(subbl_data+subbl_offt),(void*)(block_data+block_offt), nelems);
+            else
+                memcpy(block_data+block_offt, subbl_data+subbl_offt, nelems*orig_type_sz);
         }
         return;
     }
 
     for(i = 0; i < subbl_count[dim]; i++){
         coord[dim] = subbl_start[dim] + i;
-        recur_get_put_data(var, dtype, block_data, block_start, block_count,
-                           subbl_start, subbl_count, dim+1, coord, subbl_data,
+        recur_get_put_data(ndims, orig_dtype, tgt_dtype, block_count, block_data, 
+                           subbl_start, subbl_count, subbl_data, dim+1, coord, 
                            get_put_flag, convert_flag);
     }
 }
@@ -568,7 +570,6 @@ int mpitype2int(MPI_Datatype dtype)
     return 0;
 }
 
-
 MPI_Datatype int2mpitype(int num)
 {
     switch(num){
@@ -605,15 +606,17 @@ void dtf_free(void *ptr, size_t size)
     return;
 }
 
-void convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstbuf, int nelems)
+void convertcpy(MPI_Datatype from_type, MPI_Datatype to_type, void* srcbuf, void* dstbuf, int nelems)
 {
     int i;
-    if(type1 == MPI_FLOAT){
-        assert(type2 == MPI_DOUBLE);
+    if(from_type == MPI_FLOAT){
+        assert(to_type == MPI_DOUBLE);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from float to double");
         for(i = 0; i < nelems; i++)
             ((double*)dstbuf)[i] = (double)(((float*)srcbuf)[i]);
-    } else if(type1 == MPI_DOUBLE){
-        assert(type2 == MPI_FLOAT);
+    } else if(from_type == MPI_DOUBLE){
+        assert(to_type == MPI_FLOAT);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from double to float");
         for(i = 0; i < nelems; i++)
             ((float*)dstbuf)[i] = (float)(((double*)srcbuf)[i]);
     }
@@ -758,36 +761,39 @@ int boundary_check(file_buffer_t *fbuf, int varid, const MPI_Offset *start, cons
     return 0;
 }
 
-void get_put_data(dtf_var_t *var,
-                  MPI_Datatype dtype,
-                  unsigned char *block_data,
-                  const MPI_Offset *block_start,
-                  const MPI_Offset *block_count,
+//TODO replace block and subblock with src and dest
+void get_put_data(int ndims, 
+				  MPI_Datatype orig_dtype,
+                  MPI_Datatype tgt_dtype,
+				  const MPI_Offset  block_count[], 
+                  unsigned char    *block_data,
                   const MPI_Offset subbl_start[],
                   const MPI_Offset subbl_count[],
                   unsigned char *subbl_data,
                   int get_put_flag,
                   int convert_flag)
 {
-    int i;
     MPI_Offset *cur_coord;
     int nelems;
-
-    if(var->ndims == 0){
+    
+	//TODO high priority: check about fortran and C ordering!!!! especially for derived datatype
+    if(ndims == 0){
         nelems = 1;
         int el_sz;
-        MPI_Type_size(var->dtype, &el_sz);
-
+        MPI_Type_size(orig_dtype, &el_sz);
+		if(!convert_flag)
+			assert(orig_dtype == tgt_dtype);
+			
         if(get_put_flag == DTF_READ){
             if(convert_flag)
-                convertcpy(dtype, var->dtype, (void*)block_data, (void*)subbl_data, nelems);
+                convertcpy(tgt_dtype, orig_dtype, (void*)block_data, (void*)subbl_data, nelems);
             else
                 memcpy(subbl_data, block_data, el_sz);
 
         } else { /*DTF_WRITE*/
            /*copy data subblock -> block*/
             if(convert_flag)
-                convertcpy(var->dtype, dtype, (void*)subbl_data,(void*)block_data, nelems);
+                convertcpy(orig_dtype, tgt_dtype, (void*)subbl_data,(void*)block_data, nelems);
             else
                 memcpy(block_data, subbl_data, el_sz);
         }
@@ -795,16 +801,15 @@ void get_put_data(dtf_var_t *var,
         return;
     }
 
-    cur_coord = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-    for(i = 0; i < var->ndims; i++){
-        cur_coord[i] = subbl_start[i];
-    }
+    cur_coord = dtf_malloc(ndims*sizeof(MPI_Offset));
+    assert(cur_coord != NULL);
+    memcpy(cur_coord, subbl_start, ndims *sizeof(MPI_Offset));
+
     DTF_DBG(VERBOSE_DBG_LEVEL, "Call getput data");
     /*read from user buffer to send buffer*/
-    recur_get_put_data(var, dtype, block_data, block_start,
-                       block_count, subbl_start, subbl_count, 0,
-                       cur_coord, subbl_data, get_put_flag, convert_flag);
-    dtf_free(cur_coord, var->ndims*sizeof(MPI_Offset));
+    recur_get_put_data(ndims, orig_dtype, tgt_dtype, block_count, block_data, 
+                        subbl_start, subbl_count, subbl_data, 0, cur_coord, get_put_flag, convert_flag);
+    dtf_free(cur_coord, ndims*sizeof(MPI_Offset));
     gl_stats.ngetputcall++;
 }
 
@@ -815,11 +820,10 @@ MPI_Offset to_1d_index(int ndims, const MPI_Offset *block_start, const MPI_Offse
 
       if(ndims == 0) //scalar
         return 0;
-      else if(ndims == 1) //1d array
-        return *coord - *block_start;
 
       for(i = 0; i < ndims; i++){
-        mem = coord[i] - block_start[i];
+        mem = block_start == NULL ? coord[i] : coord[i] - block_start[i];
+        
         for(j = i+1; j < ndims; j++)
           mem *= block_count[j];
         idx += mem;
@@ -844,3 +848,4 @@ void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm 
     MPI_Group_free(&from_group);
     MPI_Group_free(&to_group);
 }
+

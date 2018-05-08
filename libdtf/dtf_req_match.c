@@ -49,7 +49,7 @@ static void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
     dtf_var_t *var = fbuf->vars[varid];
 
     if( (*ioreq)->is_buffered)
-        dtf_free((*ioreq)->user_buf, (size_t) (*ioreq)->user_buf_sz);
+        dtf_free((*ioreq)->user_buf, (size_t) (*ioreq)->req_data_sz);
 
     if(*ioreq == var->ioreqs)
         var->ioreqs = var->ioreqs->next;
@@ -67,6 +67,11 @@ static void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
         dtf_free((*ioreq)->count, var->ndims*sizeof(MPI_Offset));
     if((*ioreq)->start != NULL)
         dtf_free((*ioreq)->start, var->ndims*sizeof(MPI_Offset));
+    if((*ioreq)->derived_params != NULL){
+        dtf_free((*ioreq)->derived_params->orig_array_size, var->ndims*sizeof(MPI_Offset));
+        dtf_free((*ioreq)->derived_params->orig_start, var->ndims*sizeof(MPI_Offset));
+        dtf_free((*ioreq)->derived_params, sizeof(dtype_params_t));
+    } 
     dtf_free((*ioreq), sizeof(io_req_t));
     DTF_DBG(VERBOSE_ALL_LEVEL, "Deleted, cur wreqs %d, rreqs %d",
 			fbuf->wreq_cnt, fbuf->rreq_cnt);
@@ -615,11 +620,11 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
 }
 
 io_req_t *new_ioreq(int id,
-                    int var_id,
                     int ndims,
                     MPI_Datatype dtype,
                     const MPI_Offset *start,
                     const MPI_Offset *count,
+                    dtype_params_t *derived_params,
                     void *buf,
                     int rw_flag,
                     int buffered)
@@ -627,14 +632,15 @@ io_req_t *new_ioreq(int id,
     io_req_t *ioreq = (io_req_t*)dtf_malloc(sizeof(io_req_t));
     assert(ioreq != NULL);
     int el_sz;
-    MPI_Type_size(dtype, &el_sz);
-
+	
+	MPI_Type_size(dtype, &el_sz);
+	
     if(ndims > 0){
         int i;
-        ioreq->user_buf_sz = count[0];
+        ioreq->req_data_sz = count[0];
         for(i=1;i<ndims;i++)
-            ioreq->user_buf_sz *= count[i];
-        ioreq->user_buf_sz *= el_sz;
+            ioreq->req_data_sz *= count[i];
+        ioreq->req_data_sz *= el_sz;
 
         ioreq->start = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
         assert(ioreq->start != NULL);
@@ -645,33 +651,49 @@ io_req_t *new_ioreq(int id,
     } else {
         ioreq->start = NULL;
         ioreq->count = NULL;
-        ioreq->user_buf_sz = el_sz;
+        ioreq->req_data_sz = el_sz;
     }
-    DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, user bufsz %d", id, var_id, (int)ioreq->user_buf_sz);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, user bufsz %d", id, (int)ioreq->req_data_sz);
+    
+    ioreq->derived_params = derived_params;		
     ioreq->is_buffered = buffered;
-    if(buffered && (rw_flag == DTF_WRITE)){
-        double t_start = MPI_Wtime();
-        ioreq->user_buf = dtf_malloc((size_t)ioreq->user_buf_sz);
-        assert(ioreq->user_buf != NULL);
-        memcpy(ioreq->user_buf, buf, (size_t)ioreq->user_buf_sz);
-        gl_stats.accum_dbuff_time += MPI_Wtime() - t_start;
-        gl_stats.accum_dbuff_sz += (size_t)ioreq->user_buf_sz;
-    } else
-        ioreq->user_buf = buf;
-    ioreq->next = NULL;
+	ioreq->next = NULL;
     ioreq->sent_flag = 0;
     ioreq->id = id;
     ioreq->get_sz = 0;
     ioreq->prev = NULL;
-    ioreq->dtype = dtype;
     ioreq->rw_flag = rw_flag;
     ioreq->is_permanent = 0;
+    ioreq->dtype = dtype;
+    ioreq->user_buf = buf;
+    
+    if(buffered && (rw_flag == DTF_WRITE)){
+        double t_start = MPI_Wtime();
+        ioreq->user_buf = dtf_malloc((size_t)ioreq->req_data_sz);
+        assert(ioreq->user_buf != NULL);
+        if(derived_params == NULL)
+			memcpy(ioreq->user_buf, buf, (size_t)ioreq->req_data_sz);
+		else{
+			//Buffer data contiguously and delete the derived parameters since
+			//won't need them anymore	 
+			get_put_data(ndims, dtype, dtype, derived_params->orig_array_size, buf, 
+					     derived_params->orig_start, ioreq->count, ioreq->user_buf, DTF_READ, 0);
+			
+			dtf_free(derived_params->orig_array_size, ndims * sizeof(MPI_Offset));
+			dtf_free(derived_params->orig_start, ndims * sizeof(MPI_Offset));
+			dtf_free(derived_params, sizeof(dtype_params_t));
+			ioreq->derived_params = NULL;
+        }
+        gl_stats.accum_dbuff_time += MPI_Wtime() - t_start;
+		gl_stats.accum_dbuff_sz += (size_t)ioreq->req_data_sz;
+    } 
 
     if( (rw_flag == DTF_WRITE) && gl_conf.do_checksum && (dtype == MPI_DOUBLE || dtype == MPI_FLOAT)){
         ioreq->checksum = compute_checksum(buf, ndims, count, dtype);
         DTF_DBG(VERBOSE_DBG_LEVEL, "chsum for req %d is %.4f", ioreq->id, ioreq->checksum);
     } else
         ioreq->checksum = 0;
+        
     gl_stats.nioreqs++;
     return ioreq;
 }
@@ -1508,31 +1530,14 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
                 gl_stats.data_msg_sz += sofft;
 
                 sofft = 0;
-            } else {
-                int cnt_mismatch = 0;
+            } else {                
                 int type_mismatch = 0;
+                int cnt_mismatch = 0;
+                
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Will copy subblock (strt->cnt):");
                 for(i=0; i < var->ndims; i++)
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld \t orig: \t %lld\t --> %lld)", new_start[i], new_count[i], start[i], count[i]);
-
-                /*Copy the block to send buffer*/
-                if(var->dtype != ioreq->dtype){
-                //if(var->dtype != ioreq->dtype){
-                    /*Will only support conversion from MPI_DOUBLE to MPI_FLOAT*/
-                    if(var->dtype == MPI_FLOAT){
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from float to double");
-                        assert(ioreq->dtype == MPI_DOUBLE);
-                    } else if(var->dtype == MPI_DOUBLE){
-                        DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from double to float");
-                        assert(ioreq->dtype == MPI_FLOAT);
-                    } else {
-                        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF does not support this kind of type conversion");
-                        assert(0);
-                    }
-                    type_mismatch = 1;
-                }
-
-
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld \t orig: \t %lld\t --> %lld)", new_start[i], new_count[i], start[i], count[i]);              
+                
                /*copy the subblock to the sbuf*/
                 /*save var_id, start[], count[]*/
                 *(MPI_Offset*)(sbuf+sofft) = (MPI_Offset)var_id;
@@ -1541,45 +1546,65 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
                 sofft += var->ndims*sizeof(MPI_Offset);
                 memcpy(sbuf+sofft, new_count, var->ndims*sizeof(MPI_Offset));
                 sofft += var->ndims*sizeof(MPI_Offset);
-
-                nblocks_written++;
+                
+				if(var->dtype != ioreq->dtype) type_mismatch = 1;
 
                 DTF_DBG(VERBOSE_DBG_LEVEL, "total data to getput %lld (of nelems %lld)", fit_nelems, nelems);
+                
                 /*Copy data*/
-                if(var->ndims == 0){
-                    DTF_DBG(VERBOSE_DBG_LEVEL, "Copy scalar variable");
-                    get_put_data(var, ioreq->dtype, ioreq->user_buf, NULL,
-                                NULL, NULL, NULL, sbuf+sofft, DTF_READ, type_mismatch);
-                } else {
-                    for(i = 0; i < var->ndims; i++)
-                        if( (new_count[i] != 1) && (new_count[i] < ioreq->count[i]))
-                            cnt_mismatch++;
+				for(i = 0; i < var->ndims; i++) 
+					if( (new_count[i] != 1) && (new_count[i] < ioreq->count[i])){
+						cnt_mismatch = 1;
+						break;
+					}
+					
+				if(ioreq->derived_params != NULL) cnt_mismatch = 1;
 
-                    if(0==0 && cnt_mismatch==0){//it's a continious block of memory
-                        int req_el_sz;
-                        MPI_Offset start_cpy_offt;
-                        MPI_Type_size(ioreq->dtype, &req_el_sz);
-                        start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, new_start) * req_el_sz;
-                        if(type_mismatch){
-                            convertcpy(ioreq->dtype, var->dtype, (unsigned char*)ioreq->user_buf+start_cpy_offt,
-                                       (void*)(sbuf+sofft), (int)fit_nelems);
-                        }else{
-                            memcpy(sbuf+sofft, (unsigned char*)ioreq->user_buf+start_cpy_offt, fit_nelems*def_el_sz);
-                        }
-                        if(gl_conf.do_checksum){
-							double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
-							DTF_DBG(VERBOSE_DBG_LEVEL, "chsum contin for req %d is %.4f", ioreq->id, chsum);
-						}
-                    } else {
-						get_put_data(var, ioreq->dtype, ioreq->user_buf, ioreq->start,
-                                           ioreq->count, new_start, new_count, sbuf+sofft, DTF_READ, type_mismatch);
-                        if(gl_conf.do_checksum){
-							double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
-							DTF_DBG(VERBOSE_DBG_LEVEL, "chsum getput for req %d is %.4f", ioreq->id, chsum);
-						}
-                    }
-                }
-
+				if(cnt_mismatch == 0){//it's a continious block of memory
+					int req_el_sz;
+					MPI_Offset start_cpy_offt;
+					MPI_Type_size(ioreq->dtype, &req_el_sz);
+					start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, new_start)*req_el_sz;
+					DTF_DBG(VERBOSE_DBG_LEVEL, "cpy offt %lld", start_cpy_offt);
+					if(type_mismatch){
+						convertcpy(ioreq->dtype, var->dtype, (unsigned char*)ioreq->user_buf+start_cpy_offt,
+								   (void*)(sbuf+sofft), (int)fit_nelems);
+					}else{
+						memcpy(sbuf+sofft, (unsigned char*)ioreq->user_buf+start_cpy_offt,fit_nelems*def_el_sz);
+					}
+					
+					if(gl_conf.do_checksum){
+						double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
+						DTF_DBG(VERBOSE_DBG_LEVEL, "chsum contin for req %d is %.4f", ioreq->id, chsum);
+					}
+				} else {
+					//adjust start coordinate with respect to the user buffer
+					MPI_Offset *rel_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+					assert(rel_start != NULL);
+					for(i = 0; i < var->ndims; i++)
+						rel_start[i] = new_start[i] - ioreq->start[i];
+					
+					if(ioreq->derived_params == NULL)
+						get_put_data(var->ndims, ioreq->dtype, var->dtype, ioreq->count, ioreq->user_buf, 
+									 rel_start, new_count, sbuf+sofft, DTF_READ, type_mismatch);
+					else{
+						DTF_DBG(VERBOSE_DBG_LEVEL, "Will extract data from derived data type");
+						//adjust with respect to shift of subarray inside to original array
+						for(i = 0; i < var->ndims; i++)
+							rel_start[i] = ioreq->derived_params->orig_start[i] + rel_start[i];
+							
+						get_put_data(var->ndims, ioreq->dtype, var->dtype, 
+									ioreq->derived_params->orig_array_size, ioreq->user_buf, rel_start, new_count, sbuf+sofft, DTF_READ, type_mismatch);
+					}
+					dtf_free(rel_start, var->ndims*sizeof(MPI_Offset));
+					
+					if(gl_conf.do_checksum){
+						double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
+						DTF_DBG(VERBOSE_DBG_LEVEL, "chsum getput for req %d is %.4f", ioreq->id, chsum);
+					}
+				}
+                
+				nblocks_written++;
                 gl_stats.nbl++;
                 sofft += fit_nelems*def_el_sz+/*padding*/(fit_nelems*def_el_sz)%sizeof(MPI_Offset);
                 nelems -= fit_nelems;
@@ -1640,7 +1665,8 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
     unsigned char *chbuf = (unsigned char*)buf;
     int nblocks_read = 0;
     int type_mismatch;
-
+	int cnt_mismatch;
+	
     MPI_Offset *start, *count;
     void *data;
 
@@ -1660,10 +1686,8 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
         DTF_DBG(VERBOSE_DBG_LEVEL, "var %d, bl start->count:", var->id);
         for(i = 0; i < var->ndims; i++)
             DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", start[i], count[i]);
-
-        int cnt_mismatch = 0;
-
-        /*Find the ioreq that has info about this block*/
+   
+        /*Find the ioreq that has this block*/
         ioreq = fbuf->vars[var_id]->ioreqs;
         while(ioreq != NULL){
             if(ioreq->rw_flag == DTF_READ){
@@ -1677,39 +1701,30 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
                         match++;
                     else
                         break;
+                        
                 if(match == var->ndims){
-                    cnt_mismatch = 0;
-                    for(i = 0; i < var->ndims; i++){
-                        assert(start[i]+count[i]<=ioreq->start[i]+ioreq->count[i]);
-                        if(count[i] != 1 && count[i] < ioreq->count[i])
-                            cnt_mismatch++;
-                    }
+					for(i = 0; i < var->ndims; i++)
+						assert(start[i]+count[i]<=ioreq->start[i]+ioreq->count[i]);
                     break;
                 }
-
             }
             ioreq = ioreq->next;
         }
         assert(ioreq != NULL);
-
+		
+		type_mismatch = 0;
         /*Copy data*/
-        MPI_Type_size(ioreq->dtype, &req_el_sz);
-        MPI_Type_size(var->dtype, &def_el_sz);
+		MPI_Type_size(var->dtype, &def_el_sz);
+		MPI_Type_size(ioreq->dtype, &req_el_sz);
+		if(ioreq->dtype != var->dtype) type_mismatch = 1;
 
-        type_mismatch = 0;
-        if(ioreq->dtype != var->dtype){
-            type_mismatch = 1;
-            if(var->dtype == MPI_FLOAT){
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from float to double");
-                assert(ioreq->dtype == MPI_DOUBLE);
-            } else if(var->dtype == MPI_DOUBLE){
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from double to float");
-                assert(ioreq->dtype == MPI_FLOAT);
-            } else {
-                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF does not support this kind of type conversion");
-                assert(0);
-            }
-        }
+        cnt_mismatch = 0;
+        for(i = 0; i < var->ndims; i++) 
+			if( (count[i] != 1) && (count[i] < ioreq->count[i])){
+				cnt_mismatch = 1;
+				break;
+			}   
+        if(ioreq->derived_params != NULL) cnt_mismatch = 1;
 
         /*Copy data*/
         nelems = 1;
@@ -1717,37 +1732,48 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
         for(i = 0; i < var->ndims; i++){
             nelems *= count[i];
         }
-        assert(nelems <= ioreq->user_buf_sz - ioreq->get_sz);
+        assert(nelems <= (int)(ioreq->req_data_sz - ioreq->get_sz)/req_el_sz);
 
         DTF_DBG(VERBOSE_DBG_LEVEL, "Will get %d elems for var %d", nelems, var->id);
-        if(var->ndims == 0){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Copy scalar variable");
-            get_put_data(var, ioreq->dtype, ioreq->user_buf, NULL,
-                            NULL, NULL, NULL, data, DTF_WRITE, type_mismatch);
-        } else if(cnt_mismatch==0 ){ //continious block of memory
+        assert(ioreq->user_buf != NULL);
+        if(cnt_mismatch == 0 ){ //continious block of memory
             MPI_Offset start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start) * req_el_sz;
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Start cpy offt %d", (int)start_cpy_offt);
+            
             if(type_mismatch){
                 convertcpy(var->dtype, ioreq->dtype, data, (unsigned char*)ioreq->user_buf + start_cpy_offt, nelems);
-            } else
+            } else{
                 memcpy((unsigned char*)ioreq->user_buf + start_cpy_offt, data, nelems*def_el_sz);
-			//~ if(gl_conf.do_checksum){
-				//~ double chsum = compute_checksum((unsigned char*)ioreq->user_buf + start_cpy_offt, var->ndims, count, ioreq->dtype);
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "chsum contin for req %d is %.4f", ioreq->id, chsum);
-			//~ }
+			}
         } else{
-			/*Copy from rbuf to user buffer*/
-			get_put_data(var, ioreq->dtype, ioreq->user_buf, ioreq->start,
-                                       ioreq->count, start, count, data, DTF_WRITE, type_mismatch);
+			MPI_Offset *rel_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+			assert(rel_start != NULL);
+			for(i = 0; i < var->ndims; i++)
+				rel_start[i] = start[i] - ioreq->start[i];
+			
+			if(ioreq->derived_params == NULL)
+				get_put_data(var->ndims, var->dtype, ioreq->dtype, ioreq->count, ioreq->user_buf, 
+							 rel_start, count, data, DTF_WRITE, type_mismatch);
+			else{
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Will extract data to derived data type");
+				//adjust with respect to shift of subarray inside to original array
+				for(i = 0; i < var->ndims; i++)
+					rel_start[i] = ioreq->derived_params->orig_start[i] + rel_start[i];
+					
+				get_put_data(var->ndims, var->dtype, ioreq->dtype,  
+							ioreq->derived_params->orig_array_size, ioreq->user_buf, rel_start, 
+							count, data, DTF_WRITE, type_mismatch);
+			}
+			dtf_free(rel_start, var->ndims*sizeof(MPI_Offset));
         }
         gl_stats.nbl++;
         offt += nelems*def_el_sz +(nelems*def_el_sz)%sizeof(MPI_Offset);
         ioreq->get_sz += (MPI_Offset)(nelems*req_el_sz);
-
-
-        DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, var_id, (int)ioreq->get_sz, (int)ioreq->user_buf_sz);
-        assert(ioreq->get_sz<=ioreq->user_buf_sz);
         
-        if(ioreq->get_sz == ioreq->user_buf_sz){
+        DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, var_id, (int)ioreq->get_sz, (int)ioreq->req_data_sz);
+        assert(ioreq->get_sz<=ioreq->req_data_sz);
+        
+        if(ioreq->get_sz == ioreq->req_data_sz){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Complete req %d (left %d), var %d, ", ioreq->id, fbuf->rreq_cnt-1, var->id);
             //for(i = 0; i < var->ndims; i++)
               //  DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", ioreq->start[i], ioreq->count[i]);
@@ -1912,7 +1938,6 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 	size_t offt = 0;
 	char filename[MAX_FILE_NAME];
 	int ret = 1;
-	int i, err;
 	
 	if(tag == COMP_FINALIZED_TAG){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Comp %s finalized", gl_comps[comp].name);
@@ -2151,6 +2176,7 @@ void log_ioreq(file_buffer_t *fbuf,
 			  void *buf,
 			  int rw_flag)
 {
+	assert(0);  //function is not needed. also doesn't work for derived data types 
     int el_sz;
 	io_req_log_t *req = dtf_malloc(sizeof(io_req_log_t));
 	assert(req != NULL);
@@ -2170,9 +2196,9 @@ void log_ioreq(file_buffer_t *fbuf,
 
 	if(ndims > 0){
         int i;
-        req->user_buf_sz = count[0];
+        req->req_data_sz = count[0];
         for(i=1;i<ndims;i++)
-            req->user_buf_sz *= count[i];
+            req->req_data_sz *= count[i];
 
         req->start = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
         assert(req->start != NULL);
@@ -2183,13 +2209,13 @@ void log_ioreq(file_buffer_t *fbuf,
     } else{
         req->start = NULL;
         req->count = NULL;
-        req->user_buf_sz = el_sz;
+        req->req_data_sz = el_sz;
     }
 	/*buffering*/
 	if(gl_conf.buffer_data && (rw_flag == DTF_WRITE)){
-        req->user_buf = dtf_malloc((size_t)req->user_buf_sz);
+        req->user_buf = dtf_malloc((size_t)req->req_data_sz);
         assert(req->user_buf != NULL);
-        memcpy(req->user_buf, buf, (size_t)req->user_buf_sz);
+        memcpy(req->user_buf, buf, (size_t)req->req_data_sz);
     } else
         req->user_buf = buf;
     /*checksum*/

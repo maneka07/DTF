@@ -21,8 +21,6 @@ MPI_Offset 	read_write_var(struct file_buffer *fbuf,
 								   int varid,
 								   const MPI_Offset *start,
 								   const MPI_Offset *count,
-								   const MPI_Offset *stride,
-								   const MPI_Offset *imap,
 								   MPI_Datatype dtype,
 								   void *buf,
 								   int rw_flag);

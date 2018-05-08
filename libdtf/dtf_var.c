@@ -3,15 +3,121 @@
 #include "dtf_req_match.h"
 #include "dtf.h"
 
+static dtype_params_t *get_dtype_params(MPI_Datatype dtype, int ndims, /*out*/ MPI_Datatype *eltype)
+{
+	int i, err;
+	int *array_of_ints = NULL; 
+	MPI_Aint *array_of_adds = NULL; 
+	MPI_Datatype *array_of_dtypes = NULL; 
+	int num_ints=0, num_adds=0, num_dtypes=0, combiner; 
+	dtype_params_t *params = NULL;
+	*eltype = MPI_DATATYPE_NULL;
+	
+	err = MPI_Type_get_envelope( dtype, &num_ints, &num_adds, &num_dtypes, &combiner); 
+	CHECK_MPI(err);
+	
+	if(combiner == MPI_COMBINER_NAMED)
+		return NULL;
+	else if(combiner != MPI_COMBINER_SUBARRAY){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: do not support such derived datatype (currently only support MPI_COMBINER_SUBARRAY)"); 
+		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+	} 
+	
+	if(num_dtypes != 1){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: derived datatype consists of %d datatypes. Can't handle this.", num_dtypes);
+		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+	}
+	
+	if(num_adds > 0)
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dispacement addresses are provided in derived data type. Data extraction result might be incorrect.");
+		
+	array_of_ints   = (int *)dtf_malloc( num_ints * sizeof(int) ); 
+	assert(array_of_ints != NULL);
+	array_of_adds   =  (MPI_Aint *) dtf_malloc( num_adds * sizeof(MPI_Aint) ); 
+	assert(array_of_adds != NULL);
+	array_of_dtypes = (MPI_Datatype *)dtf_malloc( num_dtypes * sizeof(MPI_Datatype) ); 
+	assert(array_of_dtypes != NULL);
+   
+	err = MPI_Type_get_contents( dtype, num_ints, num_adds, num_dtypes, 
+					 array_of_ints, array_of_adds, array_of_dtypes ); 
+	CHECK_MPI(err);
+	
+	//~ if(array_of_ints[num_ints-1] == MPI_ORDER_FORTRAN)
+		//~ params->eltype  = MPI_Type_f2c(((MPI_Fint*)array_of_dtypes)[0]);
+	//~ else
+	
+	//TODO temporary solution. what about other fortran->ctype conversions?
+	*eltype = array_of_dtypes[0];
+	if(*eltype == MPI_DOUBLE_PRECISION) *eltype = MPI_DOUBLE;
+	else if(*eltype == MPI_REAL) *eltype = MPI_FLOAT;
+		
+	{
+		//TODO remove this later
+		int len=0;
+		char typename[32];
+		MPI_Type_get_name(*eltype, typename, &len);
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Type name %s", typename);
+	}
+	
+	params = dtf_malloc(sizeof(dtype_params_t));
+	assert(params != NULL);
+	
+	params->orig_array_size = dtf_malloc(ndims*sizeof(MPI_Offset));
+	assert(params->orig_array_size != NULL);
+	params->orig_start = dtf_malloc(ndims*sizeof(MPI_Offset));
+	assert(params->orig_start != NULL);
+	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "I/O call for a derived datatype - subblock of array of size:");
+	for(i = 0; i < num_ints; i++)
+		DTF_DBG(VERBOSE_DBG_LEVEL, "%d", array_of_ints[i]);
+
+	assert(array_of_ints[0] == ndims);
+	
+	if(array_of_ints[num_ints-1] == MPI_ORDER_C){
+		for(i = 0; i < ndims; i++){
+			params->orig_array_size[i] = (MPI_Offset)array_of_ints[i+1];
+			params->orig_start[i] = (MPI_Offset)array_of_ints[i+1+ndims*2];
+		}
+	} else { /*MPI_ORDER_FORTRAN*/
+		for(i = 0; i < ndims; i++){
+			params->orig_array_size[i] = (MPI_Offset)array_of_ints[num_ints-2- ndims*2 - i];
+			params->orig_start[i] = (MPI_Offset)array_of_ints[num_ints-2-i];
+		}
+	}
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Original size -> subarray:");
+	for(i = 0; i < ndims; i++)
+		DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", params->orig_array_size[i], params->orig_start[i]);
+	
+	dtf_free(array_of_ints, num_ints*sizeof(int));
+	dtf_free(array_of_dtypes, num_dtypes * sizeof(MPI_Datatype));
+	dtf_free(array_of_adds, num_adds * sizeof(MPI_Aint));
+	
+	/*Finally, make sure that the eltype is not a derived 
+	 * datatype itself (don't hande this situation)*/
+	num_ints=num_dtypes=num_adds=0;
+	err = MPI_Type_get_envelope( *eltype, &num_ints, &num_adds, &num_dtypes, &combiner); 
+	CHECK_MPI(err);
+	if(combiner != MPI_COMBINER_NAMED){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Do not support derived datatype that consists of elements of a derived datatype.\n");
+		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+	}
+	
+	return params;
+}
+
 int def_var(struct file_buffer *fbuf, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 {
     int el_sz;
     int i;
+    char typename[1024];
+    int len = 0;
     dtf_var_t *var = new_var(varid, ndims, dtype, shape);
     add_var(fbuf, var);
+    
     MPI_Type_size(dtype, &el_sz);
-
-    DTF_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d, el_sz %d. shape:", varid, ndims, el_sz);
+	MPI_Type_get_name(dtype, typename, &len);
+    
+    DTF_DBG(VERBOSE_DBG_LEVEL, "varid %d, dim %d, type %s, el_sz %d. shape:", varid, ndims, typename, el_sz);
     for(i = 0; i < ndims; i++)
         DTF_DBG(VERBOSE_DBG_LEVEL, "\t%lld", shape[i]);
 
@@ -67,8 +173,6 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
                                int varid,
                                const MPI_Offset *start,
                                const MPI_Offset *count,
-                               const MPI_Offset *stride,
-                               const MPI_Offset *imap,
                                MPI_Datatype dtype,
                                void *buf,
                                int rw_flag)
@@ -79,24 +183,7 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
     int def_el_sz, req_el_sz;
     MPI_Offset nelems;
     double t_start = MPI_Wtime();
-
-    if(rw_flag == DTF_READ){
-        if(fbuf->reader_id==gl_my_comp_id){
-          assert(fbuf->is_ready);
-        } else{
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: writer process tries to read file %s (var %d)", fbuf->file_path, varid);
-            //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-        }
-    }
-    if(imap != NULL){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: writing mapped vars is not impelemented yet. Ignore.");
-        return 0;
-    }
-
-    if(stride != NULL){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: writing vars at a stride is not impelemented yet. Ignore.");
-        return 0;
-    }
+    dtype_params_t *derived_params = NULL;
 
     dtf_var_t *var = fbuf->vars[varid];
     DTF_DBG(VERBOSE_DBG_LEVEL, "rw call %d for %s (ncid %d) var %d", rw_flag,fbuf->file_path, fbuf->ncid, var->id);
@@ -118,62 +205,35 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
                 return 0;
             }
         }
-    assert(nelems != 0);
-
-    MPI_Type_size(var->dtype, &def_el_sz);
-    MPI_Type_size(dtype, &req_el_sz);
-
 	
-    if(def_el_sz != req_el_sz){
-		
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Warning: var %d el_sz mismatch (def %d-bit, access %d).", var->id, def_el_sz, req_el_sz);
-        
-        /*Small hack for derived data types.*/
-        if(dtype != MPI_DOUBLE && dtype != MPI_FLOAT){
-			int el_sz = (int)(req_el_sz/nelems);
-			assert(el_sz > 0);
-			if( el_sz == def_el_sz){
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Ioreq dtype is a derived datatype consisting of elements of size %d, same as var type", def_el_sz);
-				dtype = var->dtype;
-			} else	if(el_sz == def_el_sz*2){
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: assume conversion float->double for var %d in file %s", var->id, fbuf->file_path);
-				dtype = MPI_DOUBLE;
-			} else if (el_sz == (int)(def_el_sz/2)){
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: assume conversion double->float for var %d in file %s", var->id, fbuf->file_path);
-				dtype = MPI_FLOAT;
-			} else {
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: cannot handle conversion from derived datatype for var %d in file %s", var->id, fbuf->file_path);
-				MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-			}
-			MPI_Type_size(dtype, &req_el_sz);
+	MPI_Type_size(dtype, &req_el_sz);
+	
+    if(var->dtype != dtype){
+		MPI_Datatype eltype = MPI_DATATYPE_NULL;
+		MPI_Type_size(var->dtype, &def_el_sz);
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Warning: var %d el_sz mismatch (def %d-bit, access %d).", var->id, def_el_sz, req_el_sz);
+		derived_params = get_dtype_params(dtype, var->ndims, &eltype); 
+		if(derived_params != NULL){
+			/*Change original derived data type to the data type of its element*/
+			dtype = eltype;
+			MPI_Type_size(eltype, &req_el_sz);
 		}
-		
-    }
-    //assert(var->dtype == dtype);
+	}
 
-	//~ if(rw_flag == DTF_WRITE){
-		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "------------WRITE IOREQ--------:");
-		
-		//~ for(i = 0; i < nelems; i++)
-			//~ printf("%.2f\t", ((double*)buf)[i]);
-		//~ printf("\n");
-	//~ }
-        
-	/*NOTE: Because dtype may be a derivative MPI type and differ from var->dtype,
-	we ignore it. Start and count parameters are supposed to be with respect to
-	element size for var->dtype*/
 	int buffered = gl_conf.buffer_data;
 
 	if(rw_flag == DTF_READ)
 		buffered = 0;
 
+	//TODO check if this is still relevant
 	if( gl_scale && (var->ndims <= 1) && (rw_flag == DTF_WRITE))
 		 /*This is specifically for SCALE-LETKF since they overwrite the
 		  user buffer in every time frame iteration */
 		buffered = 1;
 
-	req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, varid, var->ndims, dtype, start, count, buf, rw_flag, buffered);
+	req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, var->ndims, dtype, start, count, derived_params, buf, rw_flag, buffered);
 	
+	//TODO check if this is still relevant
 	if( gl_scale && (var->ndims <= 1) && (rw_flag == DTF_WRITE))
 		 /*This is specifically for SCALE-LETKF since they overwrite the
 		  user buffer in every time frame iteration */

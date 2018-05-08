@@ -495,7 +495,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
 		return ret;
 	}
     
-    if(rw_flag==DTF_WRITE && fbuf->reader_id == gl_my_comp_id){
+    if(rw_flag == DTF_WRITE && fbuf->reader_id == gl_my_comp_id){
         int el_sz, i;
         dtf_var_t *var = fbuf->vars[varid];
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: reader component cannot write to the file %s. Ignore I/O call", fbuf->file_path);
@@ -507,9 +507,26 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
 		return ret;
         //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
+    
+    if(rw_flag == DTF_READ){
+        if(fbuf->reader_id == gl_my_comp_id){
+          assert(fbuf->is_ready);
+        } else{
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: writer process tries to read file %s (var %d)", fbuf->file_path, varid);
+            //MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        }
+    }
+    if(imap != NULL){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: writing mapped vars is not impelemented yet. Ignore.");
+        assert(0);
+    }
 
+    if(stride != NULL){
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: writing vars at a stride is not impelemented yet. Ignore.");
+       assert(0);
+    }
 
-    ret = read_write_var(fbuf, varid, start, count, stride, imap, dtype, buf, rw_flag);
+    ret = read_write_var(fbuf, varid, start, count, dtype, buf, rw_flag);
     gl_stats.dtf_time += MPI_Wtime() - t_start;
     DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time rwvar %.3f",  MPI_Wtime() - t_start);
     fbuf->is_transfering = 1;
