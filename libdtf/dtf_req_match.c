@@ -1287,6 +1287,8 @@ int match_ioreqs(file_buffer_t *fbuf)
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
 				fbuf->done_matching_flag = 1;
 			}
+			if(fbuf->done_multiple_flag)
+				fbuf->done_matching_flag = 1;
 		}
 	}
 	
@@ -1871,6 +1873,8 @@ static void notify_masters(file_buffer_t *fbuf, void *msg, int msgsz, int msgtag
 static void notify_workgroup(file_buffer_t *fbuf,  void *msg, int msgsz, int msgtag)
 {
     int i, err;
+    if(fbuf->my_mst_info->my_wg_sz - 1 == 0)
+		return;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Mst %d will notify workgroup (msgtag %d) for %s", gl_my_rank, msgtag, fbuf->file_path);
     assert(fbuf->my_mst_info->my_mst == gl_my_rank);
     MPI_Request *reqs = dtf_malloc((fbuf->my_mst_info->my_wg_sz - 1)*sizeof(MPI_Request));
