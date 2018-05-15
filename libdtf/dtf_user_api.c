@@ -388,33 +388,6 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Matching ignored.", filename, ncid);
         return 0;
     }
-    if((fbuf->ioreq_log != NULL) && gl_conf.do_checksum){
-		io_req_log_t *ioreq = fbuf->ioreq_log;
-		while(ioreq != NULL){
-			
-			if(ioreq->dtype == MPI_DOUBLE || ioreq->dtype == MPI_FLOAT){
-				double checksum = compute_checksum(ioreq->user_buf, ioreq->ndims, ioreq->count, ioreq->dtype);
-				if(ioreq->rw_flag == DTF_READ)
-					DTF_DBG(VERBOSE_ERROR_LEVEL, "read req %d, checksum %.4f", ioreq->id, checksum);
-				else
-					DTF_DBG(VERBOSE_ERROR_LEVEL, "write req %d, checksum %.4f", ioreq->id, checksum);
-			}
-			
-			//delete
-			fbuf->ioreq_log = ioreq->next;
-			
-			if(ioreq->rw_flag == DTF_READ)
-				fbuf->rreq_cnt--;
-			else
-				fbuf->wreq_cnt--;
-			
-			if(gl_conf.buffer_data && (ioreq->rw_flag == DTF_WRITE)) dtf_free(ioreq->user_buf, ioreq->req_data_sz);
-			if(ioreq->start != NULL) dtf_free(ioreq->start, ioreq->ndims*sizeof(MPI_Offset));
-			if(ioreq->count != NULL)dtf_free(ioreq->count, ioreq->ndims*sizeof(MPI_Offset));
-			dtf_free(ioreq, sizeof(io_req_log_t));
-			ioreq = fbuf->ioreq_log;
-		}
-	}
 	
 	if(gl_scale && (fbuf->iomode == DTF_IO_MODE_FILE) && (fbuf->writer_id == gl_my_comp_id)){
 

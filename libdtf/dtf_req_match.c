@@ -2175,31 +2175,24 @@ void log_ioreq(file_buffer_t *fbuf,
 			  MPI_Datatype dtype,
 			  void *buf,
 			  int rw_flag)
-{
-	assert(0);  //function is not needed. also doesn't work for derived data types 
+{ 
     int el_sz;
 	io_req_log_t *req = dtf_malloc(sizeof(io_req_log_t));
 	assert(req != NULL);
 	req->var_id = varid;
 	req->ndims = ndims;
 	req->next = NULL;
-	req->id = fbuf->rreq_cnt+fbuf->wreq_cnt;
 	req->rw_flag = rw_flag;
 	req->dtype = dtype;
-
-	if(rw_flag == DTF_READ)
-		fbuf->rreq_cnt++;
-	else
-		fbuf->wreq_cnt++;
 
     MPI_Type_size(dtype, &el_sz);
 
 	if(ndims > 0){
         int i;
-        req->req_data_sz = count[0];
-        for(i=1;i<ndims;i++)
+        req->req_data_sz = el_sz;
+        for(i=0;i<ndims;i++)
             req->req_data_sz *= count[i];
-
+        
         req->start = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
         assert(req->start != NULL);
         memcpy((void*)req->start, (void*)start, sizeof(MPI_Offset)*ndims);
@@ -2211,13 +2204,7 @@ void log_ioreq(file_buffer_t *fbuf,
         req->count = NULL;
         req->req_data_sz = el_sz;
     }
-	/*buffering*/
-	if(gl_conf.buffer_data && (rw_flag == DTF_WRITE)){
-        req->user_buf = dtf_malloc((size_t)req->req_data_sz);
-        assert(req->user_buf != NULL);
-        memcpy(req->user_buf, buf, (size_t)req->req_data_sz);
-    } else
-        req->user_buf = buf;
+    req->user_buf = buf;
     /*checksum*/
     //~ if( (rw_flag == DTF_WRITE) && gl_conf.do_checksum && (dtype == MPI_DOUBLE || dtype == MPI_FLOAT)){
         //~ req->checksum = compute_checksum(buf, ndims, count, dtype);

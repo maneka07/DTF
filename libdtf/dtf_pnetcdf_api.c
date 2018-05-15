@@ -396,13 +396,30 @@ _EXTERN_C_ void dtf_close(const char* filename)
         return;
     }
 	if(fbuf->has_unsent_ioreqs){
-		//Send request to master immediately
 		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
 			send_ioreqs_by_var(fbuf);
 		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
 			send_ioreqs_by_block(fbuf);
 	}
 	progress_comm();
+
+	if(fbuf->ioreq_log != NULL){ // && strstr(fbuf->file_path, "anal")!=NULL){
+		double check;
+		int i;
+		
+		io_req_log_t *req = fbuf->ioreq_log;
+		while(req != NULL){
+			
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Req for var %d", req->var_id);
+			
+			for(i=0; i <req->ndims; i++)
+				DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", req->start[i], req->count[i]);
+			
+			check = compute_checksum(req->user_buf, req->ndims, req->count, req->dtype);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Checksum %.3f", check);
+			req = req->next;
+		}
+	}
 
     if(fbuf->ignore_io){
 		return;
@@ -549,12 +566,12 @@ _EXTERN_C_ void dtf_log_ioreq(const char *filename,
 	
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return;
-    if(fbuf->iomode != DTF_IO_MODE_FILE) return;
+    //if(fbuf->iomode != DTF_IO_MODE_FILE) return;
     MPI_Type_size(dtype, &type_sz);
     DTF_DBG(VERBOSE_DBG_LEVEL, "log ioreq for var %d, type sz %d, rw %d", varid, type_sz, rw_flag);
     for(i=0; i < ndims; i++)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", start[i], count[i]);
-  //  log_ioreq(fbuf, varid, ndims, start, count, dtype, buf, rw_flag);
+    log_ioreq(fbuf, varid, ndims, start, count, dtype, buf, rw_flag);
 	gl_stats.dtf_time += MPI_Wtime() - t_start;
 	 DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time logreq %.3f",  MPI_Wtime() - t_start);
 }

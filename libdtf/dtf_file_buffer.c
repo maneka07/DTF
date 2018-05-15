@@ -368,19 +368,12 @@ void delete_file_buffer(file_buffer_t* fbuf)
 		io_req_log_t *ior = fbuf->ioreq_log;
 		while(ior != NULL){
 			fbuf->ioreq_log = fbuf->ioreq_log->next;
-
-			if(ior->rw_flag == DTF_READ)
-				fbuf->rreq_cnt--;
-			else
-				fbuf->wreq_cnt--;
-
-			if(gl_conf.buffer_data && (ior->rw_flag == DTF_WRITE)) dtf_free(ior->user_buf, ior->req_data_sz);
 			if(ior->start != NULL) dtf_free(ior->start, ior->ndims*sizeof(MPI_Offset));
 			if(ior->count != NULL)dtf_free(ior->count, ior->ndims*sizeof(MPI_Offset));
 			dtf_free(ior, sizeof(io_req_log_t));
 			ior = fbuf->ioreq_log;
 		}
-	}
+	} 
 
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
@@ -588,7 +581,6 @@ void close_file(file_buffer_t *fbuf)
 		fbuf->is_ready = 1;
 
         if(fbuf->iomode == DTF_IO_MODE_FILE) {
-			
 			//Check for any incoming messages
 			progress_comm();
             if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
@@ -617,9 +609,8 @@ void close_file(file_buffer_t *fbuf)
 
         }
        
-    } else if (fbuf->reader_id == gl_my_comp_id){
-            assert(fbuf->rreq_cnt == 0);
-            assert(fbuf->wreq_cnt == 0);
+    } 
+    //~ else if (fbuf->reader_id == gl_my_comp_id){
 
             //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
 				//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
@@ -632,7 +623,7 @@ void close_file(file_buffer_t *fbuf)
 
 			//~ }
 
-    }
+    //~ }
 
     //~ if(fbuf->iomode == DTF_IO_MODE_MEMORY){
 

@@ -611,12 +611,12 @@ void convertcpy(MPI_Datatype from_type, MPI_Datatype to_type, void* srcbuf, void
     int i;
     if(from_type == MPI_FLOAT){
         assert(to_type == MPI_DOUBLE);
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from float to double");
+     //   DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from float to double");
         for(i = 0; i < nelems; i++)
             ((double*)dstbuf)[i] = (double)(((float*)srcbuf)[i]);
     } else if(from_type == MPI_DOUBLE){
         assert(to_type == MPI_FLOAT);
-        DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from double to float");
+    //    DTF_DBG(VERBOSE_DBG_LEVEL, "Convert from double to float");
         for(i = 0; i < nelems; i++)
             ((float*)dstbuf)[i] = (float)(((double*)srcbuf)[i]);
     }
