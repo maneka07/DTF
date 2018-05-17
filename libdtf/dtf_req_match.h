@@ -93,7 +93,7 @@ void log_ioreq(file_buffer_t *fbuf,
 			  void *buf,
 			  int rw_flag);
 void send_data(file_buffer_t *fbuf, void* buf, int bufsz);
-int  parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued);
+int  parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued);
 void send_ioreqs_by_block(file_buffer_t *fbuf);
 void send_ioreqs_by_var(file_buffer_t *fbuf);
 #endif // dtf_REQ_MATCH_H_INCLUDED

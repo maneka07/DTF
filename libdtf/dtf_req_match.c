@@ -475,7 +475,12 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
         assert(comm == gl_comps[fbuf->writer_id].comm);
         DTF_DBG(VERBOSE_DBG_LEVEL, "Req are from writer");
     }
-
+	
+	if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
+	   ((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Discard ioreqs as the other component has started finalizing.");
+			return;
+	}
 	if(fbuf->done_matching_flag){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: received io reqs for file %s after matching already finished, discard ioreqs", fbuf->file_path);
 		return;
@@ -1107,7 +1112,6 @@ fn_exit:
 void match_ioreqs_all_files()
 {
 	file_buffer_t *fbuf;
-	int compl_file_cnt = 0;
 	int file_cnt = 0;
 	double t_start = MPI_Wtime();
 	
@@ -1116,7 +1120,6 @@ void match_ioreqs_all_files()
 	fbuf = gl_filebuf_list;
 	while(fbuf != NULL){
 		if(fbuf->is_transfering){ 
-			file_cnt++;
 			DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is in active transfer", fbuf->file_path);
 			
 			if(strstr(fbuf->file_path, "hist.d")!=NULL)
@@ -1124,18 +1127,23 @@ void match_ioreqs_all_files()
 			else if(strstr(fbuf->file_path, "anal.d")!=NULL)
 				gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
 			
-			if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
-				send_ioreqs_by_var(fbuf);
-			else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
-				send_ioreqs_by_block(fbuf);
+			if( ((fbuf->writer_id == gl_my_comp_id) && !gl_comps[fbuf->reader_id].finalized)  ||
+				((fbuf->reader_id == gl_my_comp_id) && !gl_comps[fbuf->writer_id].finalized) ){
+				
+				if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
+					send_ioreqs_by_var(fbuf);
+				else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
+					send_ioreqs_by_block(fbuf);
+			}
 		}
 		fbuf = fbuf->next;
 	}
 
 	progress_comm();
 	
-	while(compl_file_cnt != file_cnt){
+	while(1){
 		
+		file_cnt = 0;
 		fbuf = gl_filebuf_list;
 		while(fbuf != NULL){
 			
@@ -1145,11 +1153,7 @@ void match_ioreqs_all_files()
 				fbuf->done_matching_flag = 1;
 			}
 			
-			do_matching(fbuf);
-			
 			if(fbuf->is_transfering && fbuf->done_matching_flag){
-				
-				compl_file_cnt++;
 				
 				/*Reset flags*/
 				if (fbuf->writer_id == gl_my_comp_id)
@@ -1179,9 +1183,14 @@ void match_ioreqs_all_files()
 
 				fbuf->cur_transfer_epoch++;
 			}
+			
+			if(fbuf->is_transfering) file_cnt++;
+			
+			do_matching(fbuf);
 						
 			fbuf = fbuf->next;
 		}
+		if(file_cnt == 0) break;
 		progress_comm();
 	}
 }
@@ -1262,33 +1271,40 @@ int match_ioreqs(file_buffer_t *fbuf)
 			
 	} else {
 		
-		/*If a writer process doesn't have any io requests, it still has to
-		  wait for the master process to let it complete.
-		  If a reader process does not have any read requests,
-		  it notifies the master that it completed matching and returns.*/
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs", fbuf->rreq_cnt, fbuf->wreq_cnt);
-		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
-			send_ioreqs_by_var(fbuf);
-		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
-			send_ioreqs_by_block(fbuf);
-
-	//    t_part1 = MPI_Wtime() - t_part1;
-	//    t_part2 = MPI_Wtime();
-
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching phase");
-		
-		while(!fbuf->done_matching_flag){					
-			progress_comm();
-			if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->my_mst_info->my_mst == gl_my_rank)  )
-				do_matching(fbuf);
-			
-			if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
+		if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
 				((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
 				fbuf->done_matching_flag = 1;
+		} else {
+		
+			/*If a writer process doesn't have any io requests, it still has to
+			  wait for the master process to let it complete.
+			  If a reader process does not have any read requests,
+			  it notifies the master that it completed matching and returns.*/
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs", fbuf->rreq_cnt, fbuf->wreq_cnt);
+			if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
+				send_ioreqs_by_var(fbuf);
+			else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
+				send_ioreqs_by_block(fbuf);
+
+		//    t_part1 = MPI_Wtime() - t_part1;
+		//    t_part2 = MPI_Wtime();
+
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching phase");
+			
+			while(!fbuf->done_matching_flag){					
+				progress_comm();
+				if( (fbuf->writer_id == gl_my_comp_id) && (fbuf->my_mst_info->my_mst == gl_my_rank)  )
+					do_matching(fbuf);
+				
+				if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
+					((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
+					DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
+					fbuf->done_matching_flag = 1;
+				}
+				if(fbuf->done_multiple_flag)
+					fbuf->done_matching_flag = 1;
 			}
-			if(fbuf->done_multiple_flag)
-				fbuf->done_matching_flag = 1;
 		}
 	}
 	
@@ -1935,7 +1951,7 @@ static void print_recv_msg(int tag, int src)
     }
 }
 
-int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
+int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 {
 	MPI_Status status;
 	file_buffer_t *fbuf;
@@ -1979,24 +1995,15 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 				
 					if(fbuf->iomode == DTF_IO_MODE_MEMORY) 
 						send_file_info(fbuf, fbuf->root_reader);
-					//~ /*Distribute to other masters*/
-					//~ for(i = 1; i < fbuf->my_mst_info->nmasters; i++){
-						//~ void *sbuf = dtf_malloc(bufsz);
-						//~ assert(sbuf != NULL);
-						//~ memcpy(sbuf, rbuf, bufsz);
-						//~ dtf_msg_t *msg = new_dtf_msg(sbuf, bufsz, DTF_UNDEFINED, FILE_INFO_REQ_TAG);
-						//~ assert(msg != NULL);
-						//~ err = MPI_Isend(sbuf, bufsz, MPI_BYTE, fbuf->my_mst_info->masters[i], FILE_INFO_REQ_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
-						//~ CHECK_MPI(err);
-						//~ ENQUEUE_ITEM(msg, gl_comps[gl_my_comp_id].out_msg_q);
-					//~ }	
 				} else 
-					DTF_DBG(VERBOSE_DBG_LEVEL, "Got info about the other component from master");
-				//fbuf->cpl_info_shared = 1;
-				
+					DTF_DBG(VERBOSE_DBG_LEVEL, "Got info about the other component from master");				
 				break;
 			case IO_REQS_TAG:
 				if( (comp != gl_my_comp_id) && (fbuf->cpl_mst_info->comm_sz == 0)) goto fn_exit;
+				if( gl_comps[comp].finalized){
+						DTF_DBG(VERBOSE_DBG_LEVEL, "Discard message as the component has started finalizing.");
+						goto discard;
+				}
 				if(!fbuf->is_transfering) goto fn_exit;  //Not ready to process this message yet
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Received reqs from %d, comp %d (my comp %d), bufsz %d", src, comp,gl_my_comp_id, (int)bufsz);
 				parse_ioreqs(fbuf, (unsigned char*)rbuf+offt, bufsz - offt, src, gl_comps[comp].comm);
@@ -2074,6 +2081,8 @@ int parce_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: unknown tag %d", status.MPI_TAG);
 				assert(0);
 		}
+
+discard:
 	dtf_free(rbuf, bufsz);	
 	return ret;
 	
@@ -2139,7 +2148,7 @@ void progress_comm()
 			err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_comps[comp].comm, &status);
 			gl_stats.t_comm += MPI_Wtime() - t_start_comm;
 			CHECK_MPI(err);
-			parce_msg(comp, src, tag, rbuf, bufsz, 0);
+			parse_msg(comp, src, tag, rbuf, bufsz, 0);
         }
     }
     rbuf = NULL;
@@ -2165,7 +2174,7 @@ void progress_comm()
 			err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_comps[comp].comm, &status);
 			gl_stats.t_comm += MPI_Wtime() - t_start_comm;
 			CHECK_MPI(err);
-			parce_msg(comp, src, tag, rbuf, bufsz, 0);
+			parse_msg(comp, src, tag, rbuf, bufsz, 0);
 	}
     gl_stats.t_progr_comm += MPI_Wtime() - t_st;
 }

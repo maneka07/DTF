@@ -417,6 +417,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
     buf->ioreq_log = NULL;
     buf->ncid = -1;
     buf->done_matching_flag = 0;
+    buf->done_multiple_flag = 0;
     buf->fready_notify_flag = DTF_UNDEFINED;
     buf->sync_comp_flag = 0;
     buf->comm = MPI_COMM_NULL;

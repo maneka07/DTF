@@ -434,8 +434,14 @@ _EXTERN_C_ void dtf_transfer_multiple(const char* filename, int ncid)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching multiple");
    
     fbuf->done_multiple_flag = 0;
-    while(!fbuf->done_multiple_flag)
+    while(!fbuf->done_multiple_flag){
         match_ioreqs(fbuf);
+        
+        if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
+				((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
+				fbuf->done_multiple_flag = 1;
+		}
+	}
     //reset
     fbuf->done_multiple_flag = 0;
     
@@ -464,7 +470,11 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
     }
     
     MPI_Barrier(fbuf->comm); //TODO remove barrier?
-    notify_complete_multiple(fbuf);
+    
+    if( ((fbuf->writer_id == gl_my_comp_id) && !gl_comps[fbuf->reader_id].finalized)  ||
+		((fbuf->reader_id == gl_my_comp_id) && !gl_comps[fbuf->writer_id].finalized) )			
+		notify_complete_multiple(fbuf);
+    
     gl_stats.transfer_time += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
 }

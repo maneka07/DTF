@@ -75,7 +75,7 @@ static void recur_get_put_data(int ndims,
 }
 
 
-static void delete_dtf_msg(dtf_msg_t *msg)
+void delete_dtf_msg(dtf_msg_t *msg)
 {
     if(msg->bufsz > 0)
         dtf_free(msg->buf, msg->bufsz);
@@ -714,7 +714,7 @@ void progress_recv_queue()
 			continue;
 		msg = gl_comps[comp].in_msg_q;
 		while(msg != NULL){
-			if(parce_msg(comp, msg->src, msg->tag, msg->buf, msg->bufsz, 1)){
+			if(parse_msg(comp, msg->src, msg->tag, msg->buf, msg->bufsz, 1)){
 				tmp = msg->next;
 				msg->bufsz = 0;
 				DEQUEUE_ITEM(msg, gl_comps[comp].in_msg_q);
