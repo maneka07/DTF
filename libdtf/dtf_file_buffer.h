@@ -81,7 +81,7 @@ typedef struct file_buffer{
   int                       is_transfering;	   /*Set to 1 when active transfer phase is happening*/
   int 						is_write_only;     /*If set, two components only write to this file.*/
   int                       iomode;            /*Do normal File I/O or direct data transfer?*/ 
-  int 						ignore_io; 
+  int 						ignore_io;       //TODO does this still work?
   int                       is_defined;        /*is the file structure already defined?*/   //TODO use is_ready/is_transferring instead?? 
   int 						cur_transfer_epoch;      
   int                       root_writer;       /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
@@ -93,15 +93,13 @@ typedef struct file_buffer{
   unsigned int              wreq_cnt;
   int                       done_matching_flag;  /*Flag used to complete matching requests*/
   int                       done_multiple_flag;  /*Flag used to complete multiple transferes for the same file*/
-  int                       sync_comp_flag;		 /*Used for syncing two components*/     //TODO remove?
   int                       fready_notify_flag;  /*flag used to notify the reader that the file is ready for reading.
                                                     Possible values: 0 - the ps does not write to this file
                                                                      1 - the ps writes to this file. The file is not ready yet.
                                                                      2 - The file is ready, reader has been notified */
-  int                       cpl_info_shared;     //TODO See if possible to remove this
-  double                    t_last_sent_ioreqs;  /*timestamp when last sent I/O request*/
-  int                       has_unsent_ioreqs;   //TODO remove this
-  
+  int 						session_cnt;         /*Every open/close is a session*/						
+  int                       cpl_info_shared;    
+  double                    t_last_sent_ioreqs;  /*timestamp when last sent I/O request*/  
   struct io_req_log         *ioreq_log;        /*Used for debugging*/
                                           
   struct file_buffer        *next;
@@ -115,6 +113,7 @@ typedef struct fname_pattern{
     int  comp1;
     int  comp2;
     int  iomode;
+    int  num_sessions;          /*After how many open/close sessions we can delete given file buffer*/
     int  write_only;                
     int  ignore_io;				/*disable I/O for this file*/
     int  replay_io;            /*Should we record and replay during matching I/O pattern for this file?*/

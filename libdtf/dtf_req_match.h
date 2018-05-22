@@ -46,7 +46,6 @@ typedef struct io_req{
     dtype_params_t          *derived_params;  /*In case it's a derived datatype, need to know original array size and shift within the array where the data should be written to/read from*/
     MPI_Offset              get_sz;         /*size of data received from writer ranks*/
     unsigned                is_buffered;    /*1 if the data is buffered. 0 otherwise*/
-    unsigned                is_permanent;  /*needed for SCALE-LETKF as the timeframe var is constantly overwritten in the new iteration but we need to keep the last value*/
     double                  checksum;
     struct io_req           *next;
     struct io_req           *prev;
@@ -77,8 +76,7 @@ io_req_t *new_ioreq(int id,
                     int rw_flag,
                     int buffered);
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
-//void delete_ioreqs(file_buffer_t *fbuf);
-void delete_ioreqs(file_buffer_t *fbuf, int finalize);
+void delete_ioreqs(file_buffer_t *fbuf);
 void progress_comm();
 void progress_transfer();
 int  match_ioreqs(file_buffer_t *fbuf);

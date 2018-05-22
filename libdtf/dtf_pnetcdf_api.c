@@ -187,7 +187,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	fname_pattern_t *pat = NULL;
 	
     if(!lib_initialized) return;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "Opening file %s", filename);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
 
     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
 
@@ -386,21 +386,20 @@ _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
  */
 _EXTERN_C_ void dtf_close(const char* filename)
 {
+	fname_pattern_t *pat;
+	
     if(!lib_initialized) return;
     double t_start = MPI_Wtime();
     
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "Closing file %s", filename);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Closing file %s", filename);
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    if(fbuf == NULL){
-        DTF_DBG(VERBOSE_DBG_LEVEL, "File not treated by dtf");
-        return;
-    }
-	if(fbuf->has_unsent_ioreqs){
-		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
-			send_ioreqs_by_var(fbuf);
-		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
-			send_ioreqs_by_block(fbuf);
+   
+    if(fbuf == NULL) return;
+    
+	if(fbuf->ignore_io){
+		return;
 	}
+		
 	progress_comm();
 
 	if(fbuf->ioreq_log != NULL){ // && strstr(fbuf->file_path, "anal")!=NULL){
@@ -421,11 +420,12 @@ _EXTERN_C_ void dtf_close(const char* filename)
 		}
 	}
 
-    if(fbuf->ignore_io){
-		return;
-	}
-
-	fname_pattern_t *pat = find_fname_pattern(filename);			
+	close_file(fbuf);
+	
+	fbuf->cur_transfer_epoch = 0; //reset
+	fbuf->session_cnt++;
+	
+	pat = find_fname_pattern(filename);			
 	assert(pat != NULL);
 	if(pat->replay_io){
 		if(pat->rdr_recorded == IO_PATTERN_RECORDING)
@@ -433,12 +433,15 @@ _EXTERN_C_ void dtf_close(const char* filename)
 		else if(pat->wrt_recorded == IO_PATTERN_RECORDING)  //TODO this will not work in nonblocking version
 			pat->wrt_recorded = IO_PATTERN_RECORDED;
 	}
-	fbuf->cur_transfer_epoch = 0; //reset 
 	
-    close_file(fbuf);
-    
+	if(fbuf->session_cnt == pat->num_sessions){
+		if( (fbuf->iomode == DTF_IO_MODE_MEMORY && !fbuf->is_transfering) || 
+			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->fready_notify_flag != RDR_NOTIF_POSTED))
+			delete_file_buffer(fbuf);
+	}
+
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time close %.3f",  MPI_Wtime() - t_start);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "dtf_time close %.3f",  MPI_Wtime() - t_start);
 }
 
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data)
@@ -545,7 +548,6 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
 
     ret = read_write_var(fbuf, varid, start, count, dtype, buf, rw_flag);
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time rwvar %.3f",  MPI_Wtime() - t_start);
     fbuf->is_transfering = 1;
     return ret;
 }

@@ -215,20 +215,8 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 	if(rw_flag == DTF_READ)
 		buffered = 0;
 
-	//TODO check if this is still relevant
-	if( gl_scale && (var->ndims <= 1) && (rw_flag == DTF_WRITE))
-		 /*This is specifically for SCALE-LETKF since they overwrite the
-		  user buffer in every time frame iteration */
-		buffered = 1;
-
 	req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, var->ndims, dtype, start, count, derived_params, buf, rw_flag, buffered);
 	
-	//TODO check if this is still relevant
-	if( gl_scale && (var->ndims <= 1) && (rw_flag == DTF_WRITE))
-		 /*This is specifically for SCALE-LETKF since they overwrite the
-		  user buffer in every time frame iteration */
-		req->is_permanent = 1; //dont delete this req when cleaning the list of ioreqs
-
 	if(gl_conf.do_checksum && (rw_flag == DTF_WRITE))
 		var->checksum += req->checksum;
 
@@ -243,30 +231,32 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 		/*Check if some data is overwritten (just to print out a warning message).
 		  Becase the new I/O req is pushed to the head of the queue, the
 		  writer will access the newest data.*/
-		io_req_t *tmpreq = var->ioreqs;
-		while(tmpreq != NULL){
-			if(req->rw_flag == DTF_WRITE){
-				int overlap = 0;
-				for(i = 0; i < var->ndims; i++ )
-					if( (req->start[i] >= tmpreq->start[i]) && (req->start[i] < tmpreq->start[i] + tmpreq->count[i]))
-						overlap++;
-					else
-						break;
+		//~ io_req_t *tmpreq = var->ioreqs;
+		//~ while(tmpreq != NULL){
+			//~ if(req->rw_flag == DTF_WRITE){
+				//~ int overlap = 0;
+				//~ for(i = 0; i < var->ndims; i++ )
+					//~ if( (req->start[i] >= tmpreq->start[i]) && (req->start[i] < tmpreq->start[i] + tmpreq->count[i]))
+						//~ overlap++;
+					//~ else
+						//~ break;
 
-				if(overlap == var->ndims){
-					DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: overwriting var %d data: (old (start,count) --> new (start,count)", var->id);
-					for(i = 0; i < var->ndims; i++)
-						DTF_DBG(VERBOSE_DBG_LEVEL, "(%lld, %lld) --> (%lld, %lld)", tmpreq->start[i], tmpreq->count[i], req->start[i], req->count[i]);
-				}
-			}
-			tmpreq = tmpreq->next;
-		}
+				//~ if(overlap == var->ndims){
+					//~ DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: overwriting var %d data: (old (start,count) --> new (start,count)", var->id);
+					//~ for(i = 0; i < var->ndims; i++)
+						//~ DTF_DBG(VERBOSE_DBG_LEVEL, "(%lld, %lld) --> (%lld, %lld)", tmpreq->start[i], tmpreq->count[i], req->start[i], req->count[i]);
+				//~ }
+			//~ }
+			//~ tmpreq = tmpreq->next;
+		//~ }
 		var->ioreqs->prev = req;
 		req->next = var->ioreqs;
 		var->ioreqs = req;
 	}
-    
-    fbuf->has_unsent_ioreqs = 1;
+	
+    if(fbuf->t_last_sent_ioreqs == 0)
+		fbuf->t_last_sent_ioreqs = MPI_Wtime();
+		
     if(MPI_Wtime() - fbuf->t_last_sent_ioreqs >= gl_conf.t_send_ioreqs_freq){
 		//Send request to master immediately
 		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)

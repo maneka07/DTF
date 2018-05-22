@@ -525,7 +525,7 @@ double compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datat
     int i;
 
     if(dtype != MPI_DOUBLE && dtype != MPI_FLOAT){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: checksum supported only for double or float data");
+        DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: checksum supported only for double or float data");
         return 0;
     }
 
@@ -565,7 +565,7 @@ int mpitype2int(MPI_Datatype dtype)
     if(dtype == MPI_LONG_LONG_INT)   return 10;
     if(dtype == MPI_UNSIGNED_LONG_LONG) return 11;
 
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "Unknown mpi type");
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "Can't treat this mpi type");
     MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     return 0;
 }
@@ -585,7 +585,7 @@ MPI_Datatype int2mpitype(int num)
         case 10 :     return MPI_LONG_LONG_INT;
         case 11 :     return MPI_UNSIGNED_LONG_LONG;
         default:
-            DTF_DBG(VERBOSE_ERROR_LEVEL, "Unknown mpi type");
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "Can't treat this mpi type");
             MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     return MPI_DATATYPE_NULL;
@@ -657,7 +657,7 @@ void progress_send_queue()
 		msg = gl_comps[comp].out_msg_q;
 		
 		if(gl_comps[comp].finalized){
-			DTF_DBG(VERBOSE_ERROR_LEVEL, "Component %s finishd running. Cancel all messages:", gl_comps[comp].name);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Component %s finishd running. Cancel all messages:", gl_comps[comp].name);
 			while(msg != NULL){
 				tmp = msg->next;
 				DEQUEUE_ITEM(msg, gl_comps[comp].out_msg_q);
@@ -671,7 +671,7 @@ void progress_send_queue()
 				}
 				err = MPI_Cancel(&(msg->req));
 				CHECK_MPI(err);
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "Cancel %p (tag %d)", (void*)msg, msg->tag);
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Cancel %p (tag %d)", (void*)msg, msg->tag);
 				delete_dtf_msg(msg);
 				msg = tmp;
 			}
@@ -686,12 +686,14 @@ void progress_send_queue()
 					DEQUEUE_ITEM(msg, gl_comps[comp].out_msg_q);
 					if(msg->tag == FILE_READY_TAG){
 						file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, (char*)msg->buf, -1);
-						if(fbuf == NULL)
-							DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Error: cant find %s", (char*)msg->buf);
 						assert(fbuf != NULL);
+						DTF_DBG(VERBOSE_DBG_LEVEL, "matched buf %s", fbuf->file_path);
 						assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
 						fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
 						DTF_DBG(VERBOSE_DBG_LEVEL, "Completed sending file ready notif for %s", (char*)msg->buf);
+						
+						fname_pattern_t *pat = find_fname_pattern(fbuf->file_path);
+						if(fbuf->session_cnt == pat->num_sessions) delete_file_buffer(fbuf);
 					}
 					delete_dtf_msg(msg);
 					msg = tmp;
@@ -848,4 +850,5 @@ void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm 
     MPI_Group_free(&from_group);
     MPI_Group_free(&to_group);
 }
+
 

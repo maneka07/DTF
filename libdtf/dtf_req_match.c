@@ -102,7 +102,7 @@ static void invalidate_old_ioreqs(file_buffer_t *fbuf)
 	}
 }
 
-void delete_ioreqs(file_buffer_t *fbuf, int finalize)
+void delete_ioreqs(file_buffer_t *fbuf)
 {
     io_req_t *ioreq, *tmp;
     int varid;
@@ -112,26 +112,15 @@ void delete_ioreqs(file_buffer_t *fbuf, int finalize)
 		var = fbuf->vars[varid];
 		ioreq = var->ioreqs;
 		while(ioreq != NULL){
-			if(ioreq->is_permanent && !finalize){
-				ioreq = ioreq->next;
-				continue;
-			}
 			tmp = ioreq->next;
 			delete_ioreq(fbuf, varid, &ioreq);
 			ioreq = tmp;
 		}
-		if(finalize)
-			assert(var->ioreqs == NULL);
 	}
-
-    if(finalize){
-		assert(fbuf->rreq_cnt == 0);
-		assert(fbuf->wreq_cnt == 0);
-	}
+	assert(fbuf->rreq_cnt == 0);
+	assert(fbuf->wreq_cnt == 0);
+	
 }
-
-
-
 
 /*match subblocks of data*/
 static void do_matching(file_buffer_t *fbuf)
@@ -538,9 +527,9 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
             memcpy(dblock->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
             offt += var->ndims*sizeof(MPI_Offset);
             
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Added dblock:");
+            DTF_DBG(VERBOSE_ALL_LEVEL, "Added dblock:");
 			for(i = 0; i < var->ndims; i++)
-				DTF_DBG(VERBOSE_DBG_LEVEL, "%lld  ->  %lld", dblock->start[i], dblock->count[i]);
+				DTF_DBG(VERBOSE_ALL_LEVEL, "%lld  ->  %lld", dblock->start[i], dblock->count[i]);
 			
             /*add to list*/
             if(ritem->dblocks == NULL){
@@ -668,7 +657,6 @@ io_req_t *new_ioreq(int id,
     ioreq->get_sz = 0;
     ioreq->prev = NULL;
     ioreq->rw_flag = rw_flag;
-    ioreq->is_permanent = 0;
     ioreq->dtype = dtype;
     ioreq->user_buf = buf;
     
@@ -770,9 +758,11 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
     if(fbuf->reader_id == gl_my_comp_id && nrreqs == 0){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
 		int flag; 
-		
-		dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
-		err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
+		char *fname = dtf_malloc(MAX_FILE_NAME);
+		assert(fname != NULL);
+		strcpy(fname, fbuf->file_path);
+		dtf_msg_t *msg = new_dtf_msg(fname, MAX_FILE_NAME, DTF_UNDEFINED, READ_DONE_TAG);
+		err = MPI_Isend(fname, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
 				  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
 		CHECK_MPI(err);
 		err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
@@ -852,9 +842,8 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
         parse_ioreqs(fbuf,sbuf[idx], offt[idx], gl_my_rank, gl_comps[gl_my_comp_id].comm);
         dtf_free(sbuf[idx], bufsz[idx]);
     } 
-    
+
     fbuf->t_last_sent_ioreqs = MPI_Wtime();
-	fbuf->has_unsent_ioreqs = 0;
 fn_exit:
     dtf_free(sbuf, nmasters*sizeof(unsigned char*));
     dtf_free(bufsz,nmasters*sizeof(unsigned char*));
@@ -932,9 +921,11 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
    if(fbuf->reader_id == gl_my_comp_id && nrreqs == 0){
 		 DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
          int flag = 0;
-		
-		dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
-		err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
+		char *fname = dtf_malloc(MAX_FILE_NAME);
+		assert(fname != NULL);
+		strcpy(fname, fbuf->file_path);
+		dtf_msg_t *msg = new_dtf_msg(fname, MAX_FILE_NAME, DTF_UNDEFINED, READ_DONE_TAG);
+		err = MPI_Isend(fname, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
 				  READ_DONE_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
 		CHECK_MPI(err);
 		err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
@@ -959,8 +950,10 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Will send ioreq for var %d:", varid);
 			for(i = 0; i < var->ndims; i++)
 				DTF_DBG(VERBOSE_ALL_LEVEL, "%lld  ->  %lld", ioreq->start[i], ioreq->count[i]);
-
-			if(var->ndims == 0){
+			/*I/O reqs for scalar vars and 1D vars are distributed in round-robin fashion among
+			 * matchers. I/O reqs for higher dimension vars are split by among matchers along 
+			 * the slowest changing dimension*/
+			if(var->ndims == 0 || var->ndims == 1){
 				mst = varid % nmasters;
 				if(bufsz[mst] == 0){
 						sbuf[mst] = dtf_malloc(MAX_FILE_NAME + mlc_chunk);
@@ -972,11 +965,37 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 						*(MPI_Offset*)(sbuf[mst] + offt[mst]) = file_rank;
 						offt[mst] += sizeof(MPI_Offset);
 				}
-				/*Only save the rw flag and the var id*/
-				*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
-				offt[mst] += sizeof(MPI_Offset);
-				*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)varid;
-				offt[mst] += sizeof(MPI_Offset);
+				
+				if(var->ndims*sizeof(MPI_Offset)*3+offt[mst] > bufsz[mst]){
+					size_t ext_sz = mlc_chunk;
+					while(bufsz[mst]+ext_sz < var->ndims*sizeof(MPI_Offset)*3+offt[mst])
+						ext_sz += mlc_chunk;
+					DTF_DBG(VERBOSE_ALL_LEVEL, "bufsz %lu, ext sz %lu", bufsz[mst], ext_sz );
+					
+					void *tmp = realloc(sbuf[mst], bufsz[mst] + ext_sz);
+					assert(tmp != NULL);
+					gl_stats.malloc_size += ext_sz;
+					bufsz[mst] += ext_sz;
+				}
+
+
+				if(var->ndims == 0){
+					/*Only save the rw flag and the var id*/
+					*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
+					offt[mst] += sizeof(MPI_Offset);
+					*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)varid;
+					offt[mst] += sizeof(MPI_Offset);
+				} else {
+					/*Store var_id, rw_flag, start[] and count[]*/
+					*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
+					offt[mst] += sizeof(MPI_Offset);
+					*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)varid;
+					offt[mst] += sizeof(MPI_Offset);
+					memcpy(sbuf[mst]+offt[mst], ioreq->start, var->ndims*sizeof(MPI_Offset));
+					offt[mst] += var->ndims*sizeof(MPI_Offset);
+					memcpy(sbuf[mst]+offt[mst], ioreq->count, var->ndims*sizeof(MPI_Offset));
+					offt[mst] += var->ndims*sizeof(MPI_Offset);
+				}	
 				block_cnt++;
 			} else {
 
@@ -1101,7 +1120,6 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
     }
     
     fbuf->t_last_sent_ioreqs = MPI_Wtime();
-    fbuf->has_unsent_ioreqs = 0;
 
 fn_exit:
     dtf_free(sbuf, nmasters*sizeof(unsigned char*));
@@ -1164,13 +1182,6 @@ void match_ioreqs_all_files()
 				fbuf->done_matching_flag = 0;
 				fbuf->is_transfering = 0;
 				
-				if(!gl_scale){
-					if(fbuf->my_mst_info->my_mst == gl_my_rank)
-						clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars, fbuf->cpl_mst_info->comm_sz);
-
-					delete_ioreqs(fbuf,0);
-				}
-				
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Finished transfer for %s", fbuf->file_path);
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "Time for matching for %s %.4f", fbuf->file_path, MPI_Wtime() - t_start);				
 				if(strstr(fbuf->file_path, "hist.d")!=NULL){
@@ -1182,6 +1193,16 @@ void match_ioreqs_all_files()
 				}
 
 				fbuf->cur_transfer_epoch++;
+					
+				fname_pattern_t *pat = find_fname_pattern(fbuf->file_path);			
+				assert(pat != NULL);
+				if(fbuf->session_cnt == pat->num_sessions){
+					file_buffer_t *tmp = fbuf->next;
+					delete_file_buffer(fbuf);
+					fbuf = tmp;
+					continue;
+				}
+				
 			}
 			
 			if(fbuf->is_transfering) file_cnt++;
@@ -1229,35 +1250,6 @@ int match_ioreqs(file_buffer_t *fbuf)
 		}
 	}
 
-	//~ //TODO this needs to be moved somewhere else
-    //~ if(gl_my_comp_id == fbuf->writer_id){ /*Writer*/
-		//~ /*First of all make sure all processes have info about the other component*/
-		//~ if(!fbuf->cpl_info_shared){
-			//~ assert(0); //TODO remove this code block later
-			//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about the other component");
-			 //~ if(fbuf->root_writer == gl_my_rank){
-				//~ while(fbuf->root_reader == -1)
-					//~ progress_comm();
-				
-			//~ }
-			//~ if(!gl_scale){
-				//~ err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, fbuf->comm);
-				//~ CHECK_MPI(err);
-				
-				//~ if(fbuf->root_writer != gl_my_rank){
-					//~ assert(fbuf->cpl_mst_info->masters== NULL);
-					//~ fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-					//~ assert(fbuf->cpl_mst_info->masters != NULL);	
-				//~ }
-				
-				//~ err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, fbuf->comm);
-				//~ CHECK_MPI(err);	
-			//~ }
-			//~ fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
-			//~ fbuf->cpl_info_shared = 1;
-		 //~ }
-	//~ }
-	
 	if(replay){
 		assert(0); //TODO
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Will replay I/O instead of matching");
@@ -1286,9 +1278,6 @@ int match_ioreqs(file_buffer_t *fbuf)
 				send_ioreqs_by_var(fbuf);
 			else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
 				send_ioreqs_by_block(fbuf);
-
-		//    t_part1 = MPI_Wtime() - t_part1;
-		//    t_part2 = MPI_Wtime();
 
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching phase");
 			
@@ -1321,7 +1310,7 @@ int match_ioreqs(file_buffer_t *fbuf)
 		if(fbuf->my_mst_info->my_mst == gl_my_rank)
 			clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars, fbuf->cpl_mst_info->comm_sz);
 
-		delete_ioreqs(fbuf,0);
+		delete_ioreqs(fbuf);
 	}
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
@@ -1329,24 +1318,13 @@ int match_ioreqs(file_buffer_t *fbuf)
 	//if(gl_scale)
 	DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp Stat: Time for matching %.4f", MPI_Wtime() - t_start);
 	{
-		//~ int rank, avg=0, my;
-		//~ MPI_Comm_rank(fbuf->comm, &rank);
-		
 		if(strstr(fbuf->file_path, "hist.d")!=NULL){
 			gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
 			gl_stats.t_mtch_hist = MPI_Wtime() - t_start;
-			//~ my = gl_stats.t_mtch_hist;
 		}else if(strstr(fbuf->file_path, "anal.d")!=NULL){
 			gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
 			gl_stats.t_mtch_rest = MPI_Wtime() - t_start;
-			//~ my = gl_stats.t_mtch_rest;
 		}
-		//~ err = MPI_Reduce(&my, &avg, 1, MPI_DOUBLE, MPI_SUM, 0, fbuf->comm);
-		//~ CHECK_MPI(err);
-		//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-			//~ gl_stats.t_mtch_hist = avg;
-		//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-			//~ gl_stats.t_mtch_rest = avg;
 	}
 
 	fbuf->cur_transfer_epoch++;
@@ -1815,9 +1793,7 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
 
             if(fbuf->rreq_cnt == 0){
 				int err;
-				
                 DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE:Completed all rreqs for file %s", fbuf->file_path);
-
 				dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
 				err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
                           READ_DONE_TAG, gl_comps[gl_my_comp_id].comm, &(msg->req));
@@ -1939,9 +1915,6 @@ static void print_recv_msg(int tag, int src)
         case IO_DATA_TAG:
             DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_DATA_TAG from %d", src);
             break;
-        case COMP_SYNC_TAG:
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag COMP_SYNC_TAG from %d", src);
-			break;
 		case COMP_FINALIZED_TAG:
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag COMP_FINALIZED_TAG from %d", src);
 			break;	
@@ -2040,9 +2013,13 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					
 					if(fbuf->my_mst_info->nread_completed == fbuf->my_mst_info->my_wg_sz){
 							int flag=0;
+							char *fname = dtf_malloc(MAX_FILE_NAME);
+							assert(fname != NULL);
+							strcpy(fname, fbuf->file_path);
 							DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root that my workgroup completed reading");
-							dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG);
-							int err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, READ_DONE_TAG, 
+							
+							dtf_msg_t *msg = new_dtf_msg(fname, MAX_FILE_NAME, DTF_UNDEFINED, READ_DONE_TAG);
+							int err = MPI_Isend(fname, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, READ_DONE_TAG, 
 												gl_comps[fbuf->writer_id].comm, &(msg->req));
 							CHECK_MPI(err);
 							err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
@@ -2068,10 +2045,6 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					notify_workgroup(fbuf, NULL, 0, DONE_MULTIPLE_TAG);
 				}
 				fbuf->done_multiple_flag = 1;
-				break;
-			case COMP_SYNC_TAG:
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Sync tag for file %s", (char*)rbuf);
-				fbuf->sync_comp_flag = 1;
 				break;
 		   case FILE_READY_TAG:
 				DTF_DBG(VERBOSE_DBG_LEVEL,   "Process FILE_READY notif for %s", (char*)rbuf);

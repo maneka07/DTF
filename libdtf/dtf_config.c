@@ -396,6 +396,10 @@ int load_config(const char *ini_name, const char *comp_name){
 			cur_fpat->ignore_io = atoi(value);
 			assert(cur_fpat->ignore_io==0 ||  cur_fpat->ignore_io==1);
 
+		} else if(strcmp(param, "num_sessions") == 0){
+			cur_fpat->num_sessions = atoi(value);
+			assert(cur_fpat->num_sessions > 0);
+
 		} else {
             DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: unknown parameter %s.", param);
             goto panic_exit;

@@ -266,6 +266,7 @@ fname_pattern_t* new_fname_pattern()
     pat->wrt_recorded = DTF_UNDEFINED;
     pat->write_only = 0;
     pat->io_pats = NULL;
+    pat->num_sessions = 1; //default we assume file will be used only once
     return pat;
 }
 
@@ -331,8 +332,10 @@ void delete_file_buffer(file_buffer_t* fbuf)
 
     if(fbuf == NULL)
         return;
-
+	
     assert(gl_filebuf_list != NULL);
+    
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Will delete file buffer for %s", fbuf->file_path);
 
     if(fbuf->header != NULL)
         dtf_free(fbuf->header, fbuf->hdr_sz);
@@ -358,7 +361,7 @@ void delete_file_buffer(file_buffer_t* fbuf)
         dtf_free(fbuf->cpl_mst_info, sizeof(master_info_t));
     }
 
-    delete_ioreqs(fbuf,1); 
+    delete_ioreqs(fbuf); 
 
     for(i = 0; i < nvars; i++)
         delete_var(fbuf, fbuf->vars[i]);
@@ -387,6 +390,15 @@ void delete_file_buffer(file_buffer_t* fbuf)
 		fbuf->next->prev = fbuf->prev;
 
     dtf_free(fbuf, sizeof(file_buffer_t));
+    
+    {
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Deleted fbuf. Left:");
+		fbuf = gl_filebuf_list;
+		while(fbuf != NULL){
+			DTF_DBG(VERBOSE_DBG_LEVEL, "%s", fbuf->file_path);
+			fbuf = fbuf->next;
+		}
+	}
     gl_stats.nfiles--;
 }
 
@@ -415,11 +427,11 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
     buf->rreq_cnt = 0;
     buf->wreq_cnt = 0;
     buf->ioreq_log = NULL;
+    buf->session_cnt = 0;
     buf->ncid = -1;
     buf->done_matching_flag = 0;
     buf->done_multiple_flag = 0;
     buf->fready_notify_flag = DTF_UNDEFINED;
-    buf->sync_comp_flag = 0;
     buf->comm = MPI_COMM_NULL;
     buf->cpl_info_shared = 0;
     buf->is_write_only = pat->write_only;
@@ -439,12 +451,10 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
 	buf->writer_id = -1;
 	buf->root_writer = -1;
     buf->root_reader = -1;
-    //buf->omode = DTF_UNDEFINED;
     buf->is_defined = 0;
 	buf->iomode = pat->iomode;
 	buf->ignore_io = pat->ignore_io;
 	buf->cur_transfer_epoch = 0;
-	buf->has_unsent_ioreqs = 0;
 	buf->t_last_sent_ioreqs = 0;
 	buf->is_transfering = 0;
 	buf->comm = comm;
@@ -577,6 +587,14 @@ void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
 
 void close_file(file_buffer_t *fbuf)
 {
+	
+	if(fbuf->is_transfering){
+		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
+			send_ioreqs_by_var(fbuf);
+		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
+			send_ioreqs_by_block(fbuf);
+	}
+	
     if(fbuf->writer_id == gl_my_comp_id){
 
 		fbuf->is_ready = 1;
@@ -586,57 +604,16 @@ void close_file(file_buffer_t *fbuf)
 			progress_comm();
             if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
 				assert(fbuf->root_writer == gl_my_rank);
+				//TODO allow to notify later? in that case need to be careful about deleting file buffer
 				while(fbuf->root_reader == -1)
 					progress_comm();
 				notify_file_ready(fbuf);
 			}
-			
-			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-				//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-				//~ gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-
-			//~ char *s = getenv("DTF_SCALE");
-			//~ if(s != NULL)
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp close file %s", fbuf->file_path);
-
-        } else if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-
-			
-			 //~ if(!gl_scale){ 
-				//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Cleaning up everything");
-				//~ delete_ioreqs(fbuf, 1);
-			//~ }
-
-        }
+		} 
        
     } 
-    //~ else if (fbuf->reader_id == gl_my_comp_id){
 
-            //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
-				//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-					//~ gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-				//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-					//~ gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-				//~ char *s = getenv("DTF_SCALE");
-				//~ if(s != NULL)
-					//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp close file %s", fbuf->file_path);
-
-			//~ }
-
-    //~ }
-
-    //~ if(fbuf->iomode == DTF_IO_MODE_MEMORY){
-
-        //~ if(fbuf->my_mst_info->iodb != NULL)
-			//~ clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars);
-        
-		//~ delete_ioreqs(fbuf,1); 
-    //~ }
-    
     fbuf->is_ready = 0;  //reset flag
-
-    //delete_file_buffer(fbuf);
 }
 
 void open_file(file_buffer_t *fbuf, MPI_Comm comm)
@@ -859,5 +836,3 @@ void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     assert(offt == sz);
     *bufsz = sz;
 }
-
-

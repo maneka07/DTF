@@ -200,14 +200,14 @@ panic_exit:
 void finalize_comp_comm(){
 
     int i;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "Finalizing communicators");
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Finalizing communicators");
     for(i = 0; i<gl_ncomp; i++){
 		if(gl_comps[i].in_msg_q != NULL){
-			DTF_DBG(VERBOSE_ERROR_LEVEL, "Recv msg queue for comp %s not empty. Will discard", gl_comps[i].name);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Recv msg queue for comp %s not empty. Will discard", gl_comps[i].name);
 			dtf_msg_t *msg = gl_comps[i].in_msg_q, *tmp;
 			while(msg != NULL){
 				//DTF_DBG(VERBOSE_DBG_LEVEL, "%p", (void*)msg);
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "tag %d",msg->tag);
+				DTF_DBG(VERBOSE_DBG_LEVEL, "tag %d",msg->tag);
 				tmp = msg->next;
 				DEQUEUE_ITEM(msg, gl_comps[i].in_msg_q);
 				delete_dtf_msg(msg);

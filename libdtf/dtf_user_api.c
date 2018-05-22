@@ -270,7 +270,7 @@ _EXTERN_C_ int dtf_finalize()
     for(comp = 0; comp < gl_ncomp; comp++){
 		if(gl_comps[comp].out_msg_q == NULL)
 			continue;
-		DTF_DBG(VERBOSE_ERROR_LEVEL, "Finalize message queue for comp %s", gl_comps[comp].name);
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize message queue for comp %s", gl_comps[comp].name);
 		while(gl_comps[comp].out_msg_q != NULL)
 			progress_comm();	
 	}
@@ -406,6 +406,11 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
     match_ioreqs(fbuf);
     
+	fname_pattern_t *pat = find_fname_pattern(filename);			
+	assert(pat != NULL);
+	if(fbuf->session_cnt == pat->num_sessions)
+		delete_file_buffer(fbuf);
+    
     gl_stats.transfer_time += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
     DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer %.3f",  MPI_Wtime() - t_start);
@@ -416,7 +421,6 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
   Used to match against several dtf_match_io functions on the reader side*/
 _EXTERN_C_ void dtf_transfer_multiple(const char* filename, int ncid)
 {
-	//TODO figure out with cleaning iodb and notifications
     if(!lib_initialized) return;
 
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, ncid);
@@ -437,13 +441,19 @@ _EXTERN_C_ void dtf_transfer_multiple(const char* filename, int ncid)
     while(!fbuf->done_multiple_flag){
         match_ioreqs(fbuf);
         
+        /*If the other component has started finalizing, then just complete this transfer*/
         if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
-				((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
+			((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
 				fbuf->done_multiple_flag = 1;
 		}
 	}
     //reset
     fbuf->done_multiple_flag = 0;
+    
+	fname_pattern_t *pat = find_fname_pattern(filename);			
+	assert(pat != NULL);
+	if(fbuf->session_cnt == pat->num_sessions)
+		delete_file_buffer(fbuf);
     
     gl_stats.transfer_time += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
@@ -454,6 +464,7 @@ _EXTERN_C_ void dtf_transfer_multiple(const char* filename, int ncid)
 /*Used by reader to notify writer that it can complete dtf_match_multiple*/
 _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
 {
+	fname_pattern_t *pat;
     double t_start = MPI_Wtime();
     if(!lib_initialized) return;
 
@@ -474,6 +485,11 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
     if( ((fbuf->writer_id == gl_my_comp_id) && !gl_comps[fbuf->reader_id].finalized)  ||
 		((fbuf->reader_id == gl_my_comp_id) && !gl_comps[fbuf->writer_id].finalized) )			
 		notify_complete_multiple(fbuf);
+    
+    pat = find_fname_pattern(filename);			
+	assert(pat != NULL);
+	if(fbuf->session_cnt == pat->num_sessions && !fbuf->is_transfering)
+		delete_file_buffer(fbuf);
     
     gl_stats.transfer_time += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
