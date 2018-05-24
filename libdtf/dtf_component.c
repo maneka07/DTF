@@ -119,6 +119,7 @@ static int create_intercomm(int comp_id, char* global_path){
 
         err = MPI_Close_port(portname);
         CHECK_MPI(err);
+        
     }
     MPI_Comm_set_errhandler(gl_comps[comp_id].comm, MPI_ERRORS_RETURN);
 

@@ -41,7 +41,7 @@ _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *hea
     write_hdr(fbuf, hdr_sz, header);
     gl_stats.t_hdr += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time write hdr %.3f",  MPI_Wtime() - t_start);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "dtf_time write hdr %.3f",  MPI_Wtime() - t_start);
 }
 
 _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
@@ -91,10 +91,10 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 	}
 
 	if(fbuf == NULL){
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "Created file %s. File is not treated by DTF", filename);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Created file %s. File is not treated by DTF", filename);
         return;
     } else {
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "Created file %s (ncid %d)", filename, ncid);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Created file %s (ncid %d)", filename, ncid);
     }
 	
     fbuf->ncid = ncid;
@@ -170,7 +170,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Exit create");
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-     DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time create %.3f",  MPI_Wtime() - t_start);
+     DTF_DBG(VERBOSE_DBG_LEVEL, "dtf_time create %.3f",  MPI_Wtime() - t_start);
 }
 
 /**
@@ -354,7 +354,7 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     
     progress_comm();
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time enddef %.3f",  MPI_Wtime() - t_start);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "dtf_time enddef %.3f",  MPI_Wtime() - t_start);
 }
 
 _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)

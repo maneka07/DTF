@@ -361,7 +361,7 @@ _EXTERN_C_ int dtf_transfer_all_files()
 	gl_stats.transfer_time += MPI_Wtime() - t_start;
 	gl_stats.dtf_time += MPI_Wtime() - t_start;
 	DTF_DBG(VERBOSE_DBG_LEVEL, "End transfer_complete_all");
-	DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time complall %.3f",  MPI_Wtime() - t_start);
+	DTF_DBG(VERBOSE_DBG_LEVEL, "dtf_time complall %.3f",  MPI_Wtime() - t_start);
 	return 0;
 }
 

@@ -269,7 +269,6 @@ void print_stats()
 			}
 			
 			MPI_Wait(&req, MPI_STATUS_IGNORE);
-			DTF_DBG(VERBOSE_ERROR_LEVEL, "done");
 			if(gl_my_rank % enssz == 0){
 				err = MPI_Isend(&gl_stats.t_mtch_rest, 1, MPI_DOUBLE, 0, 1, gl_comps[gl_my_comp_id].comm, &req);
 				CHECK_MPI(err);
@@ -476,7 +475,7 @@ int inquire_root(const char *filename)
 			break;
 	}
 	fclose(rootf);
-
+	remove(outfname);
 //	if(remove(outfname))
 	//	DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Warning: couldnt delete the root file %s", outfname);
 

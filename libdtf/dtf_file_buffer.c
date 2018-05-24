@@ -511,6 +511,14 @@ void finalize_files()
 		file_cnt++;
 		fbuf = fbuf->next;
 	}
+	if(file_cnt != gl_stats.nfiles){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "Ooops, something wrong with file counting: cnt %d vs gl_stats.nfiles %d", file_cnt, gl_stats.nfiles);
+		fbuf = gl_filebuf_list;
+		while(fbuf != NULL){
+			DTF_DBG(VERBOSE_ERROR_LEVEL, "%s", fbuf->file_path);
+			fbuf = fbuf->next;
+		}
+	}
 	assert(file_cnt == gl_stats.nfiles);
 
     //MPI_Barrier(gl_comps[gl_my_comp_id].comm);
