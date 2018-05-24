@@ -238,7 +238,7 @@ static void do_matching(file_buffer_t *fbuf)
 
                 nelems_matched = 0;
 				if(var->ndims > 0)
-					wblock = rb_find_block(witem->dblocks, rblock->start, var->ndims);
+					wblock = rb_find_block(witem->dblocks, rblock->start, rblock->count, var->ndims);
 				else
 					wblock = (block_t*)witem->dblocks;
 				
@@ -1137,7 +1137,7 @@ void match_ioreqs_all_files()
 	 * and send any unsent I/O requests*/
 	fbuf = gl_filebuf_list;
 	while(fbuf != NULL){
-		if(fbuf->is_transfering){ 
+		if(fbuf->is_transferring){ 
 			DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is in active transfer", fbuf->file_path);
 			
 			if(strstr(fbuf->file_path, "hist.d")!=NULL)
@@ -1171,7 +1171,7 @@ void match_ioreqs_all_files()
 				fbuf->done_matching_flag = 1;
 			}
 			
-			if(fbuf->is_transfering && fbuf->done_matching_flag){
+			if(fbuf->is_transferring && fbuf->done_matching_flag){
 				
 				/*Reset flags*/
 				if (fbuf->writer_id == gl_my_comp_id)
@@ -1180,7 +1180,7 @@ void match_ioreqs_all_files()
 				if(fbuf->my_mst_info->my_mst == gl_my_rank)
 					fbuf->my_mst_info->nread_completed = 0;
 				fbuf->done_matching_flag = 0;
-				fbuf->is_transfering = 0;
+				fbuf->is_transferring = 0;
 				
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Finished transfer for %s", fbuf->file_path);
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "Time for matching for %s %.4f", fbuf->file_path, MPI_Wtime() - t_start);				
@@ -1205,7 +1205,7 @@ void match_ioreqs_all_files()
 				
 			}
 			
-			if(fbuf->is_transfering) file_cnt++;
+			if(fbuf->is_transferring) file_cnt++;
 			
 			do_matching(fbuf);
 						
@@ -1304,14 +1304,7 @@ int match_ioreqs(file_buffer_t *fbuf)
     if(fbuf->my_mst_info->my_mst == gl_my_rank)
 		fbuf->my_mst_info->nread_completed = 0;
 	fbuf->done_matching_flag = 0;
-	fbuf->is_transfering = 0;
-	
-	if(!gl_scale){
-		if(fbuf->my_mst_info->my_mst == gl_my_rank)
-			clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars, fbuf->cpl_mst_info->comm_sz);
-
-		delete_ioreqs(fbuf);
-	}
+	fbuf->is_transferring = 0;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
 
@@ -1977,24 +1970,23 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 						DTF_DBG(VERBOSE_DBG_LEVEL, "Discard message as the component has started finalizing.");
 						goto discard;
 				}
-				if(!fbuf->is_transfering) goto fn_exit;  //Not ready to process this message yet
+				if(!fbuf->is_transferring) goto fn_exit;  //Not ready to process this message yet
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Received reqs from %d, comp %d (my comp %d), bufsz %d", src, comp,gl_my_comp_id, (int)bufsz);
 				parse_ioreqs(fbuf, (unsigned char*)rbuf+offt, bufsz - offt, src, gl_comps[comp].comm);
 				break;
 			case IO_DATA_REQ_TAG:
-				if(!fbuf->is_transfering) goto fn_exit;  //Not ready to process this message yet
+				if(!fbuf->is_transferring) goto fn_exit;  //Not ready to process this message yet
 				send_data(fbuf, (unsigned char*)rbuf+offt, bufsz - offt);
 				break;
 			case IO_DATA_TAG:
-				if(!fbuf->is_transfering) goto fn_exit;  //Not ready to process this message yet
+				if(!fbuf->is_transferring) goto fn_exit;  //Not ready to process this message yet
 				//TODO in message replay need to handle here
 				recv_data_rdr(fbuf, (unsigned char*)rbuf + offt, bufsz - offt);
 				break;
 			case READ_DONE_TAG:
+				fbuf->my_mst_info->nread_completed++;
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Recv read done for file %s from %d in comp %d (tot %d)", fbuf->file_path,
 						src, comp, fbuf->my_mst_info->nread_completed);
-				
-				fbuf->my_mst_info->nread_completed++;
 
 				if(gl_my_comp_id == fbuf->writer_id){
 					assert(comp == fbuf->reader_id);

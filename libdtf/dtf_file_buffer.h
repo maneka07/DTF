@@ -78,7 +78,7 @@ typedef struct file_buffer{
 										- received file header and var info from the writer (mode = DTF_IO_MODE_MEMORY)
 										- finished being written (mode = DTF_IO_MODE_FILE)
 										*/
-  int                       is_transfering;	   /*Set to 1 when active transfer phase is happening*/
+  int                       is_transferring;	   /*Set to 1 when active transfer phase is happening*/
   int 						is_write_only;     /*If set, two components only write to this file.*/
   int                       iomode;            /*Do normal File I/O or direct data transfer?*/ 
   int 						ignore_io;       //TODO does this still work?

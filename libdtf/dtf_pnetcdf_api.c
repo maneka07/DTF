@@ -208,8 +208,8 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s. File is not treated by DTF", filename);
         return;
     }
-
-	fbuf->is_transfering = 0; //reset just in case 
+    
+    fbuf->is_transferring = 0;  //reset
 
 	progress_comm();
    
@@ -435,7 +435,7 @@ _EXTERN_C_ void dtf_close(const char* filename)
 	}
 	
 	if(fbuf->session_cnt == pat->num_sessions){
-		if( (fbuf->iomode == DTF_IO_MODE_MEMORY && !fbuf->is_transfering) || 
+		if( (fbuf->iomode == DTF_IO_MODE_MEMORY && !fbuf->is_transferring) || 
 			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->fready_notify_flag != RDR_NOTIF_POSTED))
 			delete_file_buffer(fbuf);
 	}
@@ -548,7 +548,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
 
     ret = read_write_var(fbuf, varid, start, count, dtype, buf, rw_flag);
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-    fbuf->is_transfering = 1;
+    fbuf->is_transferring = 1;
     return ret;
 }
 

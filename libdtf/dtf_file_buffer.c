@@ -456,7 +456,7 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
 	buf->ignore_io = pat->ignore_io;
 	buf->cur_transfer_epoch = 0;
 	buf->t_last_sent_ioreqs = 0;
-	buf->is_transfering = 0;
+	buf->is_transferring = 0;
 	buf->comm = comm;
 	//insert
 	if(gl_filebuf_list == NULL)
@@ -596,7 +596,7 @@ void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
 void close_file(file_buffer_t *fbuf)
 {
 	
-	if(fbuf->is_transfering){
+	if(fbuf->is_transferring){
 		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
 			send_ioreqs_by_var(fbuf);
 		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)

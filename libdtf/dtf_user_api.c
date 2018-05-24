@@ -404,6 +404,9 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
 	}
 	 
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
+    
+	if(!fbuf->is_transferring) return 0;
+    
     match_ioreqs(fbuf);
     
 	fname_pattern_t *pat = find_fname_pattern(filename);			
@@ -430,6 +433,8 @@ _EXTERN_C_ void dtf_transfer_multiple(const char* filename, int ncid)
         return;
     }
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+    if(!fbuf->is_transferring) return;
+    
 	double t_start = MPI_Wtime();
     if( gl_my_comp_id != fbuf->writer_id){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: dtf_transfer_multiple can only be called by writer component.");
@@ -475,6 +480,9 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
     }
 
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
+    
+    if(fbuf->is_write_only) return;
+    
     if(fbuf->reader_id != gl_my_comp_id){
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dtf_complete_multiple for file %s can only be called by reader", filename);
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
@@ -488,7 +496,7 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
     
     pat = find_fname_pattern(filename);			
 	assert(pat != NULL);
-	if(fbuf->session_cnt == pat->num_sessions && !fbuf->is_transfering)
+	if(fbuf->session_cnt == pat->num_sessions && !fbuf->is_transferring)
 		delete_file_buffer(fbuf);
     
     gl_stats.transfer_time += MPI_Wtime() - t_start;

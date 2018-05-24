@@ -1,7 +1,8 @@
 #include "rb_red_black_tree.h"
 #include <assert.h>
 #include "dtf_util.h"
-rb_red_blk_node* FindOverlapBlock(rb_red_blk_tree* tree, rb_red_blk_node *subtr, MPI_Offset* start, int ndims);
+rb_red_blk_node* FindBlockPoint(rb_red_blk_tree* tree, rb_red_blk_node *subtr, MPI_Offset* start, int ndims);
+rb_red_blk_node* FindBlockOverlap(rb_red_blk_tree* tree, rb_red_blk_node *subtr, MPI_Offset* start, MPI_Offset* count, int ndims);
 
 /***********************************************************************/
 /*  FUNCTION:  RBTreeCreate */
@@ -109,6 +110,7 @@ rb_red_blk_tree* RBTreeCreateBlocks( int (*CompFunc) (const void*,const void*),
 /***********************************************************************/
 
 void LeftRotate(rb_red_blk_tree* tree, rb_red_blk_node* x) {
+  MPI_Offset max_rcoord;
   rb_red_blk_node* y;
   rb_red_blk_node* nil=tree->nil;
 	DTF_DBG(VERBOSE_RB_TREE_LEVEL,"rotate left at %lld\n", *(MPI_Offset*)x->key);
@@ -140,6 +142,14 @@ void LeftRotate(rb_red_blk_tree* tree, rb_red_blk_node* x) {
   y->left=x;
   x->parent=y;
 
+  /*Update rcoords*/
+  max_rcoord = ((node_info*)(x->info))->max_node_rcoord;
+  if( (x->left != nil) && (((node_info*)x->left->info)->max_subtr_rcoord > max_rcoord))
+	max_rcoord = ((node_info*)x->left->info)->max_subtr_rcoord;
+  if( (x->right != nil) && (((node_info*)x->right->info)->max_subtr_rcoord > max_rcoord))
+	max_rcoord = ((node_info*)x->right->info)->max_subtr_rcoord;
+  ((node_info*)x->info)->max_subtr_rcoord = max_rcoord;
+
 #ifdef DEBUG_ASSERT
   Assert(!tree->nil->red,"nil not red in LeftRotate");
 #endif
@@ -166,7 +176,9 @@ void LeftRotate(rb_red_blk_tree* tree, rb_red_blk_node* x) {
 void RightRotate(rb_red_blk_tree* tree, rb_red_blk_node* y) {
   rb_red_blk_node* x;
   rb_red_blk_node* nil=tree->nil;
-DTF_DBG(VERBOSE_RB_TREE_LEVEL,"rotate right at %lld\n", *(MPI_Offset*)y->key);
+  MPI_Offset max_rcoord;
+  
+  DTF_DBG(VERBOSE_RB_TREE_LEVEL,"rotate right at %lld\n", *(MPI_Offset*)y->key);
   /*  I originally wrote this function to use the sentinel for */
   /*  nil to avoid checking for nil.  However this introduces a */
   /*  very subtle bug because sometimes this function modifies */
@@ -193,6 +205,14 @@ DTF_DBG(VERBOSE_RB_TREE_LEVEL,"rotate right at %lld\n", *(MPI_Offset*)y->key);
   }
   x->right=y;
   y->parent=x;
+
+  /*Update rcoords*/
+  max_rcoord = ((node_info*)(x->info))->max_node_rcoord;
+  if( (x->left != nil) && (((node_info*)x->left->info)->max_subtr_rcoord > max_rcoord))
+	max_rcoord = ((node_info*)x->left->info)->max_subtr_rcoord;
+  if( (x->right != nil) && (((node_info*)x->right->info)->max_subtr_rcoord > max_rcoord))
+	max_rcoord = ((node_info*)x->right->info)->max_subtr_rcoord;
+  ((node_info*)x->info)->max_subtr_rcoord = max_rcoord;
 
 #ifdef DEBUG_ASSERT
   Assert(!tree->nil->red,"nil not red in RightRotate");
@@ -269,7 +289,7 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
   int cur_dim = info->cur_dim;
   int ndims = info->ndims;
   void *key = (void*)(&(info->blck->start[cur_dim]));
-  int exist = 0;
+  int exist = 0, update_subtr_rcoord = 0;
   
   //assert(cur_dim >= 0 && cur_dim < ndims);
   DTF_DBG(VERBOSE_RB_TREE_LEVEL,"Insert key %lld, cur_dim %d, nnodes %lu\n", *(MPI_Offset*)key, cur_dim, tree->nnodes);
@@ -292,10 +312,11 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
       x=x->right;
       DTF_DBG(VERBOSE_RB_TREE_LEVEL, "->left");
     } else {
-		DTF_DBG(VERBOSE_RB_TREE_LEVEL, "->exit");
+		DTF_DBG(VERBOSE_RB_TREE_LEVEL, "->exist");
 		//DTF_DBG(VERBOSE_RB_TREE_LEVEL,"Trying to insert key %lld to node with key ", *(MPI_Offset*)key);
 		//tree->PrintKey(x->key);
 		//DTF_DBG(VERBOSE_RB_TREE_LEVEL,"\n");
+		
 		//Node already exists, update max values and go to next dimension
 		exist = 1;
 		insert_node = x;
@@ -317,8 +338,14 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
 
 		} 
 		
-		if(max_rcoord > ((node_info*)(x->info))->max_node_rcoord )
+		if(max_rcoord > ((node_info*)(x->info))->max_node_rcoord ){
 			((node_info*)(x->info))->max_node_rcoord = max_rcoord;
+			
+			if(max_rcoord > ((node_info*)(x->info))->max_subtr_rcoord){
+				((node_info*)(x->info))->max_subtr_rcoord = max_rcoord;
+				update_subtr_rcoord = 1;
+			}
+		}
 			
 		break;
 	}
@@ -328,11 +355,10 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
 	  if(cur_dim == ndims - 1){
 		z->left=z->right=z->parent=nil;
 		insert_node = z;
-		
 		//DTF_DBG(VERBOSE_DBG_LEVEL,"Last dim, insert node %p\n", insert_node);
 	  } else {
 		 
-		/*new node for tree in dimension cur_dim*/
+		/*new intermediate node for tree in dimension cur_dim*/
 		insert_node = (rb_red_blk_node*)SafeMalloc(sizeof(rb_red_blk_node));
 		insert_node->key = key;
   
@@ -361,13 +387,13 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
 		 //assert(insert_node->left == nil);
 		 //assert(insert_node->right == nil);
 	  //} else{
-		  insert_node->parent=y;
-		  if ( (y == tree->root) ||
-			   (1 == tree->Compare(y->key,insert_node->key))) { /* y.key > z.key */
-			   y->left=insert_node;
-		  } else {
-			y->right=insert_node;
-		  }
+	  insert_node->parent=y;
+	  if ( (y == tree->root) ||
+		   (1 == tree->Compare(y->key,insert_node->key))) { /* y.key > z.key */
+		   y->left=insert_node;
+	  } else {
+		y->right=insert_node;
+	  }
 	 // }
  
 #ifdef DEBUG_ASSERT
@@ -376,63 +402,65 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
 	  //if(insert_node != tree->root){
 		  //DTF_DBG(VERBOSE_DBG_LEVEL,"not a root %p (root %p)\n", insert_node, tree->root);
 		  //Balance the tree
-		  DTF_DBG(VERBOSE_RB_TREE_LEVEL, "Begin balance");
-		  x = insert_node;
-		  x->red=1;
-		  while(x->parent->red) { /* use sentinel instead of checking for root */
-			if (x->parent == x->parent->parent->left) {
-			  y=x->parent->parent->right;
-			  if (y->red) {
-				x->parent->red=0;
-				y->red=0;
-				x->parent->parent->red=1;
-				x=x->parent->parent;
-			  } else {
-				if (x == x->parent->right) {
-				  x=x->parent;
-				  LeftRotate(tree,x);
-				}
-				x->parent->red=0;
-				x->parent->parent->red=1;
-				RightRotate(tree,x->parent->parent);
-			  }
-			} else { /* case for x->parent == x->parent->parent->right */
-			  y=x->parent->parent->left;
-			  if (y->red) {
-				x->parent->red=0;
-				y->red=0;
-				x->parent->parent->red=1;
-				x=x->parent->parent;
-			  } else {
-				if (x == x->parent->left) {
-				  x=x->parent;
-				  RightRotate(tree,x);
-				}
-				x->parent->red=0;
-				x->parent->parent->red=1;
-				LeftRotate(tree,x->parent->parent);
-			  }
+	  DTF_DBG(VERBOSE_RB_TREE_LEVEL, "Begin balance");
+	  x = insert_node;
+	  x->red=1;
+	  while(x->parent->red) { /* use sentinel instead of checking for root */
+		if (x->parent == x->parent->parent->left) {
+		  y=x->parent->parent->right;
+		  if (y->red) {
+			x->parent->red=0;
+			y->red=0;
+			x->parent->parent->red=1;
+			x=x->parent->parent;
+		  } else {
+			if (x == x->parent->right) {
+			  x=x->parent;
+			  LeftRotate(tree,x);
 			}
+			x->parent->red=0;
+			x->parent->parent->red=1;
+			RightRotate(tree,x->parent->parent);
 		  }
-		  tree->root->left->red=0;
-			DTF_DBG(VERBOSE_RB_TREE_LEVEL, "End balance");
+		} else { /* case for x->parent == x->parent->parent->right */
+		  y=x->parent->parent->left;
+		  if (y->red) {
+			x->parent->red=0;
+			y->red=0;
+			x->parent->parent->red=1;
+			x=x->parent->parent;
+		  } else {
+			if (x == x->parent->left) {
+			  x=x->parent;
+			  RightRotate(tree,x);
+			}
+			x->parent->red=0;
+			x->parent->parent->red=1;
+			LeftRotate(tree,x->parent->parent);
+		  }
+		}
+	  }
+	  tree->root->left->red=0;
+		DTF_DBG(VERBOSE_RB_TREE_LEVEL, "End balance");
+	}
 
-		  //DTF_DBG(VERBOSE_DBG_LEVEL,"Inserted node 2 %p\n", insert_node);
-		  //update max rcoords on the path back to the parent
-		  x = insert_node;
-		  while(x != tree->root){
-			  assert(x->info != NULL);
-			  max_rcoord = ((node_info*)(x->info))->max_node_rcoord;
-			  if( (x->left != nil) && (((node_info*)x->left->info)->max_subtr_rcoord > max_rcoord))
-				max_rcoord = ((node_info*)x->left->info)->max_subtr_rcoord;
-			  if( (x->right != nil) && (((node_info*)x->right->info)->max_subtr_rcoord > max_rcoord))
-				max_rcoord = ((node_info*)x->right->info)->max_subtr_rcoord;
-			  ((node_info*)x->info)->max_subtr_rcoord = max_rcoord;
-			  x = x->parent;
-		  }
-		   DTF_DBG(VERBOSE_RB_TREE_LEVEL, "Updated rcoord");
-	  //}
-  }
+  if(!exist || update_subtr_rcoord){
+	  //update max rcoords on the path back to the parent
+	  x = insert_node;
+	  while(x != tree->root){
+		  assert(x->info != NULL);
+		  max_rcoord = ((node_info*)(x->info))->max_node_rcoord;
+		  if( (x->left != nil) && (((node_info*)x->left->info)->max_subtr_rcoord > max_rcoord))
+			max_rcoord = ((node_info*)x->left->info)->max_subtr_rcoord;
+		  if( (x->right != nil) && (((node_info*)x->right->info)->max_subtr_rcoord > max_rcoord))
+			max_rcoord = ((node_info*)x->right->info)->max_subtr_rcoord;
+		  ((node_info*)x->info)->max_subtr_rcoord = max_rcoord;
+		  x = x->parent;
+	  }
+	  DTF_DBG(VERBOSE_RB_TREE_LEVEL, "Updated max_subtr_rcoord");
+   }
+  
+  
   if(cur_dim != ndims - 1){
 	//goto higher dimension tree
 	info->cur_dim++;
@@ -667,25 +695,23 @@ void InorderTreePrintVer2(rb_red_blk_tree* tree, rb_red_blk_node* x) {
   
   if (x != tree->nil) {
     InorderTreePrintVer2(tree,x->left);
-    
-    
-    DTF_DBG(VERBOSE_DBG_LEVEL,"  key=");
+
+    printf("key=");
     tree->PrintKey(x->key);
-    DTF_DBG(VERBOSE_DBG_LEVEL,"  l->key=");
+    printf("  l->key=");
     
-    if( x->left == nil) DTF_DBG(VERBOSE_DBG_LEVEL,"nil"); else tree->PrintKey(x->left->key);
-    DTF_DBG(VERBOSE_DBG_LEVEL,"  r->key=");
-    if( x->right == nil) DTF_DBG(VERBOSE_DBG_LEVEL,"nil"); else tree->PrintKey(x->right->key);
-    DTF_DBG(VERBOSE_DBG_LEVEL,"  p->key=");
-    if( x->parent == root) DTF_DBG(VERBOSE_DBG_LEVEL,"nil"); else tree->PrintKey(x->parent->key);
+    if( x->left == nil) printf("nil"); else tree->PrintKey(x->left->key);
+    printf("  r->key=");
+    if( x->right == nil) printf("nil"); else tree->PrintKey(x->right->key);
+    printf("  p->key=");
+    if( x->parent == root) printf("nil"); else tree->PrintKey(x->parent->key);
     //DTF_DBG(VERBOSE_DBG_LEVEL,"  red=%i\n",x->red);
-    DTF_DBG(VERBOSE_DBG_LEVEL,"  info=");
+    printf("  info=");
     tree->PrintInfo(x->info);
     
     InorderTreePrintVer2(tree,x->right);
   } else 
-	DTF_DBG(VERBOSE_DBG_LEVEL,"nil\n");
-  DTF_DBG(VERBOSE_DBG_LEVEL,"*\n");
+	DTF_DBG(VERBOSE_DBG_LEVEL,"nil");
 }
 
 
@@ -799,15 +825,23 @@ rb_red_blk_node* RBExactQuery(rb_red_blk_tree* tree, void* q) {
   return(x);
 }
 
-rb_red_blk_node* RBExactQueryBlock(rb_red_blk_tree* tree, MPI_Offset* start, int ndims) {
+rb_red_blk_node* RBExactQueryPoint(rb_red_blk_tree* tree, MPI_Offset* start, int ndims) {
   rb_red_blk_node* x=tree->root->left;
   rb_red_blk_node* nil=tree->nil;
   if (x == nil) return(0);
-  return FindOverlapBlock(tree, x, start, ndims);
+  return FindBlockPoint(tree, x, start, ndims);
   
 }
 
-rb_red_blk_node* FindOverlapBlock(rb_red_blk_tree* tree, rb_red_blk_node *subtr, MPI_Offset* start, int ndims)
+rb_red_blk_node* RBExactQueryOverlap(rb_red_blk_tree* tree, MPI_Offset* start, MPI_Offset* count, int ndims) {
+  rb_red_blk_node* x=tree->root->left;
+  rb_red_blk_node* nil=tree->nil;
+  if (x == nil) return(0);
+  return FindBlockOverlap(tree, x, start, count, ndims);
+}
+
+/*find block that includes the [start] coordinate*/
+rb_red_blk_node* FindBlockPoint(rb_red_blk_tree* tree, rb_red_blk_node *subtr, MPI_Offset* start, int ndims)
 {
 	node_info *info;
 	rb_red_blk_node *node = NULL, *nil = tree->nil;
@@ -833,7 +867,7 @@ rb_red_blk_node* FindOverlapBlock(rb_red_blk_tree* tree, rb_red_blk_node *subtr,
 				} else {
 					//DTF_DBG(VERBOSE_RB_TREE_LEVEL,"go deeper\n");
 					//go to next dim
-					node = FindOverlapBlock( info->next_dim_tree, info->next_dim_tree->root->left /*true root*/, start, ndims);
+					node = FindBlockPoint( info->next_dim_tree, info->next_dim_tree->root->left /*true root*/, start, ndims);
 				}
 			}
 			if(node != NULL) return node;
@@ -844,7 +878,7 @@ rb_red_blk_node* FindOverlapBlock(rb_red_blk_tree* tree, rb_red_blk_node *subtr,
 		coord <= ((node_info*)subtr->left->info)->max_subtr_rcoord ){
 		DTF_DBG(VERBOSE_RB_TREE_LEVEL,"go left\n");
 		//investigate left subtree
-		node = FindOverlapBlock( tree, subtr->left, start, ndims);
+		node = FindBlockPoint( tree, subtr->left, start, ndims);
 		if(node != NULL) return node;
 	} 
 	
@@ -853,7 +887,62 @@ rb_red_blk_node* FindOverlapBlock(rb_red_blk_tree* tree, rb_red_blk_node *subtr,
 		coord <= ((node_info*)subtr->right->info)->max_subtr_rcoord ){
 		DTF_DBG(VERBOSE_RB_TREE_LEVEL,"go right\n");
 		//investigate right subtree
-		node = FindOverlapBlock( tree, subtr->right, start, ndims);  
+		node = FindBlockPoint( tree, subtr->right, start, ndims);  
+		if(node != NULL) return node;
+	} 
+		
+	DTF_DBG(VERBOSE_RB_TREE_LEVEL,"nope\n");
+	return node;
+}
+
+/*Find block that overlaps in any way with quired block*/
+rb_red_blk_node* FindBlockOverlap(rb_red_blk_tree* tree, rb_red_blk_node *subtr, MPI_Offset* start, MPI_Offset* count, int ndims)
+{
+	node_info *info;
+	rb_red_blk_node *node = NULL, *nil = tree->nil;
+	int cur_dim = tree->cur_dim;
+	MPI_Offset lcoord = start[cur_dim];
+	MPI_Offset rcoord = start[cur_dim] + count[cur_dim] - 1;
+    if(subtr == nil) return 0;
+    
+    info = (node_info*)subtr->info;
+    DTF_DBG(VERBOSE_RB_TREE_LEVEL,"Looking for [%lld, %lld]\n", lcoord, rcoord);
+    
+    DTF_DBG(VERBOSE_RB_TREE_LEVEL,"Cur node %lld, max rcoord %lld, max tree rcoord %lld\n", 
+			*(MPI_Offset*)subtr->key, info->max_node_rcoord, info->max_subtr_rcoord);
+    
+    if( (lcoord >= *(MPI_Offset*)(subtr->key) && lcoord <= info->max_node_rcoord) ||
+        (lcoord < *(MPI_Offset*)(subtr->key) &&  rcoord >= *(MPI_Offset*)(subtr->key))){
+			
+			
+			if(cur_dim == ndims - 1){
+				DTF_DBG(VERBOSE_RB_TREE_LEVEL,"found\n");
+				//found node
+				return subtr;
+			} else {
+				//DTF_DBG(VERBOSE_RB_TREE_LEVEL,"go deeper\n");
+				//go to next dim
+				node = FindBlockOverlap( info->next_dim_tree, info->next_dim_tree->root->left /*true root*/, start, count, ndims);
+			}
+			
+			if(node != NULL) return node;
+	}		
+	
+	if( subtr->left != nil && 
+		//coord >= *(MPI_Offset*)(subtr->left->key) &&
+		lcoord <= ((node_info*)subtr->left->info)->max_subtr_rcoord){
+		DTF_DBG(VERBOSE_RB_TREE_LEVEL,"go left\n");
+		//investigate left subtree
+		node = FindBlockOverlap( tree, subtr->left, start,count, ndims);
+		if(node != NULL) return node;
+	} 
+	
+	if( subtr->right != nil && 
+		rcoord >= *(MPI_Offset*)(subtr->right->key) &&
+		lcoord <= ((node_info*)subtr->right->info)->max_subtr_rcoord ){
+		DTF_DBG(VERBOSE_RB_TREE_LEVEL,"go right\n");
+		//investigate right subtree
+		node = FindBlockOverlap( tree, subtr->right, start, count, ndims);  
 		if(node != NULL) return node;
 	} 
 		
@@ -1051,17 +1140,17 @@ void rb_print_stats()
 
 /***************************FUNCTIONS USED IN DTF*******************************/
 
-static void bl_print(block_t *_bl)
+void bl_print(block_t *_bl, int ndims)
 {
-  //DTF_DBG(VERBOSE_DBG_LEVEL,"node %p\n", _bl);
-  //int i;
-  //DTF_DBG(VERBOSE_DBG_LEVEL,"([");
-  //for(i = 0; i < ndims; i++)
-	//DTF_DBG(VERBOSE_DBG_LEVEL, "%lld,", _bl->start[i]);
-  //DTF_DBG(VERBOSE_DBG_LEVEL,"],["); 
-  //for(i = 0; i < ndims; i++)
-	//DTF_DBG(VERBOSE_DBG_LEVEL, "%lld,", _bl->count[i]);
-  //DTF_DBG(VERBOSE_DBG_LEVEL,"]) \n");
+  //printf(" node %p\n", (void*)_bl);
+  int i;
+  printf("([");
+  for(i = 0; i < ndims; i++)
+	printf("%lld,", _bl->start[i]);
+  printf("],["); 
+  for(i = 0; i < ndims; i++)
+	printf("%lld,", _bl->count[i]);
+  printf("]) \n");
 }
 
 /*API for handling rb_tree in write_db_item*/
@@ -1092,16 +1181,20 @@ int rb_key_cmp(const void *a, const void *b)
 
 void rb_print_key(const void *key)
 {
-	DTF_DBG(VERBOSE_DBG_LEVEL,"%lld", *(MPI_Offset*)key);
+	printf("%lld", *(MPI_Offset*)key);
 }
 
 void rb_print_info(void *ninfo)
 {
 	node_info *info = (node_info*)ninfo;
+	printf(" max rcoord: %lld", info->max_node_rcoord);
+	printf(" max subtr rcoord: %lld", info->max_subtr_rcoord);
+	
 	if(info->blck != NULL){
-		bl_print(info->blck);
+		bl_print(info->blck, 2);
 	} else 
-		DTF_DBG(VERBOSE_DBG_LEVEL,"\n");
+		printf("\n");
+	
 	if(info->next_dim_tree != NULL){
 		DTF_DBG(VERBOSE_DBG_LEVEL,"Tree for dim %d---->\n", info->next_dim_tree->cur_dim);
 		RBTreePrintBlocks(info->next_dim_tree);
@@ -1109,11 +1202,27 @@ void rb_print_info(void *ninfo)
 	}
 }
 
-block_t *rb_find_block(rb_red_blk_tree* tree, MPI_Offset* start, int ndims)
+block_t *rb_find_interval_point(rb_red_blk_tree* tree, MPI_Offset* start, int ndims)
 {
-	rb_red_blk_node *find=RBExactQueryBlock(tree, start, ndims);
+	rb_red_blk_node *find=RBExactQueryPoint(tree, start, ndims);
 	
 	if(find != NULL)
 		return ((node_info*)find->info)->blck;
 	else return NULL;
 }
+
+block_t *rb_find_interval_overlap(rb_red_blk_tree* tree, MPI_Offset* start, MPI_Offset* count, int ndims)
+{
+	rb_red_blk_node *find=RBExactQueryOverlap(tree, start, count, ndims);
+	
+	if(find != NULL)
+		return ((node_info*)find->info)->blck;
+	else return NULL;
+}
+
+block_t *rb_find_block(rb_red_blk_tree* tree, MPI_Offset* start, MPI_Offset* count, int ndims)
+{
+	return rb_find_interval_point(tree, start, ndims);
+	//return rb_find_interval_overlap(tree, start, count, ndims);
+}
+

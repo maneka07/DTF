@@ -111,5 +111,5 @@ int rb_key_cmp(const void *a, const void *b);
 void rb_destroy_node_info(void* ninfo);
 
 void rb_print_stats();
-block_t *rb_find_block(rb_red_blk_tree* tree, MPI_Offset* start, int ndims);
+block_t *rb_find_block(rb_red_blk_tree* tree, MPI_Offset* start, MPI_Offset* count, int ndims);
 #endif
