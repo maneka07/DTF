@@ -114,12 +114,11 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		pat->wrt_recorded = IO_PATTERN_RECORDING;
 		
 	 /*In scale-letkf we assume completely mirrorer file handling. 
-	 * Hence, will simply duplicate the master structre*/
+	 * Hence, will simply duplicate the master structure*/
 	 if(gl_scale){
 		assert(fbuf->cpl_mst_info->nmasters == 0);
 		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
 		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-		assert(fbuf->cpl_mst_info->masters != NULL);
 		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
 		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
 		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
@@ -232,7 +231,6 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	 if(gl_scale && (fbuf->cpl_mst_info->nmasters == 0)){
 		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
 		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-		assert(fbuf->cpl_mst_info->masters != NULL);
 		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
 		fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
 		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
@@ -292,8 +290,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		
 		if(gl_my_rank != fbuf->root_writer){
 			assert(fbuf->cpl_mst_info->masters== NULL);
-			fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-			assert(fbuf->cpl_mst_info->masters != NULL);	
+			fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));	
 		}
 		
 		err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);

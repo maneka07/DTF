@@ -158,13 +158,9 @@ static void do_matching(file_buffer_t *fbuf)
     t_start = MPI_Wtime();
 
     writers = (int*)dtf_malloc(mlc_ranks*sizeof(int));
-    assert(writers != NULL);
     sbuf = (unsigned char**)dtf_malloc(mlc_ranks*sizeof(unsigned char*));
-    assert(sbuf != NULL);
     bufsz = (int*)dtf_malloc(mlc_ranks*sizeof(int));
-    assert(bufsz != NULL);
     offt = (size_t*)dtf_malloc(mlc_ranks*sizeof(size_t));
-    assert(offt != NULL);
 
     allocd_nwriters = mlc_ranks;
 
@@ -229,7 +225,6 @@ static void do_matching(file_buffer_t *fbuf)
                 for(i = 0; i < ndims; i++)
                     nelems_to_match *= rblock->count[i];
                 matched_count = dtf_malloc(ndims*sizeof(MPI_Offset));
-                assert(matched_count != NULL);
             } else
                 matched_count = NULL;
 
@@ -493,7 +488,6 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
 				assert(fbuf->cpl_mst_info->comm_sz > 0);
 
 				fbuf->my_mst_info->iodb->ritems = dtf_malloc(fbuf->cpl_mst_info->comm_sz * sizeof(read_db_item_t*));
-				assert(fbuf->my_mst_info->iodb->ritems != NULL);
 				for(i = 0; i < fbuf->cpl_mst_info->comm_sz; i++)
 					fbuf->my_mst_info->iodb->ritems[i] = NULL;
 			}
@@ -504,7 +498,6 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
 			
 			if(ritem == NULL){
 				fbuf->my_mst_info->iodb->ritems[file_rank] = (read_db_item_t*)dtf_malloc(sizeof(read_db_item_t));
-				assert(fbuf->my_mst_info->iodb->ritems[file_rank] != NULL);
 				ritem = fbuf->my_mst_info->iodb->ritems[file_rank];
 				ritem->dblocks = NULL;
 				ritem->nblocks = 0;
@@ -513,15 +506,12 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
 			}
 			
             read_dblock_t *dblock = dtf_malloc(sizeof(read_dblock_t));
-            assert(dblock != NULL);
             dblock->var_id = var_id;
             dblock->ndims = var->ndims;
             dblock->next = NULL;
             dblock->prev = NULL;
             dblock->start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            assert(dblock->start != NULL);
             dblock->count = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            assert(dblock->count != NULL);
             memcpy(dblock->start, chbuf+offt, var->ndims*sizeof(MPI_Offset));
             offt += var->ndims*sizeof(MPI_Offset);
             memcpy(dblock->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
@@ -549,20 +539,17 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
             
             if(fbuf->my_mst_info->iodb->witems == NULL){
 				fbuf->my_mst_info->iodb->witems = dtf_malloc(fbuf->nvars*sizeof(write_db_item_t*));
-				assert(fbuf->my_mst_info->iodb->witems != NULL);
 				for(i = 0; i < fbuf->nvars; i++)
 					fbuf->my_mst_info->iodb->witems[i] = NULL;
 			}
             if(fbuf->my_mst_info->iodb->witems[var_id] == NULL){
                 fbuf->my_mst_info->iodb->witems[var_id] = (write_db_item_t*)dtf_malloc(sizeof(write_db_item_t));
-                assert(fbuf->my_mst_info->iodb->witems[var_id] != NULL);
                 witem = fbuf->my_mst_info->iodb->witems[var_id];
 
                 if(var->ndims > 0)     //TODO why void* ????
                     witem->dblocks = (void*)RBTreeCreateBlocks(rb_key_cmp, NullFunction, rb_destroy_node_info, rb_print_key, rb_print_info, 0);
                 else{
                     witem->dblocks = dtf_malloc(sizeof(block_t));
-                    assert(witem->dblocks != NULL);
 				}
                 witem->nblocks = 0;
                 witem->ndims = var->ndims;
@@ -571,17 +558,13 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
 				
             if(var->ndims > 0){
 				insert_info *info = dtf_malloc(sizeof(insert_info));
-				assert(info != NULL);
 				info->ndims = var->ndims;
 
 				info->blck = dtf_malloc(sizeof(block_t));
-				assert(info->blck != NULL);
 				info->cur_dim = 0;
 				info->blck->rank = global_rank;
 				info->blck->start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-                assert(info->blck->start != NULL);
                 info->blck->count = dtf_malloc(var->ndims*sizeof(MPI_Offset)); 
-                assert(info->blck->count != NULL);
                 memcpy(info->blck->start, chbuf+offt, var->ndims*sizeof(MPI_Offset));
                 offt += var->ndims*sizeof(MPI_Offset);
                 memcpy(info->blck->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
@@ -624,7 +607,6 @@ io_req_t *new_ioreq(int id,
                     int buffered)
 {
     io_req_t *ioreq = (io_req_t*)dtf_malloc(sizeof(io_req_t));
-    assert(ioreq != NULL);
     int el_sz;
 	
 	MPI_Type_size(dtype, &el_sz);
@@ -637,10 +619,8 @@ io_req_t *new_ioreq(int id,
         ioreq->req_data_sz *= el_sz;
 
         ioreq->start = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
-        assert(ioreq->start != NULL);
         memcpy((void*)ioreq->start, (void*)start, sizeof(MPI_Offset)*ndims);
         ioreq->count = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
-        assert(ioreq->count != NULL);
         memcpy((void*)ioreq->count, (void*)count, sizeof(MPI_Offset)*ndims);
     } else {
         ioreq->start = NULL;
@@ -663,7 +643,6 @@ io_req_t *new_ioreq(int id,
     if(buffered && (rw_flag == DTF_WRITE)){
         double t_start = MPI_Wtime();
         ioreq->user_buf = dtf_malloc((size_t)ioreq->req_data_sz);
-        assert(ioreq->user_buf != NULL);
         if(derived_params == NULL)
 			memcpy(ioreq->user_buf, buf, (size_t)ioreq->req_data_sz);
 		else{
@@ -718,11 +697,8 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
 	MPI_Comm_rank(fbuf->comm, &file_rank);
 	
     sbuf = (unsigned char**)dtf_malloc(nmasters*sizeof(unsigned char*));
-    assert(sbuf != NULL);
     offt = (size_t*)dtf_malloc(nmasters*sizeof(size_t));
-    assert(offt != NULL);
     bufsz = (size_t*)dtf_malloc(nmasters*sizeof(size_t));
-    assert(bufsz != NULL);
 
     /*Distribute ioreqs between the masters based on var id*/
 
@@ -759,7 +735,6 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
 		int flag; 
 		char *fname = dtf_malloc(MAX_FILE_NAME);
-		assert(fname != NULL);
 		strcpy(fname, fbuf->file_path);
 		dtf_msg_t *msg = new_dtf_msg(fname, MAX_FILE_NAME, DTF_UNDEFINED, READ_DONE_TAG);
 		err = MPI_Isend(fname, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
@@ -783,7 +758,6 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
         bufsz[mst] += MAX_FILE_NAME ;
         DTF_DBG(VERBOSE_DBG_LEVEL, "bufsz %lu for mst %d", bufsz[mst], mst);
         sbuf[mst] = dtf_malloc(bufsz[mst]);
-        assert(sbuf[mst] != NULL);
 
         memcpy(sbuf[mst], fbuf->file_path, MAX_FILE_NAME);
         offt[mst] = MAX_FILE_NAME ;
@@ -885,11 +859,8 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Sending I/O reqs by block");
 
     sbuf = (unsigned char**)dtf_malloc(nmasters*sizeof(unsigned char*));
-    assert(sbuf != NULL);
     offt = (size_t*)dtf_malloc(nmasters*sizeof(size_t));
-    assert(offt != NULL);
     bufsz = (size_t*)dtf_malloc(nmasters*sizeof(size_t));
-    assert(bufsz != NULL);
 
     /*Distribute ioreqs between the masters based on the first dimension of the var*/
 
@@ -922,7 +893,6 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 		 DTF_DBG(VERBOSE_DBG_LEVEL, "Have no read requests. Notify master that read done");
          int flag = 0;
 		char *fname = dtf_malloc(MAX_FILE_NAME);
-		assert(fname != NULL);
 		strcpy(fname, fbuf->file_path);
 		dtf_msg_t *msg = new_dtf_msg(fname, MAX_FILE_NAME, DTF_UNDEFINED, READ_DONE_TAG);
 		err = MPI_Isend(fname, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
@@ -957,7 +927,6 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 				mst = varid % nmasters;
 				if(bufsz[mst] == 0){
 						sbuf[mst] = dtf_malloc(MAX_FILE_NAME + mlc_chunk);
-						assert(sbuf[mst] != NULL);
 						bufsz[mst] = MAX_FILE_NAME + mlc_chunk;
 
 						memcpy(sbuf[mst], fbuf->file_path, MAX_FILE_NAME);
@@ -1025,7 +994,6 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
 					assert(mst < nmasters);
 					if(bufsz[mst] == 0){
 						sbuf[mst] = dtf_malloc(mlc_chunk);
-						assert(sbuf[mst] != NULL);
 						bufsz[mst] = mlc_chunk;
 
 						memcpy(sbuf[mst], fbuf->file_path, MAX_FILE_NAME);
@@ -1349,7 +1317,6 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Sending data to rank %d", rdr_rank);
 
     sbuf = (unsigned char*)gl_msg_buf; //dtf_malloc(gl_conf.data_msg_size_limit);//
-    assert(sbuf != NULL);
     sbufsz = (int)gl_conf.data_msg_size_limit;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: use data buf of sz %d", (int)sbufsz);
@@ -1569,7 +1536,6 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
 				} else {
 					//adjust start coordinate with respect to the user buffer
 					MPI_Offset *rel_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-					assert(rel_start != NULL);
 					for(i = 0; i < var->ndims; i++)
 						rel_start[i] = new_start[i] - ioreq->start[i];
 					
@@ -1736,7 +1702,6 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
 			}
         } else{
 			MPI_Offset *rel_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-			assert(rel_start != NULL);
 			for(i = 0; i < var->ndims; i++)
 				rel_start[i] = start[i] - ioreq->start[i];
 			
@@ -1832,7 +1797,6 @@ static void notify_masters(file_buffer_t *fbuf, void *msg, int msgsz, int msgtag
 {
     int i, err;
     MPI_Request *reqs = dtf_malloc(fbuf->my_mst_info->nmasters * sizeof(MPI_Request));
-    assert(reqs != NULL);
     
     assert(gl_my_rank == fbuf->root_writer);
     
@@ -1863,7 +1827,6 @@ static void notify_workgroup(file_buffer_t *fbuf,  void *msg, int msgsz, int msg
     DTF_DBG(VERBOSE_DBG_LEVEL, "Mst %d will notify workgroup (msgtag %d) for %s", gl_my_rank, msgtag, fbuf->file_path);
     assert(fbuf->my_mst_info->my_mst == gl_my_rank);
     MPI_Request *reqs = dtf_malloc((fbuf->my_mst_info->my_wg_sz - 1)*sizeof(MPI_Request));
-    assert(reqs != NULL);
     for(i = 0; i < fbuf->my_mst_info->my_wg_sz - 1; i++){
         if(msgsz == 0)
 			err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_wg[i], msgtag, gl_comps[gl_my_comp_id].comm, &reqs[i]);
@@ -1950,7 +1913,6 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					offt+=sizeof(int);
 					assert(fbuf->cpl_mst_info->nmasters > 0);
 					fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-					assert(fbuf->cpl_mst_info->masters != NULL);
 					memcpy(fbuf->cpl_mst_info->masters, (unsigned char*)rbuf+offt, fbuf->cpl_mst_info->nmasters*sizeof(int));
 					fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
 				}
@@ -2006,7 +1968,6 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					if(fbuf->my_mst_info->nread_completed == fbuf->my_mst_info->my_wg_sz){
 							int flag=0;
 							char *fname = dtf_malloc(MAX_FILE_NAME);
-							assert(fname != NULL);
 							strcpy(fname, fbuf->file_path);
 							DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root that my workgroup completed reading");
 							
@@ -2104,10 +2065,7 @@ void progress_comm()
             tag = status.MPI_TAG;
             src = status.MPI_SOURCE;
 			MPI_Get_count(&status, MPI_BYTE, &bufsz);
-			if(bufsz > 0){
-				rbuf = dtf_malloc(bufsz);
-				assert(rbuf != NULL);
-			}
+			if(bufsz > 0) rbuf = dtf_malloc(bufsz);
             print_recv_msg(tag, src);
             t_start_comm = MPI_Wtime();
 			err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_comps[comp].comm, &status);
@@ -2130,10 +2088,7 @@ void progress_comm()
 			tag = status.MPI_TAG;
 			src = status.MPI_SOURCE;
 			MPI_Get_count(&status, MPI_BYTE, &bufsz);
-			if(bufsz > 0){
-				rbuf = dtf_malloc(bufsz);
-				assert(rbuf != NULL);
-			}
+			if(bufsz > 0) rbuf = dtf_malloc(bufsz);
             print_recv_msg(tag, src);
             t_start_comm = MPI_Wtime();
 			err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_comps[comp].comm, &status);
@@ -2156,7 +2111,6 @@ void log_ioreq(file_buffer_t *fbuf,
 { 
     int el_sz;
 	io_req_log_t *req = dtf_malloc(sizeof(io_req_log_t));
-	assert(req != NULL);
 	req->var_id = varid;
 	req->ndims = ndims;
 	req->next = NULL;
@@ -2172,10 +2126,8 @@ void log_ioreq(file_buffer_t *fbuf,
             req->req_data_sz *= count[i];
         
         req->start = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
-        assert(req->start != NULL);
         memcpy((void*)req->start, (void*)start, sizeof(MPI_Offset)*ndims);
         req->count = (MPI_Offset*)dtf_malloc(sizeof(MPI_Offset)*ndims);
-        assert(req->count != NULL);
         memcpy((void*)req->count, (void*)count, sizeof(MPI_Offset)*ndims);
     } else{
         req->start = NULL;

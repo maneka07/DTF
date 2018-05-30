@@ -34,11 +34,8 @@ static dtype_params_t *get_dtype_params(MPI_Datatype dtype, int ndims, /*out*/ M
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: dispacement addresses are provided in derived data type. Data extraction result might be incorrect.");
 	assert(num_ints == ndims*3+2);
 	array_of_ints   = (int *)dtf_malloc( num_ints * sizeof(int) ); 
-	assert(array_of_ints != NULL);
 	array_of_adds   =  (MPI_Aint *) dtf_malloc( num_adds * sizeof(MPI_Aint) ); 
-	assert(array_of_adds != NULL);
 	array_of_dtypes = (MPI_Datatype *)dtf_malloc( num_dtypes * sizeof(MPI_Datatype) ); 
-	assert(array_of_dtypes != NULL);
    
 	err = MPI_Type_get_contents( dtype, num_ints, num_adds, num_dtypes, 
 					 array_of_ints, array_of_adds, array_of_dtypes ); 
@@ -49,12 +46,8 @@ static dtype_params_t *get_dtype_params(MPI_Datatype dtype, int ndims, /*out*/ M
 		DTF_DBG(VERBOSE_DBG_LEVEL, "%d", array_of_ints[i]);
 	
 	params = dtf_malloc(sizeof(dtype_params_t));
-	assert(params != NULL);
-	
 	params->orig_array_size = dtf_malloc(ndims*sizeof(MPI_Offset));
-	assert(params->orig_array_size != NULL);
 	params->orig_start = dtf_malloc(ndims*sizeof(MPI_Offset));
-	assert(params->orig_start != NULL);
 		
 	assert(array_of_ints[0] == ndims);
 	
@@ -120,8 +113,6 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
     int i;
 
     dtf_var_t *var = (dtf_var_t*)dtf_malloc(sizeof(dtf_var_t));
-    assert(var!=NULL);
-
     /*Initialize whatever we can initialize at this stage*/
     var->id = varid;
     if(ndims > 0){ 

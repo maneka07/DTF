@@ -94,7 +94,6 @@ void notify_file_ready(file_buffer_t *fbuf)
 	assert(fbuf->root_reader != -1);
 
 	filename = dtf_malloc(MAX_FILE_NAME);
-	assert(filename != NULL);
 	strcpy(filename, fbuf->file_path);
 	msg = new_dtf_msg(filename, MAX_FILE_NAME, DTF_UNDEFINED, FILE_READY_TAG);
 	DTF_DBG(VERBOSE_DBG_LEVEL,   "Notify reader root rank %d that file %s is ready", fbuf->root_reader, fbuf->file_path);
@@ -494,7 +493,6 @@ void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
 	//pack my master info and send it to the other component
 	bufsz = MAX_FILE_NAME+sizeof(int)+fbuf->my_mst_info->nmasters*sizeof(int)+sizeof(int);
 	buf = dtf_malloc(bufsz);
-	assert(buf != NULL);
 	chbuf = (unsigned char*)buf;
 	
 	memcpy(chbuf, fbuf->file_path, MAX_FILE_NAME);
@@ -593,7 +591,9 @@ MPI_Datatype int2mpitype(int num)
 void* dtf_malloc(size_t size)
 {
     gl_stats.malloc_size += size;
-    return malloc(size);
+    void *ptr = malloc(size);
+    assert(ptr != NULL);
+    return ptr;
 }
 
 void dtf_free(void *ptr, size_t size)
@@ -624,7 +624,6 @@ void convertcpy(MPI_Datatype from_type, MPI_Datatype to_type, void* srcbuf, void
 dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag)
 {
     dtf_msg_t *msg = dtf_malloc(sizeof(struct dtf_msg));
-    assert(msg != NULL);
     msg->req = MPI_REQUEST_NULL;
     if(bufsz > 0){
         msg->buf = buf;
@@ -803,7 +802,6 @@ void get_put_data(int ndims,
     }
 
     cur_coord = dtf_malloc(ndims*sizeof(MPI_Offset));
-    assert(cur_coord != NULL);
     memcpy(cur_coord, subbl_start, ndims *sizeof(MPI_Offset));
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Call getput data");

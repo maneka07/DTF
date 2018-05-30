@@ -109,7 +109,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 	gl_stats.dtf_time = 0;
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
-    assert(gl_my_comp_name != NULL);
     strcpy(gl_my_comp_name, module_name);
 
     s = getenv("DTF_VERBOSE_LEVEL");

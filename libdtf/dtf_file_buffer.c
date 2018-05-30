@@ -47,7 +47,6 @@ static void unpack_file_info(MPI_Offset bufsz, void *buf)
     offt += sizeof(MPI_Offset);
     /*header*/
     fbuf->header = dtf_malloc(fbuf->hdr_sz);
-    assert(fbuf->header != NULL);
     memcpy(fbuf->header, chbuf+offt, fbuf->hdr_sz);
     offt += fbuf->hdr_sz + fbuf->hdr_sz%sizeof(MPI_Offset);
     if(gl_scale){
@@ -62,7 +61,6 @@ static void unpack_file_info(MPI_Offset bufsz, void *buf)
 		offt += sizeof(MPI_Offset);
 		/*list of masters*/
 		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-		assert(fbuf->cpl_mst_info->masters != NULL);
 		memcpy(fbuf->cpl_mst_info->masters, chbuf+offt, fbuf->cpl_mst_info->nmasters*sizeof(int));
 		offt += fbuf->cpl_mst_info->nmasters*sizeof(MPI_Offset);
 		//init root master
@@ -196,8 +194,7 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     mst_info->masters = (int*)dtf_malloc(mst_info->nmasters * sizeof(int));
     assert(mst_info->masters != NULL);
     masters = (int*)dtf_malloc(mst_info->nmasters * sizeof(int));
-    assert(masters != NULL);
-
+    
     masters[0] = 0;
     for(i = 1; i < mst_info->nmasters; i++){
         masters[i] = masters[i-1] + wg;
@@ -222,7 +219,6 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
             mst_info->my_wg = dtf_malloc(nranks*sizeof(int));  //TODO do we really need this?
             assert(mst_info->my_wg != NULL);
             ranks = dtf_malloc(nranks*sizeof(int));
-            assert(ranks != NULL);
 
             for(i = 0; i < nranks; i++)
                 ranks[i] = myrank + i + 1;
@@ -252,7 +248,6 @@ static void init_iodb(ioreq_db_t *iodb)
 fname_pattern_t* new_fname_pattern()
 {
     fname_pattern_t *pat = dtf_malloc(sizeof(fname_pattern_t));
-    assert(pat != NULL);
 	pat->fname[0]='\0';
     pat->iomode = DTF_UNDEFINED;
     pat->excl_fnames = NULL;
@@ -416,7 +411,6 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
 		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 	}
 	buf = dtf_malloc(sizeof(struct file_buffer));
-    assert( buf != NULL );
     buf->next = NULL;
     buf->prev = NULL;
     buf->is_ready = 0;
@@ -440,11 +434,9 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
     assert(buf->my_mst_info != NULL);
     init_mst_info(buf->my_mst_info, comm_sz);    
 	buf->my_mst_info->iodb = dtf_malloc(sizeof(struct ioreq_db));
-	assert(buf->my_mst_info->iodb != NULL);
 	init_iodb(buf->my_mst_info->iodb);
             
     buf->cpl_mst_info = dtf_malloc(sizeof(master_info_t));
-    assert(buf->cpl_mst_info != NULL);
     init_mst_info(buf->cpl_mst_info, 0);
 	strcpy(buf->file_path, file_path);
 	buf->reader_id = -1;
@@ -686,7 +678,6 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 					MPI_Get_count(&status, MPI_BYTE, &bufsz);
 
 					buf = dtf_malloc(bufsz);
-					assert(buf != NULL);
 					err = MPI_Recv(buf, bufsz, MPI_BYTE, fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
 					CHECK_MPI(err);
 				}
@@ -695,10 +686,8 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 				CHECK_MPI(err);
 				assert(bufsz > 0);
 
-				if(rank != 0){
-					buf = dtf_malloc(bufsz);
-					assert(buf != NULL);
-				}
+				if(rank != 0) buf = dtf_malloc(bufsz);
+				
 				err = MPI_Bcast(buf, bufsz, MPI_BYTE, 0, comm);
 				CHECK_MPI(err);
 
@@ -745,7 +734,6 @@ void write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Writing header (sz %d)", (int)hdr_sz);
     fbuf->hdr_sz = hdr_sz;
     fbuf->header = dtf_malloc(hdr_sz);
-    assert(fbuf->header != NULL);
     memcpy(fbuf->header, header, (size_t)hdr_sz);
     return;
 }
@@ -798,7 +786,6 @@ void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Packing info: sz %lld", sz);
     *buf = dtf_malloc(sz);
-    assert(*buf != NULL);
     chbuf = (unsigned char*)(*buf);
 
     /*filename*/

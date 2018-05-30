@@ -271,7 +271,6 @@ int load_config(const char *ini_name, const char *comp_name){
                 goto panic_exit;
             }
             gl_comps = (struct component*)dtf_malloc(gl_ncomp*sizeof(struct component));
-            assert(gl_comps!=NULL);
             for(i = 0; i<gl_ncomp; i++){
                 gl_comps[i].id = i;
                 gl_comps[i].connect_mode = DTF_UNDEFINED;
@@ -339,7 +338,6 @@ int load_config(const char *ini_name, const char *comp_name){
             gl_stats.malloc_size += sizeof(char*);
             cur_fpat->excl_fnames = tmp;
             cur_fpat->excl_fnames[cur_fpat->nexcls] = dtf_malloc(MAX_FILE_NAME*sizeof(char));
-            assert(cur_fpat->excl_fnames[cur_fpat->nexcls] != NULL);
             strcpy(cur_fpat->excl_fnames[cur_fpat->nexcls], value);
             cur_fpat->nexcls++;
 
@@ -376,10 +374,9 @@ int load_config(const char *ini_name, const char *comp_name){
 
                 cur_fpat->iomode = DTF_IO_MODE_MEMORY;
 
-                if(gl_msg_buf == NULL){
+                if(gl_msg_buf == NULL)
                     gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
-                    assert(gl_msg_buf != NULL);
-                }
+                    
             } else {
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown I/O mode: %s.", value);
 				goto panic_exit;

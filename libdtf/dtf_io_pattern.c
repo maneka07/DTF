@@ -21,7 +21,6 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 	
 	if(pat->io_pats == NULL){
 		iopat = dtf_malloc(sizeof(struct io_pattern));
-		assert(iopat != NULL);
 		pat->io_pats = iopat;
 		created = 1;
 	} else {
@@ -33,7 +32,6 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 		}
 		if(iopat->transfer_epoch != cur_transfer_epoch){
 			io_pattern_t *tmp = dtf_malloc(sizeof(struct io_pattern));
-			assert(tmp != NULL);
 			iopat->next = tmp;
 			iopat = iopat->next;
 			created = 1;
@@ -49,7 +47,6 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 	created = 0;
 	if(iopat->rank_pats == NULL){
 		rpat = dtf_malloc(sizeof(rank_pattern_t));
-		assert(rpat != NULL);
 		iopat->rank_pats = rpat;
 		created = 1;
 	} else {
@@ -61,7 +58,6 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 		}
 		if(rpat->rank != rank){
 			rank_pattern_t *tmp = dtf_malloc(sizeof(rank_pattern_t));
-			assert(tmp != NULL);
 			rpat->next = tmp;
 			rpat = rpat->next;
 			created = 1;
@@ -72,7 +68,6 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 		rpat->rank = rank;
 		rpat->datasz = datasz;
 		rpat->data = dtf_malloc(datasz);
-		assert(rpat->data);
 		memcpy(rpat->data, pat_data, datasz);
 		rpat->next = NULL;
 	} else {
