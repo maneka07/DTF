@@ -97,7 +97,7 @@ void notify_file_ready(file_buffer_t *fbuf)
 	strcpy(filename, fbuf->file_path);
 	msg = new_dtf_msg(filename, MAX_FILE_NAME, DTF_UNDEFINED, FILE_READY_TAG);
 	DTF_DBG(VERBOSE_DBG_LEVEL,   "Notify reader root rank %d that file %s is ready", fbuf->root_reader, fbuf->file_path);
-	err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_READY_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
+	err = MPI_Isend(filename, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_READY_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
 	CHECK_MPI(err);
 	ENQUEUE_ITEM(msg, gl_comps[fbuf->reader_id].out_msg_q);
 	fbuf->fready_notify_flag = RDR_NOTIF_POSTED;

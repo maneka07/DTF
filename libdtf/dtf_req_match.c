@@ -2159,8 +2159,10 @@ void notify_complete_multiple(file_buffer_t *fbuf)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Will notify writer masters that completed multiple for %s", fbuf->file_path);
         for(i = 0; i < fbuf->cpl_mst_info->nmasters; i++){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Notify mst %d", fbuf->cpl_mst_info->masters[i]);
-            dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, DONE_MULTIPLE_TAG);
-            err = MPI_Isend(fbuf->file_path,MAX_FILE_NAME, MPI_CHAR, fbuf->cpl_mst_info->masters[i], DONE_MULTIPLE_TAG, gl_comps[fbuf->writer_id].comm, &(msg->req));
+			char *fnm = dtf_malloc(MAX_FILE_NAME);
+			strcpy(fnm, fbuf->file_path);
+            dtf_msg_t *msg = new_dtf_msg(fnm, MAX_FILE_NAME, DTF_UNDEFINED, DONE_MULTIPLE_TAG);
+            err = MPI_Isend(fnm,MAX_FILE_NAME, MPI_CHAR, fbuf->cpl_mst_info->masters[i], DONE_MULTIPLE_TAG, gl_comps[fbuf->writer_id].comm, &(msg->req));
             CHECK_MPI(err);
             ENQUEUE_ITEM(msg, gl_comps[gl_my_comp_id].out_msg_q);
         }
