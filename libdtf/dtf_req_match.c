@@ -2060,8 +2060,13 @@ void progress_comm()
 
             if(!flag){
                 gl_stats.idle_time += MPI_Wtime() - t_st;
+                if(MPI_Wtime() - gl_stats.t_idle > DTF_TIMEOUT){
+					DTF_DBG(VERBOSE_ERROR_LEVEL, "Process have been idle for %.2f seconds. Consider that it hang and abort execution", MPI_Wtime() - gl_stats.t_idle);
+					MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+				}
                 break;
             } 
+            gl_stats.t_idle = MPI_Wtime();
             tag = status.MPI_TAG;
             src = status.MPI_SOURCE;
 			MPI_Get_count(&status, MPI_BYTE, &bufsz);

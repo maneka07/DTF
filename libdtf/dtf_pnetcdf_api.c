@@ -72,6 +72,8 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 	double t_start = MPI_Wtime();
 	
     if(!lib_initialized) return;
+    
+	gl_stats.t_idle = MPI_Wtime();
 
     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf != NULL){
@@ -187,6 +189,8 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	
     if(!lib_initialized) return;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
+    
+	gl_stats.t_idle = MPI_Wtime();
 
     fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
 
@@ -396,6 +400,7 @@ _EXTERN_C_ void dtf_close(const char* filename)
 	if(fbuf->ignore_io){
 		return;
 	}
+	gl_stats.t_idle = MPI_Wtime();
 		
 	progress_comm();
 

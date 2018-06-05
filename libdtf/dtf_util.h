@@ -23,6 +23,7 @@
 #define MATCH_DONE_TAG      7
 #define IO_REQS_TAG         8
 #define COMP_FINALIZED_TAG  9
+#define COMP_ABORT_TAG      10
 
 #define IODB_BUILD_VARID    0  /*Distribute ioreqs based on var id*/
 #define IODB_BUILD_BLOCK    1  /*Distribute ioreqs by dividing var to blocks*/
@@ -32,7 +33,7 @@
 #define VERBOSE_ALL_LEVEL     2
 #define VERBOSE_RB_TREE_LEVEL 3
 
-#define DTF_TIMEOUT       60 
+#define DTF_TIMEOUT       180 
 
 /*NOTE: These two definitions are copied from pnetcdf.h
  * since I wanted to be able to compile DTF without having 
@@ -137,6 +138,7 @@ typedef struct stats{
     double          t_open_rest;
     double          t_mtch_hist;
     double          t_mtch_rest;
+    double          t_idle;        /*used to figure out when program aborted*/
 } stats_t;
 
 typedef struct dtf_msg{

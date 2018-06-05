@@ -107,6 +107,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.t_mtch_hist = 0;
     gl_stats.t_mtch_rest = 0;
 	gl_stats.dtf_time = 0;
+	gl_stats.t_idle = MPI_Wtime();
 
     gl_my_comp_name = (char*)dtf_malloc(MAX_COMP_NAME);
     strcpy(gl_my_comp_name, module_name);
