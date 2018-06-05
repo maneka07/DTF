@@ -77,30 +77,30 @@ static void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
 			fbuf->wreq_cnt, fbuf->rreq_cnt);
 }
 
-static void invalidate_old_ioreqs(file_buffer_t *fbuf)
-{
-	io_req_t *ioreq, *tmp;
-    int varid;
-    dtf_var_t *var;
+//~ static void invalidate_old_ioreqs(file_buffer_t *fbuf)
+//~ {
+	//~ io_req_t *ioreq, *tmp;
+    //~ int varid;
+    //~ dtf_var_t *var;
     
-	for(varid=0; varid < fbuf->nvars; varid++){
-		var = fbuf->vars[varid];
-		ioreq = var->ioreqs;
-		while(ioreq != NULL){
+	//~ for(varid=0; varid < fbuf->nvars; varid++){
+		//~ var = fbuf->vars[varid];
+		//~ ioreq = var->ioreqs;
+		//~ while(ioreq != NULL){
 			
-			if(ioreq->sent_flag) break;
+			//~ if(ioreq->sent_flag) break;
 			
-			if((fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ)){
-				DTF_DBG(VERBOSE_ALL_LEVEL, "Invalidate ioreq %d", ioreq->id);
-				assert(!ioreq->sent_flag);
-				tmp = ioreq->next;
-				delete_ioreq(fbuf, varid, &ioreq);
-				ioreq = tmp;
-			} else 
-				ioreq = ioreq->next;
-		}
-	}
-}
+			//~ if((fbuf->writer_id == gl_my_comp_id) && (ioreq->rw_flag == DTF_READ)){
+				//~ DTF_DBG(VERBOSE_ALL_LEVEL, "Invalidate ioreq %d", ioreq->id);
+				//~ assert(!ioreq->sent_flag);
+				//~ tmp = ioreq->next;
+				//~ delete_ioreq(fbuf, varid, &ioreq);
+				//~ ioreq = tmp;
+			//~ } else 
+				//~ ioreq = ioreq->next;
+		//~ }
+	//~ }
+//~ }
 
 void delete_ioreqs(file_buffer_t *fbuf)
 {
@@ -417,7 +417,7 @@ static void do_matching(file_buffer_t *fbuf)
             fbuf->my_mst_info->iodb->ritems[j] = NULL;
             fbuf->my_mst_info->iodb->nritems--;
         } else {
-           DTF_DBG(VERBOSE_ALL_LEVEL, "Haven't matched all blocks for rank %d, %d left", ritem->global_rank, (int)ritem->nblocks);
+           DTF_DBG(VERBOSE_DBG_LEVEL, "Haven't matched all blocks for rank %d, %d left", ritem->global_rank, (int)ritem->nblocks);
         }
     }
     if(nwriters == 0)
@@ -708,7 +708,7 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
         sbuf[mst] = NULL;
     }
 
-	invalidate_old_ioreqs(fbuf);
+	//~ invalidate_old_ioreqs(fbuf);
 	
     nrreqs = 0;
     for(varid=0; varid < fbuf->nvars; varid++){
@@ -870,7 +870,7 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
         sbuf[mst] = NULL;
     }
 
-	invalidate_old_ioreqs(fbuf);
+	//~ invalidate_old_ioreqs(fbuf);
 
     nrreqs = 0;
 	for(varid=0; varid < fbuf->nvars; varid++){
@@ -1113,8 +1113,8 @@ void match_ioreqs_all_files()
 			else if(strstr(fbuf->file_path, "anal.d")!=NULL)
 				gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
 			
-			if( ((fbuf->writer_id == gl_my_comp_id) && !gl_comps[fbuf->reader_id].finalized)  ||
-				((fbuf->reader_id == gl_my_comp_id) && !gl_comps[fbuf->writer_id].finalized) ){
+			if(!fbuf->done_matching_flag && (((fbuf->writer_id == gl_my_comp_id) && !gl_comps[fbuf->reader_id].finalized)  ||
+				((fbuf->reader_id == gl_my_comp_id) && !gl_comps[fbuf->writer_id].finalized)) ){
 				
 				if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
 					send_ioreqs_by_var(fbuf);

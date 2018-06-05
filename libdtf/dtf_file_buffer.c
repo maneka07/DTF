@@ -89,7 +89,7 @@ static void unpack_file_info(MPI_Offset bufsz, void *buf)
         add_var(fbuf, var);
     }
     assert(offt == bufsz);
-    DTF_DBG(VERBOSE_ALL_LEVEL, "Finished unpacking");
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Finished unpacking");
 }
 
 static int match_str(char* pattern, const char* filename)
@@ -784,7 +784,7 @@ void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
         sz += sizeof(MPI_Offset)*3+ sizeof(MPI_Offset)*fbuf->vars[i]->ndims;
     }
 
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Packing info: sz %lld", sz);
+    DTF_DBG(VERBOSE_ALL_LEVEL, "Packing info: sz %lld", sz);
     *buf = dtf_malloc(sz);
     chbuf = (unsigned char*)(*buf);
 
