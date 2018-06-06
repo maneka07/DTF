@@ -248,14 +248,14 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
     if(fbuf->t_last_sent_ioreqs == 0)
 		fbuf->t_last_sent_ioreqs = MPI_Wtime();
 		
-    if(MPI_Wtime() - fbuf->t_last_sent_ioreqs >= gl_conf.t_send_ioreqs_freq){
-		//Send request to master immediately
-		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
-			send_ioreqs_by_var(fbuf);
-		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
-			send_ioreqs_by_block(fbuf);
-		fbuf->t_last_sent_ioreqs = MPI_Wtime();
-	}
+    //~ if(MPI_Wtime() - fbuf->t_last_sent_ioreqs >= gl_conf.t_send_ioreqs_freq){
+		//~ //Send request to master immediately
+		//~ if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
+			//~ send_ioreqs_by_var(fbuf);
+		//~ else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
+			//~ send_ioreqs_by_block(fbuf);
+		//~ fbuf->t_last_sent_ioreqs = MPI_Wtime();
+	//~ }
 
     ret = nelems*req_el_sz;
     

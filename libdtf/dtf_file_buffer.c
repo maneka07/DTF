@@ -588,12 +588,12 @@ void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
 void close_file(file_buffer_t *fbuf)
 {
 	
-	if(fbuf->is_transferring){
-		if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
-			send_ioreqs_by_var(fbuf);
-		else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
-			send_ioreqs_by_block(fbuf);
-	}
+	//~ if(fbuf->is_transferring){
+		//~ if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
+			//~ send_ioreqs_by_var(fbuf);
+		//~ else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
+			//~ send_ioreqs_by_block(fbuf);
+	//~ }
 	
     if(fbuf->writer_id == gl_my_comp_id){
 
