@@ -1151,7 +1151,7 @@ void match_ioreqs_all_files()
 				fbuf->is_transferring = 0;
 				
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Finished transfer for %s", fbuf->file_path);
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "Time for matching for %s %.4f", fbuf->file_path, MPI_Wtime() - t_start);				
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer for %s %.4f", fbuf->file_path, MPI_Wtime() - t_start);				
 				if(strstr(fbuf->file_path, "hist.d")!=NULL){
 					gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
 					gl_stats.t_mtch_hist = MPI_Wtime() - t_start;

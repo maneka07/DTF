@@ -330,7 +330,7 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
 				MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 			}
 			if(info->blck->rank != ((node_info*)(x->info))->blck->rank){
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: Process %d overwrites data previously written by process %d", info->blck->rank, ((node_info*)(x->info))->blck->rank);
+				DTF_DBG(VERBOSE_ALL_LEVEL, "DTF Warning: Process %d overwrites data previously written by process %d", info->blck->rank, ((node_info*)(x->info))->blck->rank);
 				((node_info*)(x->info))->blck->rank = info->blck->rank;
 			}
 			for (i=0; i < info->ndims; i++)

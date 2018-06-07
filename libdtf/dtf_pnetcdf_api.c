@@ -62,7 +62,6 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
     ret = read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
     gl_stats.t_hdr += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time read hdr %.3f",  MPI_Wtime() - t_start);
     return ret;
 }
 
@@ -373,7 +372,6 @@ _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Set ncid of file %s to %d (previos value %d)", filename, ncid, fbuf->ncid);
     fbuf->ncid = ncid;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time setncid %.4f",  MPI_Wtime() - t_start);
 }
 
 /**

@@ -183,7 +183,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_verbose = verbose;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "DTF: Finished initializing");
-	DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time init %.3f",  MPI_Wtime() - t_start);
+	DTF_DBG(VERBOSE_DBG_LEVEL, "dtf_time init %.3f",  MPI_Wtime() - t_start);
 
     return 0;
 
