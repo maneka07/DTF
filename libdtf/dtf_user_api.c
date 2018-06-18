@@ -409,6 +409,8 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
     
     match_ioreqs(fbuf);
     
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer %.4f for %s",  MPI_Wtime() - t_start, fbuf->file_path);
+    
 	fname_pattern_t *pat = find_fname_pattern(filename);			
 	assert(pat != NULL);
 	if(fbuf->session_cnt == pat->num_sessions)
@@ -416,7 +418,7 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
     
     gl_stats.transfer_time += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer %.3f",  MPI_Wtime() - t_start);
+    
     return 0;
 }
 

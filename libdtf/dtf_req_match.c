@@ -592,8 +592,6 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
 	fbuf->my_mst_info->iodb->updated_flag = 1;
     gl_stats.parse_ioreq_time += MPI_Wtime() - t_st;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_stats.malloc_size);
-	//TODO trigger do_matching only at certain periods
-    do_matching(fbuf);
 }
 
 io_req_t *new_ioreq(int id,
@@ -1124,10 +1122,10 @@ void match_ioreqs_all_files()
 		}
 		fbuf = fbuf->next;
 	}
-
-	progress_comm();
 	
 	while(1){
+		
+		progress_comm();
 		
 		file_cnt = 0;
 		fbuf = gl_filebuf_list;
@@ -1151,13 +1149,13 @@ void match_ioreqs_all_files()
 				fbuf->is_transferring = 0;
 				
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Finished transfer for %s", fbuf->file_path);
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer for %s %.4f", fbuf->file_path, MPI_Wtime() - t_start);				
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer %.4f for %s", MPI_Wtime() - t_start, fbuf->file_path);				
 				if(strstr(fbuf->file_path, "hist.d")!=NULL){
 					gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-					gl_stats.t_mtch_hist = MPI_Wtime() - t_start;
+					gl_stats.t_mtch_hist += MPI_Wtime() - t_start;
 				}else if(strstr(fbuf->file_path, "anal.d")!=NULL){
 					gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-					gl_stats.t_mtch_rest = MPI_Wtime() - t_start;
+					gl_stats.t_mtch_rest += MPI_Wtime() - t_start;
 				}
 
 				fbuf->cur_transfer_epoch++;
@@ -1180,7 +1178,6 @@ void match_ioreqs_all_files()
 			fbuf = fbuf->next;
 		}
 		if(file_cnt == 0) break;
-		progress_comm();
 	}
 }
 
@@ -1281,10 +1278,10 @@ int match_ioreqs(file_buffer_t *fbuf)
 	{
 		if(strstr(fbuf->file_path, "hist.d")!=NULL){
 			gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-			gl_stats.t_mtch_hist = MPI_Wtime() - t_start;
+			gl_stats.t_mtch_hist += MPI_Wtime() - t_start;
 		}else if(strstr(fbuf->file_path, "anal.d")!=NULL){
 			gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-			gl_stats.t_mtch_rest = MPI_Wtime() - t_start;
+			gl_stats.t_mtch_rest += MPI_Wtime() - t_start;
 		}
 	}
 
@@ -2019,23 +2016,6 @@ fn_exit:
 		ENQUEUE_ITEM(msg, gl_comps[comp].in_msg_q);
 	}
 	return 0;
-}
-
-void progress_transfer()
-{
-	file_buffer_t *fbuf;
-	
-	progress_comm();
-	fbuf = gl_filebuf_list;
-	while(fbuf != NULL){
-		if( (fbuf->iomode == DTF_IO_MODE_MEMORY) && 
-			!fbuf->ignore_io && 
-			(fbuf->writer_id == gl_my_comp_id) && 
-			(fbuf->my_mst_info->my_mst == gl_my_rank)  )
-				do_matching(fbuf);
-				
-		fbuf = fbuf->next;
-	}
 }
 
 void progress_comm()
