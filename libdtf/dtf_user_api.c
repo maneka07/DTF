@@ -188,7 +188,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     return 0;
 
 panic_exit:
-
+	DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: failed to initialize the framework. Aborting..");
     dtf_finalize();
     MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     return 1;
