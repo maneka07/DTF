@@ -1148,8 +1148,9 @@ void match_ioreqs_all_files()
 				fbuf->done_matching_flag = 0;
 				fbuf->is_transferring = 0;
 				
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Finished transfer for %s", fbuf->file_path);
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer %.4f for %s", MPI_Wtime() - t_start, fbuf->file_path);				
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer for %s: %.4f", fbuf->file_path, MPI_Wtime() - t_start);				
+
 				if(strstr(fbuf->file_path, "hist.d")!=NULL){
 					gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
 					gl_stats.t_mtch_hist += MPI_Wtime() - t_start;
@@ -1193,7 +1194,7 @@ int match_ioreqs(file_buffer_t *fbuf)
     fname_pattern_t *pat = NULL;
     
 	t_start = MPI_Wtime();
-	DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp Match ioreqs for file %s (ncid %d)", fbuf->file_path, fbuf->ncid);
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %s (ncid %d)", fbuf->file_path, fbuf->ncid);
    
 
 	if(strstr(fbuf->file_path, "hist.d")!=NULL)
@@ -1274,7 +1275,7 @@ int match_ioreqs(file_buffer_t *fbuf)
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
 
 	//if(gl_scale)
-	DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp Stat: Time for matching %.4f", MPI_Wtime() - t_start);
+	DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer for %s: %.4f", fbuf->file_path, MPI_Wtime() - t_start);
 	{
 		if(strstr(fbuf->file_path, "hist.d")!=NULL){
 			gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;

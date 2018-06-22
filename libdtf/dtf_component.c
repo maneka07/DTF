@@ -185,7 +185,8 @@ int init_comp_comm(){
 
     for(i = 0; i<gl_ncomp; i++){
         if(i == gl_my_comp_id){
-            MPI_Comm_dup(MPI_COMM_WORLD, &(gl_comps[i].comm));
+            err = MPI_Comm_dup(MPI_COMM_WORLD, &(gl_comps[i].comm));
+            CHECK_MPI(err);
             continue;
         }
         err = create_intercomm(gl_comps[i].id, s);
