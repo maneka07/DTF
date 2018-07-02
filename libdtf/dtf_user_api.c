@@ -388,20 +388,6 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: file %s (ncid %d) is not treated by DTF (not in configuration file). Matching ignored.", filename, ncid);
         return 0;
     }
-	
-	if(gl_scale && (fbuf->iomode == DTF_IO_MODE_FILE) && (fbuf->writer_id == gl_my_comp_id)){
-
-		fbuf->is_ready = 1;	
-		//Check for any incoming messages
-		progress_comm();
-		if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
-			if(fbuf->root_writer == gl_my_rank){
-				while(fbuf->root_reader == -1)
-					progress_comm();
-				notify_file_ready(fbuf);
-			}
-		}
-	}
 	 
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
     
