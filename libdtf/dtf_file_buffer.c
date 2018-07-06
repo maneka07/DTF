@@ -604,7 +604,6 @@ void close_file(file_buffer_t *fbuf)
 			progress_comm();
             if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
 				assert(fbuf->root_writer == gl_my_rank);
-				//TODO allow to notify later? in that case need to be careful about deleting file buffer
 				while(fbuf->root_reader == -1)
 					progress_comm();
 				notify_file_ready(fbuf);

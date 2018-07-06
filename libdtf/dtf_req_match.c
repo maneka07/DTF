@@ -546,7 +546,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
                 fbuf->my_mst_info->iodb->witems[var_id] = (write_db_item_t*)dtf_malloc(sizeof(write_db_item_t));
                 witem = fbuf->my_mst_info->iodb->witems[var_id];
 
-                if(var->ndims > 0)     //TODO why void* ????
+                if(var->ndims > 0)     
                     witem->dblocks = (void*)RBTreeCreateBlocks(rb_key_cmp, NullFunction, rb_destroy_node_info, rb_print_key, rb_print_info, 0);
                 else{
                     witem->dblocks = dtf_malloc(sizeof(block_t));
@@ -1217,9 +1217,9 @@ int match_ioreqs(file_buffer_t *fbuf)
 	}
 
 	if(replay){
-		assert(0); //TODO
+		
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Will replay I/O instead of matching");
-		/*First writer must sync with reader*/
+		
 		if(gl_my_comp_id == fbuf->writer_id) 
 			 replay_io(pat, fbuf->file_path, fbuf->cur_transfer_epoch);
 			
@@ -1940,7 +1940,6 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 				break;
 			case IO_DATA_TAG:
 				if(!fbuf->is_transferring) goto fn_exit;  //Not ready to process this message yet
-				//TODO in message replay need to handle here
 				recv_data_rdr(fbuf, (unsigned char*)rbuf + offt, bufsz - offt);
 				break;
 			case READ_DONE_TAG:

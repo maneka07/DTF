@@ -28,10 +28,7 @@ _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *hea
     
     double t_start = MPI_Wtime();
     
-    progress_comm();
-    
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return;
-
 
     if(hdr_sz == 0){
         DTF_DBG(VERBOSE_DBG_LEVEL, "Header size for file %s is zero", filename);
@@ -51,13 +48,10 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
     double t_start = MPI_Wtime();
-        
-    progress_comm();
     
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
     if(fbuf->ignore_io) return 0;
 	
-
     ret = read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
     gl_stats.t_hdr += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
@@ -199,9 +193,6 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		}
 	} else {
 		assert(fbuf->comm == comm); //opened in the same communicator as before
-		//TODO NOTE TEMPORARY SOLUTION TO DISABLE GOING TO THE NEXT ITERATION IN SCALE_LETKF
-		//~ fbuf->ignore_io = 1;
-		//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "Will ignore io for file %s", filename);
 	}
 
     if(fbuf == NULL) {
@@ -350,7 +341,6 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     if(fbuf == NULL) return;
     fbuf->is_defined = 1;
     
-    progress_comm();
     gl_stats.dtf_time += MPI_Wtime() - t_start;
 }
 
@@ -364,7 +354,6 @@ _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is not treated by DTF. Will not set ncid", filename);
         return;
     }
-    progress_comm();
     
     DTF_DBG(VERBOSE_DBG_LEVEL, "Set ncid of file %s to %d (previos value %d)", filename, ncid, fbuf->ncid);
     fbuf->ncid = ncid;
@@ -482,8 +471,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     
     file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
-    
-    progress_comm();
+  
     
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 	
@@ -602,8 +590,6 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
    
     if(fbuf == NULL) return 0;
-    
-    progress_comm();
     
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 	if(fbuf->ignore_io) return 0;

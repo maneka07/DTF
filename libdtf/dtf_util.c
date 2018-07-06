@@ -776,7 +776,6 @@ void get_put_data(int ndims,
     MPI_Offset *cur_coord;
     int nelems;
     
-	//TODO high priority: check about fortran and C ordering!!!! especially for derived datatype
     if(ndims == 0){
         nelems = 1;
         int el_sz;
