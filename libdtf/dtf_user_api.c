@@ -402,6 +402,7 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
     
     gl_stats.transfer_time += MPI_Wtime() - t_start;
     gl_stats.dtf_time += MPI_Wtime() - t_start;
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Exit transfer");
     return 0;
 }
 
@@ -501,7 +502,7 @@ _EXTERN_C_ void dtf_time_start()
     if(!lib_initialized) return;
   
     gl_stats.user_timer_start = MPI_Wtime();
-    DTF_DBG(VERBOSE_DBG_LEVEL, "user_time start");
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "user_time start");
     
     
 }
@@ -514,7 +515,7 @@ _EXTERN_C_ void dtf_time_end()
     gl_stats.user_timer_accum += tt;
     gl_stats.user_timer_start = 0;
     
-	DTF_DBG(VERBOSE_DBG_LEVEL, "user_time end  %.6f", tt);
+	DTF_DBG(VERBOSE_ERROR_LEVEL, "user_time end  %.6f", tt);
     
  //   DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
 }

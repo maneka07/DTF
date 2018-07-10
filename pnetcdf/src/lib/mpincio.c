@@ -254,9 +254,27 @@ ncmpiio_create(MPI_Comm     comm,
 
     /* extract MPI-IO hints */
     ncmpiio_extract_hints(nciop, info);
+#ifdef DTF
+    if(dtf_io_mode((char*)path) == DTF_IO_MODE_MEMORY){
+        char new_path[1024];
+        char *fname = strrchr((char*)path, '/');
+        if(strlen((char*)path) - (fname - (char*)path + 1) > 1024){
+            printf("DTF Error: filename (%s) too long to create tmp file", fname);
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        }
 
+        sprintf(new_path, "/tmp/%s", (char*)fname);
+        //printf("Create temporary file %s\n", new_path);
+        TRACE_IO(MPI_File_open)(MPI_COMM_SELF, new_path, mpiomode, info,
+                            &nciop->collective_fh);
+    } else
+        TRACE_IO(MPI_File_open)(comm, (char *)path, mpiomode, info,
+                            &nciop->collective_fh);
+#else
     TRACE_IO(MPI_File_open)(comm, (char *)path, mpiomode, info,
                             &nciop->collective_fh);
+#endif
+
     if (mpireturn != MPI_SUCCESS) {
         ncmpiio_free(nciop);
 #ifndef HAVE_ACCESS
@@ -357,9 +375,29 @@ ncmpiio_open(MPI_Comm     comm,
 //        mpireturn = MPI_SUCCESS;
 //    } else
 //#endif
+#ifdef DTF
+    if(dtf_io_mode((char*)path) == DTF_IO_MODE_MEMORY){
+        char new_path[1024];
+
+        char *fname = strrchr((char*)path, '/');
+        if(strlen((char*)path) - (fname - (char*)path + 1) > 1024){
+            printf("DTF Error: filename (%s) too long to create tmp file", fname);
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        }
+
+        sprintf(new_path, "/tmp/%s", fname);
+        //printf("Create temporary file %s\n", new_path);
+        mpiomode = MPI_MODE_RDWR | MPI_MODE_CREATE;
+
+        TRACE_IO(MPI_File_open)(MPI_COMM_SELF, new_path, mpiomode, info,
+                            &nciop->collective_fh);
+    } else
+        TRACE_IO(MPI_File_open)(comm, (char *)path, mpiomode, info,
+                            &nciop->collective_fh);
+#else
         TRACE_IO(MPI_File_open)(comm, (char *)path, mpiomode,
                                 info, &nciop->collective_fh);
-
+#endif
     if (mpireturn != MPI_SUCCESS) {
         ncmpiio_free(nciop);
         return ncmpii_handle_error(mpireturn, "MPI_File_open");

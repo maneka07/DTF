@@ -1925,6 +1925,7 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Got info about the other component from master");				
 				break;
 			case IO_REQS_TAG:
+			//TODO continue from here
 				if( (comp != gl_my_comp_id) && (fbuf->cpl_mst_info->comm_sz == 0)) goto fn_exit;
 				if( gl_comps[comp].finalized){
 						DTF_DBG(VERBOSE_DBG_LEVEL, "Discard message as the component has started finalizing.");
