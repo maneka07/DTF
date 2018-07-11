@@ -11,7 +11,7 @@ TODO: general description of what the middleware does
 * C users:
    #include "dtf.h" 
 
-* Fortran users: import DTF functions into program using the word "external", e.g.:
+* Fortran users: import DTF functions into program using e.g. "external":
 
   external dtf_init
 
@@ -45,8 +45,7 @@ TODO: general description of what the middleware does
 
 *** MAX_WORKGROUP_SIZE - number of processes I/O requests from which are handled by one master 
     (i.e. number of masters in the execution = number of processes per component / MAX_WORKGROUP_SIZE) (default 64)
-
-*** DTF_DETECT_OVERLAP - should master process detect write overlap by different processes? 1 -yes, 0 (default) - no
+    Try different number of masters for reasonable performance.
 
 ******************** USER API *****************************
 

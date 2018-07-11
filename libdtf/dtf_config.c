@@ -117,11 +117,6 @@ static int check_config()
 			ret = 1;
 		}
 
-		if(cur_fpat->ignore_io){
-			cur_fpat = cur_fpat->next;
-			continue;
-		}
-
 		if(cur_fpat->comp1 == -1 || cur_fpat->comp2 == -1 ){
 			DTF_DBG(VERBOSE_ERROR_LEVEL,"DTF Error parsing config file: file components not set for file %s", cur_fpat->fname);
 			ret = 1;
@@ -179,7 +174,7 @@ void clean_config(){
 
 }
 
-int parse_config(const char *ini_name, const char *comp_name){
+static int parse_config(const char *ini_name, const char *comp_name){
 
   FILE*      in;
   char       line[ASCIILINESZ+1];
@@ -373,9 +368,6 @@ int parse_config(const char *ini_name, const char *comp_name){
             else if(strcmp(value, "transfer") == 0){
 
                 cur_fpat->iomode = DTF_IO_MODE_MEMORY;
-
-                if(gl_msg_buf == NULL)
-                    gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
                     
             } else {
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown I/O mode: %s.", value);
@@ -389,11 +381,7 @@ int parse_config(const char *ini_name, const char *comp_name){
 			cur_fpat->write_only = atoi(value);
 			assert(cur_fpat->write_only==0 ||  cur_fpat->write_only==1);
 			
-        }  else if(strcmp(param, "ignore_io") == 0){
-			cur_fpat->ignore_io = atoi(value);
-			assert(cur_fpat->ignore_io==0 ||  cur_fpat->ignore_io==1);
-
-		} else if(strcmp(param, "num_sessions") == 0){
+        } else if(strcmp(param, "num_sessions") == 0){
 			cur_fpat->num_sessions = atoi(value);
 			assert(cur_fpat->num_sessions > 0);
 
@@ -430,10 +418,6 @@ int parse_config(const char *ini_name, const char *comp_name){
 */
     cur_fpat = gl_fname_ptrns;
     while(cur_fpat != NULL){
-		if(cur_fpat->ignore_io){
-			cur_fpat = cur_fpat->next;
-			continue;
-		}
         if(cur_fpat->comp1 == gl_my_comp_id){
             if(gl_comps[ cur_fpat->comp2 ].connect_mode == DTF_UNDEFINED )
                gl_comps[ cur_fpat->comp2 ].connect_mode = CONNECT_MODE_SERVER; // I am server
@@ -460,15 +444,23 @@ panic_exit:
     return 1;
 }
 
-void pack_config(void *buf, int *offt1)
+void pack_config(void **buf, int *offt1)
 {
 	int i;
 	fname_pattern_t *pat;
 	unsigned char *chbuf;
 	
-	int offt = 0;
-	assert(buf != NULL);
-	chbuf = (unsigned char*)buf;
+	int offt = 0, sz = 0;
+	
+	sz += 7*sizeof(int)+gl_ncomp*MAX_COMP_NAME;
+	pat = gl_fname_ptrns;
+	while(pat != NULL){
+		sz += 7*sizeof(int)+ MAX_FILE_NAME*(pat->nexcls+1);
+		pat = pat->next;
+	}
+	
+	*buf = dtf_malloc(sz);
+	chbuf = (unsigned char*)*buf;
 	
     *(int*)(chbuf) = gl_ncomp;
     offt+=sizeof(int);
@@ -479,6 +471,14 @@ void pack_config(void *buf, int *offt1)
 	}
 	
 	*(int*)(chbuf+offt) = gl_conf.buffer_data;
+	offt += sizeof(int);
+	*(int*)(chbuf+offt) = gl_conf.iodb_build_mode;
+	offt += sizeof(int);
+	*(int*)(chbuf+offt) = (int)gl_conf.iodb_range;
+	offt += sizeof(int);
+	*(int*)(chbuf+offt) = gl_conf.do_checksum;
+	offt += sizeof(int);
+	*(int*)(chbuf+offt) = gl_conf.log_ioreqs;
 	offt += sizeof(int);
 	*(int*)(chbuf+offt) = gl_stats.num_fpats;
 	offt += sizeof(int);
@@ -511,7 +511,7 @@ void pack_config(void *buf, int *offt1)
 		
 		pat = pat->next;
 	}
-	
+	assert(offt == sz);
 	*offt1 = offt;
 }
 
@@ -553,6 +553,14 @@ void unpack_config(void *buf,const char* comp_name)
 	}
 	
 	gl_conf.buffer_data = *(int*)(chbuf+offt);
+	offt += sizeof(int);
+	gl_conf.iodb_build_mode = *(int*)(chbuf+offt);
+	offt += sizeof(int);
+	gl_conf.iodb_range = (MPI_Offset)(*(int*)(chbuf+offt));
+	offt += sizeof(int);
+	gl_conf.do_checksum = *(int*)(chbuf+offt);
+	offt += sizeof(int);
+	gl_conf.log_ioreqs = *(int*)(chbuf+offt);
 	offt += sizeof(int);
 	
 	npats = *(int*)(chbuf+offt);
@@ -596,13 +604,8 @@ void unpack_config(void *buf,const char* comp_name)
 		}
 	}
 	
-	
 	pat = gl_fname_ptrns;
     while(pat != NULL){
-		if(pat->ignore_io){
-			pat = pat->next;
-			continue;
-		}
         if(pat->comp1 == gl_my_comp_id){
             if(gl_comps[ pat->comp2 ].connect_mode == DTF_UNDEFINED )
                gl_comps[ pat->comp2 ].connect_mode = CONNECT_MODE_SERVER; // I am server
@@ -619,21 +622,26 @@ void unpack_config(void *buf,const char* comp_name)
 int load_config(const char *dtf_ini_path, const char *comp_name)
 {
 	int offt = 0, err;
-	int sz = 1024*1024;
-	void *buf = dtf_malloc(sz);
+	void *buf = NULL;
 	
 	if(gl_my_rank == 0){
 		err = parse_config(dtf_ini_path, comp_name);
 		if(err) MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-		pack_config(buf, &offt);
+		pack_config(&buf, &offt);
 	}
 	
-	 err = MPI_Bcast(buf, sz, MPI_CHAR, 0, MPI_COMM_WORLD );
+	 err = MPI_Bcast(&offt, 1, MPI_INT, 0, MPI_COMM_WORLD );
+     CHECK_MPI(err);
+     
+     if(gl_my_rank != 0)
+		buf = dtf_malloc(offt);
+		
+	 err = MPI_Bcast(buf, offt, MPI_CHAR, 0, MPI_COMM_WORLD );
      CHECK_MPI(err);
      
      if(gl_my_rank != 0)
 		unpack_config(buf, comp_name);
 		
-	dtf_free(buf, sz);
+	dtf_free(buf, offt);
 	return 0;
 }

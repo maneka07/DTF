@@ -33,7 +33,7 @@ typedef struct dtype_params{
 } dtype_params_t;
 
 typedef struct io_req{
-    unsigned int            id;  //TODO change to long
+    unsigned long           id;  //TODO change to long
     int                     sent_flag;  /*set to 1 if this req has already been forwarded to the master*/
     int                     rw_flag;
     void                    *user_buf;

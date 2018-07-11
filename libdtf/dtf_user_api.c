@@ -100,10 +100,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_stats.master_time = 0;
     gl_stats.iodb_nioreqs = 0;
     gl_stats.parse_ioreq_time = 0;
-    gl_stats.st_mtch_hist = 0;
-    gl_stats.st_mtch_rest = 0;
-    gl_stats.t_open_hist = 0;
-    gl_stats.t_open_rest = 0;
     gl_stats.t_mtch_hist = 0;
     gl_stats.t_mtch_rest = 0;
 	gl_stats.dtf_time = 0;
@@ -132,19 +128,12 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 		
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Init DTF");
 
-    s = getenv("DTF_DETECT_OVERLAP");
-    if(s == NULL)
-        gl_conf.detect_overlap_flag = 0;
-    else
-        gl_conf.detect_overlap_flag = atoi(s);
-
     s = getenv("DTF_DATA_MSG_SIZE_LIMIT");
     if(s == NULL)
         gl_conf.data_msg_size_limit = DTF_DATA_MSG_SIZE_LIMIT;
     else
         gl_conf.data_msg_size_limit = atoi(s) * 1024;
         
-    
     s = getenv("DTF_IOREQ_FREQ");
     if(s == NULL)
         gl_conf.t_send_ioreqs_freq = 0.01;
@@ -218,27 +207,8 @@ _EXTERN_C_ int dtf_finalize()
         exit(1);
     }
 
-//int MPI_Reduce(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype,
-//               MPI_Op op, int root, MPI_Comm comm)
-
 	DTF_DBG(VERBOSE_ERROR_LEVEL,"time_stamp DTF: finalize");
 	MPI_Barrier(gl_comps[gl_my_comp_id].comm);
-    gl_stats.st_fin = MPI_Wtime() - gl_stats.walltime;
-		
-    /*Send any unsent file notifications
-      //~ and delete buf files*/
-    //~ if(gl_out_msg_q != NULL){
-		//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "Send msg queue not empty:");
-		//~ dtf_msg_t *msg = gl_out_msg_q;
-		//~ while(msg != NULL){
-			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "%p (tag %d)", (void*)msg, msg->tag);
-			//~ msg = msg->next;
-		//~ }
-		//~ while(gl_out_msg_q != NULL){
-			//~ //progress_send_queue();
-			//~ progress_comm();
-		//~ }
-	//~ }
 	
 	progress_send_queue();
 		
@@ -454,6 +424,7 @@ _EXTERN_C_ void dtf_transfer_multiple(const char* filename, int ncid)
     return;
 }
 
+//TODO there was a bug with timing in receiving match complete notifications in scale-letkf
 /*Used by reader to notify writer that it can complete dtf_match_multiple*/
 _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
 {
@@ -476,7 +447,7 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     
-    MPI_Barrier(fbuf->comm); //TODO remove barrier?
+    MPI_Barrier(fbuf->comm);
     
     if( ((fbuf->writer_id == gl_my_comp_id) && !gl_comps[fbuf->reader_id].finalized)  ||
 		((fbuf->reader_id == gl_my_comp_id) && !gl_comps[fbuf->writer_id].finalized) )			

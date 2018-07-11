@@ -91,7 +91,6 @@ typedef struct dtf_config{
     int         distr_mode;
     int         buffer_data;    /*Should we buffer the data if request matching is enabled?*/
     int         data_msg_size_limit;
-    int         detect_overlap_flag;    /*should master process detect write overlap by different processes?*/
     int         do_checksum;
     MPI_Offset  iodb_range;  		  /*the size of the data block in the first dimension*/
     int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
@@ -130,13 +129,6 @@ typedef struct stats{
     
     double          transfer_time;  /*data transfer time=I/O calls+dtf_transfer */
     double          dtf_time;       /*Total time spent inside DTF*/
-    double          st_mtch_hist;
-    double          end_mtch_hist;
-    double          st_mtch_rest;
-    double          end_mtch_rest;
-    double          st_fin;
-    double          t_open_hist;
-    double          t_open_rest;
     double          t_mtch_hist;
     double          t_mtch_rest;
     double          t_idle;        /*used to figure out when program aborted*/

@@ -81,7 +81,6 @@ typedef struct file_buffer{
   int                       is_transferring;	   /*Set to 1 when active transfer phase is happening*/
   int 						is_write_only;     /*If set, two components only write to this file.*/
   int                       iomode;            /*Do normal File I/O or direct data transfer?*/ 
-  int 						ignore_io;       //TODO does this still work?
   int                       is_defined;        /*is the file structure already defined?*/   //TODO use is_ready/is_transferring instead?? 
   int 						cur_transfer_epoch;      
   int                       root_writer;       /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
@@ -89,8 +88,8 @@ typedef struct file_buffer{
   struct master_info        *cpl_mst_info;     /*Master info of the coupled component*/
   struct master_info        *my_mst_info;      /*Master info of this component*/
 
-  unsigned int              rreq_cnt;
-  unsigned int              wreq_cnt;
+  unsigned long             rreq_cnt;
+  unsigned long             wreq_cnt;
   int                       done_matching_flag;  /*Flag used to complete matching requests*/
   int                       done_multiple_flag;  /*Flag used to complete multiple transferes for the same file*/
   int                       fready_notify_flag;  /*flag used to notify the reader that the file is ready for reading.
@@ -115,7 +114,6 @@ typedef struct fname_pattern{
     int  iomode;
     int  num_sessions;          /*After how many open/close sessions we can delete given file buffer*/
     int  write_only;                
-    int  ignore_io;				/*disable I/O for this file*/ //TODO remove
     int  replay_io;            /*Should we record and replay during matching I/O pattern for this file?*/
     int  rdr_recorded;          /*if recorded, reader doesn't need to send its requests during matching as 
 								the writer has already recorded its read pattern*/

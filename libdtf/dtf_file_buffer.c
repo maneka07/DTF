@@ -255,7 +255,6 @@ fname_pattern_t* new_fname_pattern()
     pat->next = NULL;
     pat->comp1 = DTF_UNDEFINED;
     pat->comp2 = DTF_UNDEFINED;
-    pat->ignore_io = 0;
     pat->replay_io = 0;
     pat->rdr_recorded = DTF_UNDEFINED;
     pat->wrt_recorded = DTF_UNDEFINED;
@@ -447,7 +446,6 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
     buf->root_reader = -1;
     buf->is_defined = 0;
 	buf->iomode = pat->iomode;
-	buf->ignore_io = pat->ignore_io;
 	buf->cur_transfer_epoch = 0;
 	buf->t_last_sent_ioreqs = 0;
 	buf->is_transferring = 0;
@@ -708,24 +706,8 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 		if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
 			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
 		assert(fbuf->is_defined);
-        /*reset all flags*/
-        //~ if(fbuf->iomode == DTF_IO_MODE_FILE){
-			//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-				//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-				//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-			//~ char *s = getenv("DTF_SCALE");
-			//~ if(s != NULL)
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp open file %s", fbuf->file_path);
-
-		//~ }
     }
-
-	if(strstr(fbuf->file_path, "hist.d")!=NULL)
-		gl_stats.t_open_hist = MPI_Wtime()-gl_stats.walltime;
-	else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-		gl_stats.t_open_rest = MPI_Wtime()-gl_stats.walltime;
- 
+    
     DTF_DBG(VERBOSE_DBG_LEVEL,   "Exit dtf_open %s", fbuf->file_path);
 }
 

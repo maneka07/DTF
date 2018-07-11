@@ -1,1 +1,11 @@
-./configure --prefix=/home/tanya/apps/pnetcdf CFLAGS="-I/home/tanya/comm_lib/libdtf -L/home/tanya/comm_lib/libdtf -ldtf -g" LDFLAGS="-L/home/tanya/comm_lib/libdtf -ldtf" CC=mpicc FC=mpif90 
+** Compilation and installation
+
+autoreconf
+./configure --prefix=/where/to/install CFLAGS="-I/dtf/dir -L/dtf/dir -ldtf -g" LDFLAGS="-L/dtf/dir -ldtf" CC=mpicc FC=mpif90 
+make 
+make install
+
+
+** Notes for K computer
+
+./configure --prefix=/where/to/install --host=x86_64-unknown-linux-gnu --target=sparc64v-sparc-linux-gnu CFLAGS="-I/dtf/dir -Xg" LDFLAGS="-L/dtf/dir -ldtf -Xg" CC=mpifccpx FC=mpifrtpx

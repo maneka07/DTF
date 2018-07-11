@@ -50,7 +50,6 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
     double t_start = MPI_Wtime();
     
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-    if(fbuf->ignore_io) return 0;
 	
     ret = read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
     gl_stats.t_hdr += MPI_Wtime() - t_start;
@@ -91,11 +90,6 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 	
     fbuf->ncid = ncid;
     fbuf->comm = comm;
-    
-    if(fbuf->ignore_io){
-		DTF_DBG(VERBOSE_DBG_LEVEL, "I/O for this file will be ignored");
-		return;
-	}
     
 	fbuf->root_writer = fbuf->my_mst_info->masters[0];
 	if(pat->replay_io && (pat->wrt_recorded == IO_PATTERN_RECORDING)){
@@ -201,12 +195,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
     fbuf->is_transferring = 0;  //reset
 
 	progress_comm();
-   
-    if(fbuf->ignore_io){
-		DTF_DBG(VERBOSE_DBG_LEVEL, "I/O for this file will be ignored");
-		return;
-	}
-   
+
     MPI_Comm_size(comm, &nranks);
 
     if(comm == gl_comps[gl_my_comp_id].comm)
@@ -379,9 +368,6 @@ _EXTERN_C_ void dtf_close(const char* filename)
    
     if(fbuf == NULL) return;
     
-	if(fbuf->ignore_io){
-		return;
-	}
 	gl_stats.t_idle = MPI_Wtime();
 		
 	progress_comm();
@@ -485,7 +471,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     
-	if(fbuf->ignore_io || fbuf->is_write_only){
+	if(fbuf->is_write_only){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "ignore_io or write_only options are set for this file. I/O for this file will be ignored");
 		int el_sz, i;
         dtf_var_t *var = fbuf->vars[varid];
@@ -590,7 +576,6 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     if(fbuf == NULL) return 0;
     
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
-	if(fbuf->ignore_io) return 0;
 	
     DTF_DBG(VERBOSE_DBG_LEVEL, "def var %d for ncid %d", varid, fbuf->ncid);
 

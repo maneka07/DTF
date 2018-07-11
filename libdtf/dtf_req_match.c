@@ -43,7 +43,7 @@ static void shift_coord(int ndims, const MPI_Offset *bl_start,
 
 static void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
 {
-	DTF_DBG(VERBOSE_ALL_LEVEL, "Delete req %d, cur wreqs %d, rreqs %d", (*ioreq)->id,
+	DTF_DBG(VERBOSE_ALL_LEVEL, "Delete req %lu, cur wreqs %lu, rreqs %lu", (*ioreq)->id,
 			fbuf->wreq_cnt, fbuf->rreq_cnt);
 
     dtf_var_t *var = fbuf->vars[varid];
@@ -73,8 +73,6 @@ static void delete_ioreq(file_buffer_t *fbuf, int varid, io_req_t **ioreq)
         dtf_free((*ioreq)->derived_params, sizeof(dtype_params_t));
     } 
     dtf_free((*ioreq), sizeof(io_req_t));
-    DTF_DBG(VERBOSE_ALL_LEVEL, "Deleted, cur wreqs %d, rreqs %d",
-			fbuf->wreq_cnt, fbuf->rreq_cnt);
 }
 
 //~ static void invalidate_old_ioreqs(file_buffer_t *fbuf)
@@ -660,7 +658,7 @@ io_req_t *new_ioreq(int id,
 
     if( (rw_flag == DTF_WRITE) && gl_conf.do_checksum && (dtype == MPI_DOUBLE || dtype == MPI_FLOAT)){
         ioreq->checksum = compute_checksum(buf, ndims, count, dtype);
-        DTF_DBG(VERBOSE_DBG_LEVEL, "chsum for req %d is %.4f", ioreq->id, ioreq->checksum);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "chsum for req %lu is %.4f", ioreq->id, ioreq->checksum);
     } else
         ioreq->checksum = 0;
         
@@ -772,7 +770,7 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
 				break;
 			}
 			mst = varid % nmasters;
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Will send ioreq %d (varid %d) to mst %d", ioreq->id, varid, mst); 
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Will send ioreq %lu (varid %d) to mst %d", ioreq->id, varid, mst); 
 			/*Store var_id, rw_flag, start[] and count[]*/
 			*(MPI_Offset*)(sbuf[mst] + offt[mst]) = (MPI_Offset)ioreq->rw_flag;
 			offt[mst] += sizeof(MPI_Offset);
@@ -1106,11 +1104,6 @@ void match_ioreqs_all_files()
 		if(fbuf->is_transferring){ 
 			DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is in active transfer", fbuf->file_path);
 			
-			if(strstr(fbuf->file_path, "hist.d")!=NULL)
-				gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-			else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-				gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-			
 			if(!fbuf->done_matching_flag && (((fbuf->writer_id == gl_my_comp_id) && !gl_comps[fbuf->reader_id].finalized)  ||
 				((fbuf->reader_id == gl_my_comp_id) && !gl_comps[fbuf->writer_id].finalized)) ){
 				
@@ -1149,15 +1142,7 @@ void match_ioreqs_all_files()
 				fbuf->is_transferring = 0;
 				
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer for %s: %.4f", fbuf->file_path, MPI_Wtime() - t_start);				
-
-				if(strstr(fbuf->file_path, "hist.d")!=NULL){
-					gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-					gl_stats.t_mtch_hist += MPI_Wtime() - t_start;
-				}else if(strstr(fbuf->file_path, "anal.d")!=NULL){
-					gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-					gl_stats.t_mtch_rest += MPI_Wtime() - t_start;
-				}
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer for %s: %.4f", fbuf->file_path, MPI_Wtime() - t_start);
 
 				fbuf->cur_transfer_epoch++;
 					
@@ -1195,13 +1180,6 @@ int match_ioreqs(file_buffer_t *fbuf)
     
 	t_start = MPI_Wtime();
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Match ioreqs for file %s (ncid %d)", fbuf->file_path, fbuf->ncid);
-   
-
-	if(strstr(fbuf->file_path, "hist.d")!=NULL)
-		gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-	else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-		gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-
 
 	/*Check if we should do normal matching or replay a previously 
 	 * recorded I/O pattern.*/
@@ -1239,7 +1217,7 @@ int match_ioreqs(file_buffer_t *fbuf)
 			  wait for the master process to let it complete.
 			  If a reader process does not have any read requests,
 			  it notifies the master that it completed matching and returns.*/
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Total %d rreqs and %d wreqs", fbuf->rreq_cnt, fbuf->wreq_cnt);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Total %lu rreqs and %lu wreqs", fbuf->rreq_cnt, fbuf->wreq_cnt);
 			if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
 				send_ioreqs_by_var(fbuf);
 			else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
@@ -1276,16 +1254,6 @@ int match_ioreqs(file_buffer_t *fbuf)
 
 	//if(gl_scale)
 	DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer for %s: %.4f", fbuf->file_path, MPI_Wtime() - t_start);
-	{
-		if(strstr(fbuf->file_path, "hist.d")!=NULL){
-			gl_stats.end_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-			gl_stats.t_mtch_hist += MPI_Wtime() - t_start;
-		}else if(strstr(fbuf->file_path, "anal.d")!=NULL){
-			gl_stats.end_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-			gl_stats.t_mtch_rest += MPI_Wtime() - t_start;
-		}
-	}
-
 	fbuf->cur_transfer_epoch++;
 
     return 0;
@@ -1313,7 +1281,9 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
     rdr_rank = (int)(*(MPI_Offset*)(rbuf+rofft));
     rofft += sizeof(MPI_Offset);
     DTF_DBG(VERBOSE_DBG_LEVEL, "Sending data to rank %d", rdr_rank);
-
+	
+	if(gl_msg_buf == NULL) gl_msg_buf = dtf_malloc(gl_conf.data_msg_size_limit);
+                    
     sbuf = (unsigned char*)gl_msg_buf; //dtf_malloc(gl_conf.data_msg_size_limit);//
     sbufsz = (int)gl_conf.data_msg_size_limit;
 
@@ -1529,7 +1499,7 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
 					
 					if(gl_conf.do_checksum){
 						double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
-						DTF_DBG(VERBOSE_DBG_LEVEL, "chsum contin for req %d is %.4f", ioreq->id, chsum);
+						DTF_DBG(VERBOSE_DBG_LEVEL, "chsum contin for req %lu is %.4f", ioreq->id, chsum);
 					}
 				} else {
 					//adjust start coordinate with respect to the user buffer
@@ -1553,7 +1523,7 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
 					
 					if(gl_conf.do_checksum){
 						double chsum = compute_checksum(sbuf+sofft, var->ndims, new_count, var->dtype);
-						DTF_DBG(VERBOSE_DBG_LEVEL, "chsum getput for req %d is %.4f", ioreq->id, chsum);
+						DTF_DBG(VERBOSE_DBG_LEVEL, "chsum getput for req %lu is %.4f", ioreq->id, chsum);
 					}
 				}
                 
@@ -1722,11 +1692,11 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
         offt += nelems*def_el_sz +(nelems*def_el_sz)%sizeof(MPI_Offset);
         ioreq->get_sz += (MPI_Offset)(nelems*req_el_sz);
         
-        DTF_DBG(VERBOSE_DBG_LEVEL, "req %d, var %d, Got %d (expect %d)", ioreq->id, var_id, (int)ioreq->get_sz, (int)ioreq->req_data_sz);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "req %lu, var %d, Got %d (expect %d)", ioreq->id, var_id, (int)ioreq->get_sz, (int)ioreq->req_data_sz);
         assert(ioreq->get_sz<=ioreq->req_data_sz);
         
         if(ioreq->get_sz == ioreq->req_data_sz){
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Complete req %d (left %d), var %d, ", ioreq->id, fbuf->rreq_cnt-1, var->id);
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Complete req %lu (left %lu), var %d, ", ioreq->id, fbuf->rreq_cnt-1, var->id);
             //for(i = 0; i < var->ndims; i++)
               //  DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", ioreq->start[i], ioreq->count[i]);
             //~ int nnels = 1;
@@ -1742,7 +1712,7 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
 
             if(gl_conf.do_checksum){
                 double chsum = compute_checksum(ioreq->user_buf, var->ndims, ioreq->count, ioreq->dtype);
-                DTF_DBG(VERBOSE_DBG_LEVEL, "chsum for req %d is %.4f", ioreq->id, chsum);
+                DTF_DBG(VERBOSE_DBG_LEVEL, "chsum for req %lu is %.4f", ioreq->id, chsum);
             }
             //delete this ioreq
             delete_ioreq(fbuf, var_id, &ioreq);
@@ -1925,7 +1895,6 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Got info about the other component from master");				
 				break;
 			case IO_REQS_TAG:
-			//TODO continue from here
 				if( (comp != gl_my_comp_id) && (fbuf->cpl_mst_info->comm_sz == 0)) goto fn_exit;
 				if( gl_comps[comp].finalized){
 						DTF_DBG(VERBOSE_DBG_LEVEL, "Discard message as the component has started finalizing.");
