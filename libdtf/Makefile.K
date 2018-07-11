@@ -9,7 +9,7 @@ MPICC=mpifccpx
 all: $(SNAME) $(DNAME)
 
 $(SNAME): $(OBJ)
-	ar r $(SNAME) $(OBJ)
+	ar rcs $(SNAME) $(OBJ)
 	ranlib $(SNAME)
 
 $(DNAME): $(OBJ)

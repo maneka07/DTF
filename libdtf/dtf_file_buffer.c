@@ -262,6 +262,8 @@ fname_pattern_t* new_fname_pattern()
     pat->write_only = 0;
     pat->io_pats = NULL;
     pat->num_sessions = 1; //default we assume file will be used only once
+    
+    gl_stats.num_fpats++;
     return pat;
 }
 

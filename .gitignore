@@ -2,3 +2,5 @@
 *.so
 *.o
 *.nc
+pnetcdf/src/libf
+pnetcdf/test

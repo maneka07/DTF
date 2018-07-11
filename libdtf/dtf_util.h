@@ -100,6 +100,7 @@ typedef struct dtf_config{
 }dtf_config_t;
 
 typedef struct stats{
+	int             num_fpats;
     int             ndata_msg_sent;
     double          accum_dbuff_time;
     size_t          accum_dbuff_sz;

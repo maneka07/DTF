@@ -74,7 +74,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         fflush(stderr);
         exit(1);
     }
-
+    gl_stats.num_fpats = 0;
     gl_stats.malloc_size = 0;
     gl_stats.data_msg_sz = 0;
     gl_stats.ndata_msg_sent = 0;
@@ -169,8 +169,10 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_finfo_req_q = NULL;
 	
     /*Parse ini file and initialize components*/
-    err = load_config(filename, module_name);
-    if(err) goto panic_exit;
+
+	err = load_config(filename, module_name);
+	if(err) goto panic_exit;
+	
 
     /*Establish intercommunicators between components*/
     err = init_comp_comm();

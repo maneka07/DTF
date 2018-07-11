@@ -91,10 +91,10 @@ static int create_intercomm(int comp_id, char* global_path){
                 return 1;
             }
         }
-
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "Broadcast portname");
         err = MPI_Bcast(portname, MPI_MAX_PORT_NAME, MPI_CHAR, 0, MPI_COMM_WORLD );
         CHECK_MPI(err);
-        DTF_DBG(VERBOSE_DBG_LEVEL,   "%s will connect to service %s.", gl_comps[gl_my_comp_id].name, service_name);
+        DTF_DBG(VERBOSE_ERROR_LEVEL,   "%s will connect to service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
         err = MPI_Comm_connect(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].comm));
         CHECK_MPI(err);
@@ -111,7 +111,7 @@ static int create_intercomm(int comp_id, char* global_path){
            fclose(portfile);
         }
 
-        DTF_DBG(VERBOSE_DBG_LEVEL,   "%s starts listening for service %s.", gl_comps[gl_my_comp_id].name, service_name);
+        DTF_DBG(VERBOSE_ERROR_LEVEL,   "%s starts listening for service %s.", gl_comps[gl_my_comp_id].name, service_name);
 
         err = MPI_Comm_accept(portname, MPI_INFO_NULL, 0, MPI_COMM_WORLD, &(gl_comps[comp_id].comm) );
         CHECK_MPI(err);
@@ -126,7 +126,7 @@ static int create_intercomm(int comp_id, char* global_path){
 	//The two components are roughly synched now. Reset
 	//the start time value
 	gl_stats.walltime = MPI_Wtime();
-
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "Intercomm established");
     return 0;
 }
 

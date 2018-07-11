@@ -179,7 +179,7 @@ void clean_config(){
 
 }
 
-int load_config(const char *ini_name, const char *comp_name){
+int parse_config(const char *ini_name, const char *comp_name){
 
   FILE*      in;
   char       line[ASCIILINESZ+1];
@@ -460,4 +460,180 @@ panic_exit:
     return 1;
 }
 
+void pack_config(void *buf, int *offt1)
+{
+	int i;
+	fname_pattern_t *pat;
+	unsigned char *chbuf;
+	
+	int offt = 0;
+	assert(buf != NULL);
+	chbuf = (unsigned char*)buf;
+	
+    *(int*)(chbuf) = gl_ncomp;
+    offt+=sizeof(int);
+    
+    for(i = 0; i < gl_ncomp; i++){
+		strcpy((char*)(chbuf+offt), gl_comps[i].name);
+		offt += MAX_COMP_NAME; 
+	}
+	
+	*(int*)(chbuf+offt) = gl_conf.buffer_data;
+	offt += sizeof(int);
+	*(int*)(chbuf+offt) = gl_stats.num_fpats;
+	offt += sizeof(int);
+	
+	pat = gl_fname_ptrns;
+	while(pat != NULL){
+		
+		strcpy((char*)(chbuf+offt), pat->fname);
+		offt+=MAX_FILE_NAME;
+		
+		*(int*)(chbuf+offt) = pat->comp1;
+		offt+=sizeof(int);
+		*(int*)(chbuf+offt) = pat->comp2;
+		offt+=sizeof(int);
+		*(int*)(chbuf+offt) = pat->iomode;
+		offt+=sizeof(int);
+		*(int*)(chbuf+offt) = pat->num_sessions;
+		offt+=sizeof(int);
+		*(int*)(chbuf+offt) = pat->write_only;
+		offt+=sizeof(int);
+		*(int*)(chbuf+offt) = pat->replay_io;
+		offt+=sizeof(int);
+		*(int*)(chbuf+offt) = pat->nexcls;
+		offt+=sizeof(int);
+		
+		for(i=0; i<pat->nexcls;i++){
+			strcpy((char*)(chbuf+offt), pat->excl_fnames[i]);
+			offt += MAX_FILE_NAME;
+		}
+		
+		pat = pat->next;
+	}
+	
+	*offt1 = offt;
+}
 
+void unpack_config(void *buf,const char* comp_name)
+{
+	int i, j;
+	fname_pattern_t *pat;
+	unsigned char *chbuf;
+	
+	int npats;
+	
+	int offt = 0;
+	assert(buf != NULL);
+	chbuf = (unsigned char*)buf;
+	
+	gl_conf.log_ioreqs = 0;
+    gl_conf.buffer_data = 0;
+    gl_conf.do_checksum = 0;
+    gl_conf.iodb_build_mode = IODB_BUILD_BLOCK; // default
+	
+    gl_ncomp = *(int*)(chbuf);
+    offt+=sizeof(int);
+    
+    gl_comps = (struct component*)dtf_malloc(gl_ncomp*sizeof(struct component));
+	for(i = 0; i<gl_ncomp; i++){
+		gl_comps[i].id = i;
+		gl_comps[i].connect_mode = DTF_UNDEFINED;
+		gl_comps[i].in_msg_q = NULL;
+		
+		strcpy(gl_comps[i].name, (char*)(chbuf+offt));
+		offt += MAX_COMP_NAME; 
+
+		if(strcmp(gl_comps[i].name, comp_name) == 0)
+			gl_my_comp_id = i;
+                        
+		gl_comps[i].comm = MPI_COMM_NULL;
+		gl_comps[i].finalized = 0;
+		gl_comps[i].out_msg_q = NULL;
+	}
+	
+	gl_conf.buffer_data = *(int*)(chbuf+offt);
+	offt += sizeof(int);
+	
+	npats = *(int*)(chbuf+offt);
+	offt += sizeof(int);
+	
+	for(i = 0; i < npats; i++){
+		pat = new_fname_pattern();
+        assert(pat != NULL);
+
+        if(gl_fname_ptrns == NULL)
+			gl_fname_ptrns = pat;
+		else {
+			pat->next = gl_fname_ptrns;
+			gl_fname_ptrns = pat;
+		}
+		
+		strcpy(pat->fname, (char*)(chbuf+offt));
+		offt+=MAX_FILE_NAME;
+		
+		pat->comp1 = *(int*)(chbuf+offt);
+		offt+=sizeof(int);
+		pat->comp2 = *(int*)(chbuf+offt);
+		offt+=sizeof(int);
+		pat->iomode = *(int*)(chbuf+offt);
+		offt+=sizeof(int);
+		pat->num_sessions = *(int*)(chbuf+offt);
+		offt+=sizeof(int);
+		pat->write_only = *(int*)(chbuf+offt);
+		offt+=sizeof(int);
+		pat->replay_io = *(int*)(chbuf+offt);
+		offt+=sizeof(int);
+		pat->nexcls = *(int*)(chbuf+offt);
+		offt+=sizeof(int);
+		
+		pat->excl_fnames = dtf_malloc( sizeof(char*)*pat->nexcls);
+		
+		for(j=0; j<pat->nexcls;j++){
+            pat->excl_fnames[j] = dtf_malloc(MAX_FILE_NAME*sizeof(char));
+            strcpy(pat->excl_fnames[j],(char*)(chbuf+offt));
+			offt += MAX_FILE_NAME;
+		}
+	}
+	
+	
+	pat = gl_fname_ptrns;
+    while(pat != NULL){
+		if(pat->ignore_io){
+			pat = pat->next;
+			continue;
+		}
+        if(pat->comp1 == gl_my_comp_id){
+            if(gl_comps[ pat->comp2 ].connect_mode == DTF_UNDEFINED )
+               gl_comps[ pat->comp2 ].connect_mode = CONNECT_MODE_SERVER; // I am server
+
+        } else if( gl_comps[ pat->comp1 ].connect_mode == DTF_UNDEFINED){
+            if(pat->comp2 == gl_my_comp_id )
+               gl_comps[ pat->comp1 ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
+        }
+
+        pat = pat->next;
+    }
+}
+
+int load_config(const char *dtf_ini_path, const char *comp_name)
+{
+	int offt = 0, err;
+	int sz = 1024*1024;
+	void *buf = dtf_malloc(sz);
+	
+	if(gl_my_rank == 0){
+		err = parse_config(dtf_ini_path, comp_name);
+		if(err) MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+		pack_config(buf, &offt);
+	}
+	
+	 err = MPI_Bcast(buf, sz, MPI_CHAR, 0, MPI_COMM_WORLD );
+     CHECK_MPI(err);
+     
+     if(gl_my_rank != 0)
+		unpack_config(buf, comp_name);
+		
+	dtf_free(buf, sz);
+	return 0;
+}

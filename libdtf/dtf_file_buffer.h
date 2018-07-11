@@ -115,7 +115,7 @@ typedef struct fname_pattern{
     int  iomode;
     int  num_sessions;          /*After how many open/close sessions we can delete given file buffer*/
     int  write_only;                
-    int  ignore_io;				/*disable I/O for this file*/
+    int  ignore_io;				/*disable I/O for this file*/ //TODO remove
     int  replay_io;            /*Should we record and replay during matching I/O pattern for this file?*/
     int  rdr_recorded;          /*if recorded, reader doesn't need to send its requests during matching as 
 								the writer has already recorded its read pattern*/
