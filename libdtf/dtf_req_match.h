@@ -10,6 +10,9 @@
 
 #define DTF_DATA_MSG_SIZE_LIMIT 256*1024*1024
 
+#define DTF_GROUP_MST 0
+#define DTF_GROUP_WG  1
+
 
 /*This structure is used for debugging purposes:
  * log ioreqs when file i/o is used,

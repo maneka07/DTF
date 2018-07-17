@@ -222,8 +222,8 @@ _EXTERN_C_ int dtf_finalize()
 		MPI_Comm_size(gl_comps[gl_my_comp_id].comm, &ncomm_my);
 		MPI_Comm_remote_size(gl_comps[comp].comm, &ncomm_cpl);
 		if(gl_my_rank < ncomm_cpl){
-			dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG);
-			err = MPI_Isend(NULL, 0, MPI_INT, gl_my_rank, COMP_FINALIZED_TAG, gl_comps[comp].comm, &(msg->req));
+			dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG, 1);
+			err = MPI_Isend(NULL, 0, MPI_INT, gl_my_rank, COMP_FINALIZED_TAG, gl_comps[comp].comm, msg->reqs);
 			CHECK_MPI(err);
 			ENQUEUE_ITEM(msg, gl_comps[comp].out_msg_q);
 		}
@@ -231,8 +231,8 @@ _EXTERN_C_ int dtf_finalize()
 		if( (ncomm_cpl > ncomm_my) && (gl_my_rank == 0)){
 			int i;
 			for(i = gl_my_rank; i < ncomm_cpl; i++){
-				dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG);
-				err = MPI_Isend(NULL, 0, MPI_INT, gl_my_rank, COMP_FINALIZED_TAG, gl_comps[comp].comm, &(msg->req));
+				dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG, 1);
+				err = MPI_Isend(NULL, 0, MPI_INT, gl_my_rank, COMP_FINALIZED_TAG, gl_comps[comp].comm, msg->reqs);
 				CHECK_MPI(err);
 				ENQUEUE_ITEM(msg, gl_comps[comp].out_msg_q);
 			}

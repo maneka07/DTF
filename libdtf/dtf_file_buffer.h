@@ -60,7 +60,6 @@ typedef struct master_info{
     int 					*masters;   /*Ranks of master nodes on the writer's side*/
     int                     comm_sz;    /*How many ranks opened the file*/
     unsigned int 			my_wg_sz;
-    int 					*my_wg;
 } master_info_t;
 
 
@@ -98,7 +97,7 @@ typedef struct file_buffer{
                                                                      2 - The file is ready, reader has been notified */
   int 						session_cnt;         /*Every open/close is a session*/						
   int                       cpl_info_shared;    
-  double                    t_last_sent_ioreqs;  /*timestamp when last sent I/O request*/  
+  double                    t_last_sent_ioreqs;  /*timestamp when last sent I/O request*/  //TODO not needed anymore?
   struct io_req_log         *ioreq_log;        /*Used for debugging*/
                                           
   struct file_buffer        *next;

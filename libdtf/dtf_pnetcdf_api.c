@@ -137,19 +137,9 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid)
 		fclose(rootf);
 	}
 	
-	if(fbuf->iomode == DTF_IO_MODE_FILE){
-        if(fbuf->root_writer == gl_my_rank)
+	if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
 			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
-
-        //scale-letkf
-		//~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-			//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
-		//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-			//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
-		//~ char *s = getenv("DTF_SCALE");
-		//~ if(s != NULL)
-			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "time_stamp open file %s", fbuf->file_path);
-    }
+    
     
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d)", gl_comps[fbuf->writer_id].name, fbuf->root_writer, gl_comps[fbuf->reader_id].name, fbuf->root_reader);	
 

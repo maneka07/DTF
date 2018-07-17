@@ -135,7 +135,8 @@ typedef struct stats{
 } stats_t;
 
 typedef struct dtf_msg{
-    MPI_Request req;
+    MPI_Request *reqs;
+    int         nreqs; 
     int src;   //if src is DTF_UNDEFINED, this is an outgoing message, otherwise incoming
     void *buf;
     int tag;
@@ -181,7 +182,7 @@ void* 		dtf_malloc(size_t size);
 void  		dtf_free(void *ptr, size_t size);
 void  		convertcpy(MPI_Datatype type1, MPI_Datatype type2, void* srcbuf, void* dstbuf, int nelems);
 double 		compute_checksum(void *arr, int ndims, const MPI_Offset *shape, MPI_Datatype dtype);
-dtf_msg_t*	new_dtf_msg(void *buf, size_t bufsz, int src, int tag);
+dtf_msg_t*	new_dtf_msg(void *buf, size_t bufsz, int src, int tag, int nreqs);
 void 		delete_dtf_msg(dtf_msg_t *msg);
 void 		print_stats();
 int 		inquire_root(const char *filename);

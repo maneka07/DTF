@@ -142,8 +142,7 @@ static void init_mst_info(master_info_t* mst_info, int comm_sz)
 {
     mst_info->masters = NULL;
     mst_info->my_mst = -1;
-    mst_info->my_wg_sz = 0;
-    mst_info->my_wg = NULL;   
+    mst_info->my_wg_sz = 0;  
     mst_info->nmasters = 0;
     mst_info->iodb = NULL;
     mst_info->nread_completed = 0;
@@ -155,7 +154,7 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     int wg, nranks, myrank, i;
     char* s = getenv("MAX_WORKGROUP_SIZE");
     int my_master, my_master_glob;
-    int *masters, *ranks;
+    int *masters;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Init masters");
 
@@ -207,30 +206,7 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     }
 
     dtf_free(masters, mst_info->nmasters * sizeof(int));
-
-    if(mst_info->my_mst == gl_my_rank){
-        DTF_DBG(VERBOSE_DBG_LEVEL, "My wg size %d", mst_info->my_wg_sz);
-        //Translate my workgroup ranks
-        if(mst_info->my_wg_sz == 1){
-            //master is the only rank in the wg
-            mst_info->my_wg = NULL;
-        } else {
-            nranks = mst_info->my_wg_sz - 1;
-            mst_info->my_wg = dtf_malloc(nranks*sizeof(int));  //TODO do we really need this?
-            assert(mst_info->my_wg != NULL);
-            ranks = dtf_malloc(nranks*sizeof(int));
-
-            for(i = 0; i < nranks; i++)
-                ranks[i] = myrank + i + 1;
-                
-            translate_ranks(ranks, nranks, comm, gl_comps[gl_my_comp_id].comm, mst_info->my_wg);
-            dtf_free(ranks, nranks*sizeof(int));
-        }
-
-    } else {
-        mst_info->my_wg = NULL;
-    }
-    
+	DTF_DBG(VERBOSE_DBG_LEVEL, "My wg size %d", mst_info->my_wg_sz);    
     mst_info->nread_completed = 0;
     return 0;
 }
@@ -345,15 +321,13 @@ void delete_file_buffer(file_buffer_t* fbuf)
 
         if(fbuf->my_mst_info->masters != NULL)
             dtf_free(fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
-        if(fbuf->my_mst_info->my_wg != NULL)
-            dtf_free(fbuf->my_mst_info->my_wg,(fbuf->my_mst_info->my_wg_sz - 1)*sizeof(int));
+ 
         dtf_free(fbuf->my_mst_info, sizeof(master_info_t));
     }
 
     if(fbuf->cpl_mst_info != NULL){
         if(fbuf->cpl_mst_info->masters != NULL)
             dtf_free(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
-        assert(fbuf->cpl_mst_info->my_wg == NULL);
         dtf_free(fbuf->cpl_mst_info, sizeof(master_info_t));
     }
 

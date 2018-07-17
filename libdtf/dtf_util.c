@@ -79,6 +79,8 @@ void delete_dtf_msg(dtf_msg_t *msg)
 {
     if(msg->bufsz > 0)
         dtf_free(msg->buf, msg->bufsz);
+    if(msg->nreqs > 0)
+		dtf_free(msg->reqs, msg->nreqs*sizeof(MPI_Request));
     dtf_free(msg, sizeof(msg));
 }
 
@@ -95,9 +97,9 @@ void notify_file_ready(file_buffer_t *fbuf)
 
 	filename = dtf_malloc(MAX_FILE_NAME);
 	strcpy(filename, fbuf->file_path);
-	msg = new_dtf_msg(filename, MAX_FILE_NAME, DTF_UNDEFINED, FILE_READY_TAG);
+	msg = new_dtf_msg(filename, MAX_FILE_NAME, DTF_UNDEFINED, FILE_READY_TAG, 1);
 	DTF_DBG(VERBOSE_DBG_LEVEL,   "Notify reader root rank %d that file %s is ready", fbuf->root_reader, fbuf->file_path);
-	err = MPI_Isend(filename, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_READY_TAG, gl_comps[fbuf->reader_id].comm, &(msg->req));
+	err = MPI_Isend(filename, MAX_FILE_NAME, MPI_CHAR, fbuf->root_reader, FILE_READY_TAG, gl_comps[fbuf->reader_id].comm, msg->reqs);
 	CHECK_MPI(err);
 	ENQUEUE_ITEM(msg, gl_comps[fbuf->reader_id].out_msg_q);
 	fbuf->fready_notify_flag = RDR_NOTIF_POSTED;
@@ -451,10 +453,10 @@ void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
 	memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
-	dtf_msg_t *msg = new_dtf_msg(buf, bufsz, DTF_UNDEFINED, FILE_INFO_REQ_TAG);
-	err = MPI_Isend(buf, bufsz, MPI_BYTE, tgt_root, FILE_INFO_REQ_TAG, gl_comps[tgt_comp].comm, &(msg->req));
+	dtf_msg_t *msg = new_dtf_msg(buf, bufsz, DTF_UNDEFINED, FILE_INFO_REQ_TAG, 1);
+	err = MPI_Isend(buf, bufsz, MPI_BYTE, tgt_root, FILE_INFO_REQ_TAG, gl_comps[tgt_comp].comm, msg->reqs);
 	CHECK_MPI(err);
-	err = MPI_Test(&(msg->req), &flag, MPI_STATUS_IGNORE);
+	err = MPI_Test(msg->reqs, &flag, MPI_STATUS_IGNORE);
 	CHECK_MPI(err);
 	ENQUEUE_ITEM(msg, gl_comps[tgt_comp].out_msg_q);
 }
@@ -565,10 +567,18 @@ void convertcpy(MPI_Datatype from_type, MPI_Datatype to_type, void* srcbuf, void
     }
 }
 
-dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag)
+dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag, int nreqs)
 {
+    int i;
+    
     dtf_msg_t *msg = dtf_malloc(sizeof(struct dtf_msg));
-    msg->req = MPI_REQUEST_NULL;
+    msg->nreqs = nreqs;
+    if(nreqs>0){
+		msg->reqs = dtf_malloc(sizeof(MPI_Request)*nreqs);
+		for(i=0;i<nreqs;i++)    
+			msg->reqs[i] = MPI_REQUEST_NULL;
+	} else msg->reqs = NULL;
+		
     if(bufsz > 0){
         msg->buf = buf;
         //dtf_malloc(bufsz);
@@ -586,8 +596,7 @@ dtf_msg_t *new_dtf_msg(void *buf, size_t bufsz, int src, int tag)
 
 void progress_send_queue()
 {
-    int flag, err;
-    MPI_Status status;
+    int flag, err, i;
     double t_st;
 
 	int comp;
@@ -611,8 +620,10 @@ void progress_send_queue()
 					assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
 					fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
 				}
-				err = MPI_Cancel(&(msg->req));
-				CHECK_MPI(err);
+				for(i=0; i < msg->nreqs; i++){
+					err = MPI_Cancel(&(msg->reqs[i]));
+					CHECK_MPI(err);
+				}
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Cancel %p (tag %d)", (void*)msg, msg->tag);
 				delete_dtf_msg(msg);
 				msg = tmp;
@@ -620,7 +631,7 @@ void progress_send_queue()
 		} else {
 			while(msg != NULL){
 				t_st = MPI_Wtime();
-				err = MPI_Test(&(msg->req), &flag, &status);
+				err = MPI_Testall(msg->nreqs, msg->reqs, &flag, MPI_STATUSES_IGNORE);
 				CHECK_MPI(err);
 				if(flag){
 					gl_stats.t_comm += MPI_Wtime() - t_st;
@@ -629,7 +640,6 @@ void progress_send_queue()
 					if(msg->tag == FILE_READY_TAG){
 						file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, (char*)msg->buf, -1);
 						assert(fbuf != NULL);
-						DTF_DBG(VERBOSE_DBG_LEVEL, "matched buf %s", fbuf->file_path);
 						assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
 						fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
 						DTF_DBG(VERBOSE_DBG_LEVEL, "Completed sending file ready notif for %s", (char*)msg->buf);
@@ -789,5 +799,3 @@ void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm 
     MPI_Group_free(&from_group);
     MPI_Group_free(&to_group);
 }
-
-
