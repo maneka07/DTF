@@ -1869,7 +1869,7 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 	offt += MAX_FILE_NAME ;
 	fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
 	if(fbuf == NULL) goto fn_exit;
-	if(!fbuf->is_defined) goto fn_exit;
+	if(fbuf->iomode==DTF_IO_MODE_MEMORY && !fbuf->is_defined) goto fn_exit;
 	
 	switch(tag){
 			case FILE_INFO_REQ_TAG:

@@ -462,10 +462,10 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
     gl_stats.dtf_time += MPI_Wtime() - t_start;
 }
 
-_EXTERN_C_ void dtf_print(const char *str)
+_EXTERN_C_ void dtf_print(const char *str, int verbose)
 {
     if(!lib_initialized) return;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "%s", str);
+    DTF_DBG(verbose, "%s", str);
 }
 
 
@@ -539,9 +539,9 @@ void dtf_complete_multiple_(const char *filename, int *ncid)
     dtf_complete_multiple(filename, *ncid);
 }
 
-void dtf_print_(const char *str)
+void dtf_print_(const char *str, int *verbose)
 {
-    dtf_print(str);
+    dtf_print(str, *verbose);
 }
 
 void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void* data)

@@ -448,7 +448,7 @@ void finalize_files()
     while(fbuf != NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, fready_notif_flag %d", fbuf->file_path,  fbuf->fready_notify_flag);
         if(fbuf->iomode == DTF_IO_MODE_FILE){
-			 if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOTIF_POSTED)
+			 if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == DTF_UNDEFINED)
 				file_cnt++;
         } 
 
@@ -469,8 +469,8 @@ void finalize_files()
 					//~ progress_comm();
 				//~ notify_file_ready(fbuf);
 			//~ }
-			if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOTIF_POSTED)
-				while(fbuf->fready_notify_flag != DTF_UNDEFINED)
+			if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == DTF_UNDEFINED)
+				while(fbuf->fready_notify_flag != RDR_NOTIFIED)
 					progress_comm();
 			 
 		} 

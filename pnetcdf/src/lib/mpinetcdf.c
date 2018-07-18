@@ -212,7 +212,9 @@ ncmpi_create(MPI_Comm    comm,
      * environment variable PNETCDF_SAFE_MODE */
 #endif
 
-
+#ifdef DTF
+    dtf_create(path, comm);
+#endif // DTF
 
     /* get environment variable PNETCDF_SAFE_MODE
      * if it is set to 1, then we perform a strict parameter consistent test
@@ -369,11 +371,9 @@ ncmpi_create(MPI_Comm    comm,
     /* add to the linked list of opened files */
     ncmpii_add_to_NCList(ncp);
     *ncidp = ncp->nciop->fd;
-
 #ifdef DTF
-    dtf_create(path, comm, *ncidp);
-#endif // DTF
-
+    dtf_set_ncid(path, *ncidp);
+#endif
     if (env_info != info) MPI_Info_free(&env_info);
 
     return status;
@@ -996,10 +996,22 @@ ncmpi_close(int ncid) {
     tmppath = malloc(pathlen);
     strcpy(tmppath, ncp->nciop->path);
 #endif
-
     /* calling the implementation of ncmpi_close() */
     status = ncmpii_close(ncp);
 #ifdef DTF
+    if(dtf_io_mode((char*)tmppath) == DTF_IO_MODE_MEMORY){
+        char new_path[1024];
+        int err;
+        char *fname = strrchr((char*)tmppath, '/');
+        sprintf(new_path, "/tmp/%s", (char*)fname);
+        err = unlink(new_path);
+         if(err < 0){
+            if(errno  == EACCES)
+                dtf_print("Warning: Failed to delete tmp file in Close function: don't have access", 0);
+            else if(errno != ENOENT)
+                printf("Unlink error code %d\n", errno);
+        }
+    }
     dtf_close(tmppath);
     free(tmppath);
 #endif // DTF

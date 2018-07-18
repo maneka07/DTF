@@ -22,7 +22,7 @@
 /*User API*/
 _EXTERN_C_ int dtf_init(const char *filename, char *module_name);
 _EXTERN_C_ int dtf_finalize();
-_EXTERN_C_ void dtf_print(const char *str);
+_EXTERN_C_ void dtf_print(const char *str, int verbose);
 _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid);
 _EXTERN_C_ void dtf_transfer_multiple(const char *filename, int ncid);
 _EXTERN_C_ void dtf_tstart();
@@ -44,14 +44,14 @@ void dtf_transfer_v2_(const char *filename, int *ncid, int *it, int *ierr );
 void dtf_transfer_all_files_();
 void dtf_transfer_multiple_(const char *filename, int *ncid);
 void dtf_complete_multiple_(const char *filename, int *ncid);
-void dtf_print_(const char *str);
+void dtf_print_(const char *str, int *verbose);
 void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void* data);
 
 
 /*Interfaces used by PnetCDF*/
 _EXTERN_C_ void dtf_open(const char* filename, int omode, MPI_Comm comm);
 _EXTERN_C_ void dtf_close(const char* filename);
-_EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm, int ncid);
+_EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm);
 _EXTERN_C_ int  dtf_io_mode(const char* filename);
 _EXTERN_C_ int  dtf_def_var(const char* filename, int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape);
 _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *header);

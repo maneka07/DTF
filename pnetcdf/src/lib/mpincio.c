@@ -185,6 +185,27 @@ ncmpiio_create(MPI_Comm     comm,
 
     MPI_Comm_rank(comm, &rank);
 
+#ifdef DTF
+    if(dtf_io_mode((char*)path) == DTF_IO_MODE_MEMORY){
+        char new_path[1024];
+        char *fname = strrchr((char*)path, '/');
+        if(strlen((char*)path) - (fname - (char*)path + 1) > 1024){
+            printf("DTF Error: filename (%s) too long to create tmp file", fname);
+            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+        }
+
+        sprintf(new_path, "/tmp/%s", (char*)fname);
+        err = unlink(new_path);
+        if(err < 0){
+            if(errno  == EACCES)
+                dtf_print("Warning: Failed to delete tmp file in Create function: don't have access", 0);
+            else if(errno != ENOENT)
+                printf("Unlink error code %d\n", errno);
+        }
+
+    }
+#endif
+
     /* NC_CLOBBER is the default mode, even if it is not used in cmode */
     if (fIsSet(ioflags, NC_NOCLOBBER)) {
         /* check if file exists: NetCDF requires NC_EEXIST returned if the file
@@ -378,7 +399,7 @@ ncmpiio_open(MPI_Comm     comm,
 #ifdef DTF
     if(dtf_io_mode((char*)path) == DTF_IO_MODE_MEMORY){
         char new_path[1024];
-
+        int err;
         char *fname = strrchr((char*)path, '/');
         if(strlen((char*)path) - (fname - (char*)path + 1) > 1024){
             printf("DTF Error: filename (%s) too long to create tmp file", fname);
@@ -386,7 +407,15 @@ ncmpiio_open(MPI_Comm     comm,
         }
 
         sprintf(new_path, "/tmp/%s", fname);
-        //printf("Create temporary file %s\n", new_path);
+        //dtf_print("Create temporary file %s", new_path);
+        //In case file exists try to remove it first
+        err = unlink(new_path);
+        if(err < 0){
+            if(errno  == EACCES)
+                dtf_print("Warning: Failed to delete tmp file in Open function: don't have access", 0);
+            else if(errno != ENOENT)
+                printf("Unlink error code %d\n", errno);
+        }
         mpiomode = MPI_MODE_RDWR | MPI_MODE_CREATE;
 
         TRACE_IO(MPI_File_open)(MPI_COMM_SELF, new_path, mpiomode, info,

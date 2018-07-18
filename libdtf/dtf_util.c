@@ -618,7 +618,7 @@ void progress_send_queue()
 						DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Error: cant find %s", (char*)msg->buf);
 					assert(fbuf != NULL);
 					assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
-					fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
+					fbuf->fready_notify_flag = RDR_NOTIFIED; 
 				}
 				for(i=0; i < msg->nreqs; i++){
 					err = MPI_Cancel(&(msg->reqs[i]));
@@ -641,7 +641,7 @@ void progress_send_queue()
 						file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, (char*)msg->buf, -1);
 						assert(fbuf != NULL);
 						assert(fbuf->fready_notify_flag == RDR_NOTIF_POSTED);
-						fbuf->fready_notify_flag = DTF_UNDEFINED; //reset flag
+						fbuf->fready_notify_flag = RDR_NOTIFIED; 
 						DTF_DBG(VERBOSE_DBG_LEVEL, "Completed sending file ready notif for %s", (char*)msg->buf);
 						
 						fname_pattern_t *pat = find_fname_pattern(fbuf->file_path);
