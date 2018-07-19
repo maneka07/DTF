@@ -984,36 +984,32 @@ ncmpi_close(int ncid) {
     int status = NC_NOERR;
     NC *ncp;
 #ifdef DTF
-    char *tmppath;
-    size_t pathlen;
+    char tmppath[L_tmpnam];
+    char *path;
+    int len;
+    int deltmp = 0;
 #endif
 
     status = ncmpii_NC_check_id(ncid, &ncp);
     if (status != NC_NOERR)
         return status;
 #ifdef DTF
-    pathlen = strlen(ncp->nciop->path);
-    tmppath = malloc(pathlen);
-    strcpy(tmppath, ncp->nciop->path);
+    len = strlen(ncp->nciop->path);
+    path = malloc(len);
+    assert(path != NULL);
+    strcpy(path, ncp->nciop->path);
+    strcpy(tmppath, ncp->nciop->tmppath);
 #endif
     /* calling the implementation of ncmpi_close() */
     status = ncmpii_close(ncp);
 #ifdef DTF
-    if(dtf_io_mode((char*)tmppath) == DTF_IO_MODE_MEMORY){
-        char new_path[1024];
+    if(dtf_io_mode(path) == DTF_IO_MODE_MEMORY){
         int err;
-        char *fname = strrchr((char*)tmppath, '/');
-        sprintf(new_path, "/tmp/%s", (char*)fname);
-        err = unlink(new_path);
-         if(err < 0){
-            if(errno  == EACCES)
-                dtf_print("Warning: Failed to delete tmp file in Close function: don't have access", 0);
-            else if(errno != ENOENT)
-                printf("Unlink error code %d\n", errno);
-        }
+        err = unlink(tmppath);
+        if(err < 0) printf("Unlink error code %d\n", errno);
     }
-    dtf_close(tmppath);
-    free(tmppath);
+    dtf_close(path);
+    free(path);
 #endif // DTF
     return status;
 }

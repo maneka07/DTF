@@ -21,5 +21,5 @@ typedef struct io_pattern{
 
 
 void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int cur_transfer_epoch);
-void replay_io(fname_pattern_t *pat, char *filename, int epoch);
+void replay_io_pat(fname_pattern_t *pat, char *filename, int epoch);
 #endif

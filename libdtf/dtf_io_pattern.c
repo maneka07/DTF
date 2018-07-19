@@ -70,6 +70,7 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 		rpat->data = dtf_malloc(datasz);
 		memcpy(rpat->data, pat_data, datasz);
 		rpat->next = NULL;
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Created rank pattern for %d", rank);
 	} else {
 		//merge
 		size_t shift = sizeof(MPI_Offset); /*rdr_rank*/
@@ -79,11 +80,12 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 		memcpy((unsigned char*)rpat->data + rpat->datasz, (unsigned char*)pat_data + shift, datasz - shift);
 		rpat->datasz += datasz - shift;
 		gl_stats.malloc_size += datasz - shift;
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Appended pattern for rank %d", rank);
 	}
 }
 
 //TODO figure out how to replay for nonblocking
-void replay_io(fname_pattern_t *pat, char *filename, int epoch)
+void replay_io_pat(fname_pattern_t *pat, char *filename, int epoch)
 {
 	io_pattern_t *iopat;
 	rank_pattern_t *rpat;
@@ -109,7 +111,7 @@ void replay_io(fname_pattern_t *pat, char *filename, int epoch)
 		if(fbuf == NULL)
 			assert(0); 
 		
-		send_data(fbuf, (unsigned char*)(rpat->data) + MAX_FILE_NAME, rpat->datasz - MAX_FILE_NAME);
+		send_data(fbuf, (unsigned char*)(rpat->data), rpat->datasz);
 		rpat = rpat->next;
 	}
 } 

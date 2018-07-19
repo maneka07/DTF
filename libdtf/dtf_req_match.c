@@ -1193,10 +1193,13 @@ int match_ioreqs(file_buffer_t *fbuf)
 
 	if(replay){
 		
+		while(fbuf->cpl_mst_info->nmasters == 0)
+			progress_comm();
+		
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Will replay I/O instead of matching");
 		
 		if(gl_my_comp_id == fbuf->writer_id) 
-			 replay_io(pat, fbuf->file_path, fbuf->cur_transfer_epoch);
+			 replay_io_pat(pat, fbuf->file_path, fbuf->cur_transfer_epoch);
 			
 		while(!fbuf->done_matching_flag){
 			progress_comm();
