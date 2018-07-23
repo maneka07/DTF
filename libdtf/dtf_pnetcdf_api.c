@@ -612,3 +612,8 @@ _EXTERN_C_ void dtf_tend()
    // DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat %.6f", tt);
  
 }
+
+_EXTERN_C_ MPI_File *dtf_get_tmpfile()
+{
+	return &gl_proc.tmpfile;
+}

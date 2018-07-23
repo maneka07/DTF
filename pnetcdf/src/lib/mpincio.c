@@ -185,27 +185,6 @@ ncmpiio_create(MPI_Comm     comm,
 
     MPI_Comm_rank(comm, &rank);
 
-//#ifdef DTF
-//    if(dtf_io_mode((char*)path) == DTF_IO_MODE_MEMORY){
-//        char new_path[1024];
-//        char *fname = strrchr((char*)path, '/');
-//        if(strlen((char*)path) - (fname - (char*)path + 1) > 1024){
-//            printf("DTF Error: filename (%s) too long to create tmp file", fname);
-//            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-//        }
-//
-//        sprintf(new_path, "/tmp/%s", (char*)fname);
-//        err = unlink(new_path);
-//        if(err < 0){
-//            if(errno  == EACCES)
-//                dtf_print("Warning: Failed to delete tmp file in Create function: don't have access", 0);
-//            else if(errno != ENOENT)
-//                printf("Unlink error code %d\n", errno);
-//        }
-//
-//    }
-//#endif
-
     /* NC_CLOBBER is the default mode, even if it is not used in cmode */
     if (fIsSet(ioflags, NC_NOCLOBBER)) {
         /* check if file exists: NetCDF requires NC_EEXIST returned if the file
@@ -277,26 +256,8 @@ ncmpiio_create(MPI_Comm     comm,
     ncmpiio_extract_hints(nciop, info);
 #ifdef DTF
     if(dtf_io_mode((char*)path) == DTF_IO_MODE_MEMORY){
-//        char new_path[1024];
-//        char *fname = strrchr((char*)path, '/');
-//        if(strlen((char*)path) - (fname - (char*)path + 1) > 1024){
-//            printf("DTF Error: filename (%s) too long to create tmp file", fname);
-//            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-//        }
-//
-//        sprintf(new_path, "/tmp/%s", (char*)fname);
-        //printf("Create temporary file %s\n", new_path);
-
-
-        char *tmpp = tmpnam(nciop->tmppath);
-        if(tmpp == NULL){
-            dtf_print("DTF Error creating temporary file inside Create", 0);
-            ncmpiio_free(nciop);
-            return ncmpii_handle_error(mpireturn, "MPI_File_open");
-        }
-
-        TRACE_IO(MPI_File_open)(MPI_COMM_SELF, nciop->tmppath, mpiomode, info,
-                            &nciop->collective_fh);
+        nciop->collective_fh = *(dtf_get_tmpfile());
+        mpireturn = MPI_SUCCESS;
     } else
         TRACE_IO(MPI_File_open)(comm, (char *)path, mpiomode, info,
                             &nciop->collective_fh);
@@ -400,43 +361,10 @@ ncmpiio_open(MPI_Comm     comm,
     /* extract MPI-IO hints */
     ncmpiio_extract_hints(nciop, info);
 
-//#ifdef DTF
-//    if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY){
-//        mpireturn = MPI_SUCCESS;
-//    } else
-//#endif
 #ifdef DTF
     if(dtf_io_mode((char*)path) == DTF_IO_MODE_MEMORY){
-
-//        char new_path[1024];
-//        int err;
-//        char *fname = strrchr((char*)path, '/');
-//        if(strlen((char*)path) - (fname - (char*)path + 1) > 1024){
-//            printf("DTF Error: filename (%s) too long to create tmp file", fname);
-//            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-//        }
-//
-//        sprintf(new_path, "/tmp/%s", fname);
-//        //dtf_print("Create temporary file %s", new_path);
-//        //In case file exists try to remove it first
-//        err = unlink(new_path);
-//        if(err < 0){
-//            if(errno  == EACCES)
-//                dtf_print("Warning: Failed to delete tmp file in Open function: don't have access", 0);
-//            else if(errno != ENOENT)
-//                printf("Unlink error code %d\n", errno);
-//        }
-        char *tmpp = tmpnam(nciop->tmppath);
-        if(tmpp == NULL){
-            dtf_print("DTF Error creating temporary file inside Open", 0);
-            ncmpiio_free(nciop);
-            return ncmpii_handle_error(mpireturn, "MPI_File_open");
-        }
-
-        mpiomode = MPI_MODE_RDWR | MPI_MODE_CREATE;
-
-        TRACE_IO(MPI_File_open)(MPI_COMM_SELF, nciop->tmppath, mpiomode, info,
-                            &nciop->collective_fh);
+        nciop->collective_fh = *(dtf_get_tmpfile());
+        mpireturn = MPI_SUCCESS;
     } else
         TRACE_IO(MPI_File_open)(comm, (char *)path, mpiomode, info,
                             &nciop->collective_fh);
@@ -465,9 +393,6 @@ ncmpiio_open(MPI_Comm     comm,
         return ncmpii_handle_error(mpireturn, "MPI_Comm_dup");
 
     /* get the file info used by MPI-IO */
-//#ifdef DTF
-//    if(dtf_io_mode(ncp->nciop->path) != DTF_IO_MODE_MEMORY)
-//#endif
     MPI_File_get_info(nciop->collective_fh, &nciop->mpiinfo);
 
     ncp->nciop = nciop;
@@ -506,6 +431,12 @@ ncmpiio_close(ncio *nciop, int doUnlink) {
     if (nciop == NULL) /* this should never occur */
         DEBUG_RETURN_ERROR(NC_EINVAL)
 
+#ifdef DTF
+    if(dtf_io_mode((char*)nciop->path) == DTF_IO_MODE_MEMORY){
+        nciop->collective_fh = MPI_FILE_NULL;
+    } else {
+#endif
+
     if (NC_independentFhOpened(nciop)) {
         TRACE_IO(MPI_File_close)(&(nciop->independent_fh));
         if (mpireturn != MPI_SUCCESS)
@@ -517,13 +448,17 @@ ncmpiio_close(ncio *nciop, int doUnlink) {
         if (mpireturn != MPI_SUCCESS)
             return ncmpii_handle_error(mpireturn, "MPI_File_close");
     }
-    IDalloc[*((int *)&nciop->fd)] = 0;
 
     if (doUnlink) {
         TRACE_IO(MPI_File_delete)((char *)nciop->path, nciop->mpiinfo);
         if (mpireturn != MPI_SUCCESS)
             return ncmpii_handle_error(mpireturn, "MPI_File_delete");
     }
+#ifdef DTF
+    }
+#endif
+    IDalloc[*((int *)&nciop->fd)] = 0;
+
     ncmpiio_free(nciop);
 
     return NC_NOERR;

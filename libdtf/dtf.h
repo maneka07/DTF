@@ -75,5 +75,6 @@ _EXTERN_C_ void dtf_log_ioreq(const char *filename,
 _EXTERN_C_ void dtf_enddef(const char *filename);
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data);
 _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid);
+_EXTERN_C_ MPI_File *dtf_get_tmpfile();
 
 #endif // DTF_H_INCLUDED

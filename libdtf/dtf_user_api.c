@@ -32,6 +32,7 @@ int gl_scale = 0;
 int gl_my_rank;
 struct dtf_config 	gl_conf;                 		/*DTF settings*/
 struct stats 		gl_stats;
+struct dtf_proc 	gl_proc;
 char*	gl_my_comp_name = NULL;
 void* 	gl_msg_buf = NULL;
 
@@ -172,6 +173,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     //enable print setting for other ranks again
     if(gl_my_rank != 0)
         gl_verbose = verbose;
+        
+    create_tmp_file();
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "DTF: Finished initializing");
 	DTF_DBG(VERBOSE_ERROR_LEVEL, "Time to init DTF %.3f",  MPI_Wtime() - t_start);
@@ -213,6 +216,8 @@ _EXTERN_C_ int dtf_finalize()
 	progress_send_queue();
 		
     finalize_files();
+    
+    delete_tmp_file();
     
     DTF_DBG(VERBOSE_DBG_LEVEL, "Notify other components that I finalized");
     for(comp = 0; comp < gl_ncomp; comp++){

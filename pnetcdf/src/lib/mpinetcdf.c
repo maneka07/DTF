@@ -984,10 +984,9 @@ ncmpi_close(int ncid) {
     int status = NC_NOERR;
     NC *ncp;
 #ifdef DTF
-    char tmppath[L_tmpnam];
     char *path;
     int len;
-    int deltmp = 0;
+
 #endif
 
     status = ncmpii_NC_check_id(ncid, &ncp);
@@ -998,16 +997,10 @@ ncmpi_close(int ncid) {
     path = malloc(len);
     assert(path != NULL);
     strcpy(path, ncp->nciop->path);
-    strcpy(tmppath, ncp->nciop->tmppath);
 #endif
     /* calling the implementation of ncmpi_close() */
     status = ncmpii_close(ncp);
 #ifdef DTF
-    if(dtf_io_mode(path) == DTF_IO_MODE_MEMORY){
-        int err;
-        err = unlink(tmppath);
-        if(err < 0) printf("Unlink error code %d\n", errno);
-    }
     dtf_close(path);
     free(path);
 #endif // DTF

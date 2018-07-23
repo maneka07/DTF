@@ -152,6 +152,12 @@ typedef struct file_info{
 	struct file_info *prev;
 }file_info_t;
 
+//TODO move other stuff inside this struct
+typedef struct dtf_proc{
+	char tmp_file_path[L_tmpnam];
+	MPI_File tmpfile;
+}dtf_proc_t;
+
 struct file_buffer;
 struct file_info_req_q;
 
@@ -171,6 +177,7 @@ extern void* gl_msg_buf;
 extern struct file_info_req_q *gl_finfo_req_q;    
 extern file_info_t *gl_finfo_list;
 char _buff[1024];
+extern struct dtf_proc gl_proc;
 
 char error_string[1024];
 
@@ -204,4 +211,6 @@ void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm 
 int mpitype2int(MPI_Datatype dtype);
 MPI_Datatype int2mpitype(int num);
 const char *mpi_type_name(MPI_Datatype dtype);
+void create_tmp_file();
+void delete_tmp_file();
 #endif

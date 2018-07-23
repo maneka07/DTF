@@ -799,3 +799,30 @@ void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm 
     MPI_Group_free(&from_group);
     MPI_Group_free(&to_group);
 }
+
+void create_tmp_file()
+{
+	int mpiomode, err;
+	char *tmp; 
+	
+	tmp = tmpnam(gl_proc.tmp_file_path);
+	if(tmp == NULL){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error creating temporary file");
+		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
+	}
+
+	mpiomode = MPI_MODE_RDWR | MPI_MODE_CREATE | MPI_MODE_DELETE_ON_CLOSE | MPI_MODE_UNIQUE_OPEN;
+
+	err = MPI_File_open(MPI_COMM_SELF, gl_proc.tmp_file_path, mpiomode, MPI_INFO_NULL,
+						&gl_proc.tmpfile);
+	CHECK_MPI(err);
+}
+
+void delete_tmp_file()
+{
+	int err;
+	//note: file will be deleted automatically as MPI_MODE_DELETE_ON_CLOSE was set
+	err = MPI_File_close(&gl_proc.tmpfile);
+	CHECK_MPI(err);
+}
+

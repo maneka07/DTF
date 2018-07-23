@@ -78,9 +78,6 @@ typedef struct {
      * the file and by error messages.
      */
     const char *path;
-#ifdef DTF
-    char tmppath[L_tmpnam];
-#endif
     MPI_Offset put_size;  /* amount of writes committed so far in bytes */
     MPI_Offset get_size;  /* amount of reads  committed so far in bytes */
 } ncio;
