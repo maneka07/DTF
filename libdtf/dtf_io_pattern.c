@@ -19,6 +19,8 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 	if(pat->wrt_recorded == IO_PATTERN_RECORDED)
 		return;
 	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Record io pattern");
+	
 	if(pat->io_pats == NULL){
 		iopat = dtf_malloc(sizeof(struct io_pattern));
 		pat->io_pats = iopat;

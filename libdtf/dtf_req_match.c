@@ -1190,11 +1190,25 @@ int match_ioreqs(file_buffer_t *fbuf)
 			replay = 1;
 		}
 	}
+	
+	if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
+		((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
+		fbuf->done_matching_flag = 1;
+		goto done_match;
+	}
 
 	if(replay){
 		
-		while(fbuf->cpl_mst_info->nmasters == 0)
+		while(fbuf->cpl_mst_info->nmasters == 0){
 			progress_comm();
+			if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
+				((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
+				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
+				fbuf->done_matching_flag = 1;
+				goto done_match;
+			}
+		}
 		
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Will replay I/O instead of matching");
 		
@@ -1206,13 +1220,7 @@ int match_ioreqs(file_buffer_t *fbuf)
 		}
 			
 	} else {
-		
-		if( ((fbuf->writer_id == gl_my_comp_id) && gl_comps[fbuf->reader_id].finalized)  ||
-				((fbuf->reader_id == gl_my_comp_id) && gl_comps[fbuf->writer_id].finalized) ){
-				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
-				fbuf->done_matching_flag = 1;
-		} else {
-		
+
 			/*If a writer process doesn't have any io requests, it still has to
 			  wait for the master process to let it complete.
 			  If a reader process does not have any read requests,
@@ -1238,13 +1246,13 @@ int match_ioreqs(file_buffer_t *fbuf)
 				if(fbuf->done_multiple_flag)
 					fbuf->done_matching_flag = 1;
 			}
-		}
+		
 	}
 	//TODO reader may start next dtf transfer session immediately and it may mix up with 
 	//with previous transfer session is writer is slow to receive notification that 
 	//previous transfer has finished. Probably have to put barrier and make reader wait for confirmation? 
 	//but this is problem only if repeadet read and write by same components....
-	
+done_match:
 	/*Reset flags*/
     if(fbuf->my_mst_info->my_mst == gl_my_rank)
 		fbuf->my_mst_info->nread_completed = 0;
@@ -1278,7 +1286,7 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
     MPI_Offset nelems, fit_nelems;
     int min_bl_ndims;
     size_t min_bl_sz;
-   
+      
     rdr_rank = (int)(*(MPI_Offset*)(rbuf+rofft));
     rofft += sizeof(MPI_Offset);
     DTF_DBG(VERBOSE_DBG_LEVEL, "Sending data to rank %d", rdr_rank);
@@ -1439,6 +1447,7 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
             }
 
             if(fit_nelems == 0){
+				int flag;
                 assert(sofft != MAX_FILE_NAME );
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Send msg to %d, size %d at %.3f", rdr_rank,(int)sofft, MPI_Wtime() - gl_stats.walltime);
                 /*Send this message*/
@@ -1447,8 +1456,20 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
                 double t_start_comm = MPI_Wtime();
                 err = MPI_Isend((void*)sbuf, dsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[fbuf->reader_id].comm, &req);
                 CHECK_MPI(err);
-                err = MPI_Wait(&req, MPI_STATUS_IGNORE);
-                CHECK_MPI(err);
+                
+				while(1){
+					err = MPI_Iprobe(MPI_ANY_SOURCE, COMP_FINALIZED_TAG, gl_comps[fbuf->reader_id].comm, &flag, MPI_STATUS_IGNORE);
+					CHECK_MPI(err);
+					
+					if(flag){
+						err = MPI_Cancel(&req);
+						CHECK_MPI(err);
+						goto fn_exit;
+					}
+					err = MPI_Test(&req, &flag, MPI_STATUS_IGNORE);
+					CHECK_MPI(err);
+					if(flag) break;
+				}
 
                 gl_stats.t_comm += MPI_Wtime() - t_start_comm;
                 gl_stats.ndata_msg_sent++;
@@ -1554,16 +1575,28 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
     } /*while(rofft != sbufsz)*/
 
     if(sofft > sizeof(MPI_Offset)){
+		int flag;
         /*Send the last message*/
         DTF_DBG(VERBOSE_DBG_LEVEL, "Send (last) msg to %d size %d", rdr_rank,(int)sofft);
         MPI_Request req;
-        /* First send the size of the data, then the data itself*/
+  
         int dsz = (int)sofft;
         double t_start_comm = MPI_Wtime();
 		err = MPI_Isend((void*)sbuf, dsz, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_comps[fbuf->reader_id].comm, &req);
 		CHECK_MPI(err); 
-        err = MPI_Wait(&req, MPI_STATUS_IGNORE);
-        CHECK_MPI(err);
+		while(1){
+			err = MPI_Iprobe(MPI_ANY_SOURCE, COMP_FINALIZED_TAG, gl_comps[fbuf->reader_id].comm, &flag, MPI_STATUS_IGNORE);
+			CHECK_MPI(err);
+			
+			if(flag){
+				err = MPI_Cancel(&req);
+				CHECK_MPI(err);
+				goto fn_exit;
+			}
+			err = MPI_Test(&req, &flag, MPI_STATUS_IGNORE);
+			CHECK_MPI(err);
+			if(flag) break;
+		}
         gl_stats.t_comm += MPI_Wtime() - t_start_comm;
         gl_stats.ndata_msg_sent++;
         gl_stats.data_msg_sz += sofft;
@@ -1571,7 +1604,7 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
 
 	/*Record the pattern if needed*/
 	record_io_pat(fbuf->file_path, rdr_rank, buf, bufsz, fbuf->cur_transfer_epoch);
-
+fn_exit:
     free(new_start);
     free(new_count);
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished sending the data");
@@ -1862,6 +1895,7 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 	char filename[MAX_FILE_NAME];
 	int ret = 1;
 	int free_buf = 1;
+	fname_pattern_t *pat;
 	
 	if(tag == COMP_FINALIZED_TAG){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Comp %s finalized", gl_comps[comp].name);
@@ -1876,10 +1910,7 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 	
 	switch(tag){
 			case FILE_INFO_REQ_TAG:
-				if(gl_scale){
-					fbuf->root_reader = src;
-					assert(fbuf->root_reader == fbuf->cpl_mst_info->masters[0]);
-				} else {
+				if(!gl_scale){
 					//parse mst info of the other component
 					assert(fbuf->cpl_mst_info->nmasters == 0);
 					memcpy(&(fbuf->cpl_mst_info->comm_sz), (unsigned char*)rbuf+offt, sizeof(int));
@@ -1892,22 +1923,34 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
 				}
 				
-				if(fbuf->root_writer == gl_my_rank){
-					DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer for file %s, process the file info request, root reader %d",
+				if(fbuf->my_mst_info->my_mst == gl_my_rank){
+					
+					if(fbuf->root_writer == gl_my_rank && fbuf->iomode == DTF_IO_MODE_MEMORY){
+						DTF_DBG(VERBOSE_DBG_LEVEL, "I am root writer for file %s, process the file info request, root reader %d",
 							fbuf->file_path, fbuf->cpl_mst_info->masters[0] );
-				    
-					if(fbuf->iomode == DTF_IO_MODE_MEMORY){ 
 						send_file_info(fbuf, fbuf->root_reader);
 						//forward info to others
 						void *tmp = dtf_malloc(bufsz);
 						memcpy(tmp, rbuf, bufsz);
-						notify_processes(DTF_GROUP_MST, fbuf, rbuf, bufsz, FILE_INFO_REQ_TAG);
-						notify_processes(DTF_GROUP_WG, fbuf, tmp, bufsz, FILE_INFO_REQ_TAG);
-						free_buf = 0;
-						
+						notify_processes(DTF_GROUP_MST, fbuf, tmp, bufsz, FILE_INFO_REQ_TAG);
 					}
+
+					void *tmp2 = dtf_malloc(bufsz);
+					memcpy(tmp2, rbuf, bufsz);
+					notify_processes(DTF_GROUP_WG, fbuf, tmp2, bufsz, FILE_INFO_REQ_TAG);					
+					
 				} else 
-					DTF_DBG(VERBOSE_DBG_LEVEL, "Got info about the other component from master");				
+					DTF_DBG(VERBOSE_DBG_LEVEL, "Got info about the other component from master");
+				
+				pat = find_fname_pattern(fbuf->file_path);
+				assert(pat != NULL);
+				if(pat->replay_io){
+					assert(pat->finfo_sz == 0);
+					pat->finfo_sz = bufsz;
+					pat->finfo = rbuf;
+					free_buf = 0;
+				}
+				fbuf->cpl_info_shared = 1;			
 				break;
 			case IO_REQS_TAG:
 				if( (comp != gl_my_comp_id) && (fbuf->cpl_mst_info->comm_sz == 0)) goto fn_exit;
@@ -1951,7 +1994,7 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 							int flag=0;
 							char *fname = dtf_malloc(MAX_FILE_NAME);
 							strcpy(fname, fbuf->file_path);
-							DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root that my workgroup completed reading");
+							DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root %d that my workgroup completed reading", fbuf->root_writer);
 							
 							dtf_msg_t *msg = new_dtf_msg(fname, MAX_FILE_NAME, DTF_UNDEFINED, READ_DONE_TAG, 1);
 							int err = MPI_Isend(fname, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, READ_DONE_TAG, 

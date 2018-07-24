@@ -119,6 +119,7 @@ static int create_intercomm(int comp_id, char* global_path){
 
         err = MPI_Close_port(portname);
         CHECK_MPI(err);
+
         
 		if(myrank == 0)
 			unlink(portfile_name);

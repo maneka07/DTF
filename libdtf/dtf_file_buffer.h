@@ -118,6 +118,8 @@ typedef struct fname_pattern{
 								the writer has already recorded its read pattern*/
     int  wrt_recorded;          /*If recorded, writer skips matching and replays data sending from previously 
                                  recorded I/O pattern*/
+    int  finfo_sz; 
+    void *finfo;                /*File info (vars, header etc.). TO be used during I/O replaying*/
     struct io_pattern *io_pats;          /*Recorded pattern of what data this process sends to which reader process*/
     struct fname_pattern *next;
 }fname_pattern_t;
@@ -132,7 +134,7 @@ void 				close_file(file_buffer_t *fbuf);
 void 				write_hdr(file_buffer_t *fbuf, MPI_Offset hdr_sz, void *header);
 MPI_Offset 			read_hdr_chunk(file_buffer_t *fbuf, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk);
 void 				pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf);
-
+void 				unpack_file_info(MPI_Offset bufsz, void *buf, file_buffer_t *fbf);
 fname_pattern_t*	new_fname_pattern();
 fname_pattern_t*	find_fname_pattern(const char *filename);
 

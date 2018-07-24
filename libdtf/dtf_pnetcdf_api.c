@@ -97,7 +97,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 		pat->wrt_recorded = IO_PATTERN_RECORDED;
 	} else if (pat->replay_io && (pat->wrt_recorded == DTF_UNDEFINED))
 		pat->wrt_recorded = IO_PATTERN_RECORDING;
-		
+	
 	 /*In scale-letkf we assume completely mirrorer file handling. 
 	 * Hence, will simply duplicate the master structure*/
 	 if(gl_scale){
@@ -108,6 +108,20 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
 		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
 		fbuf->cpl_info_shared = 1;
+	 } else if(pat->replay_io && (pat->finfo_sz > 0)){
+		int offt = MAX_FILE_NAME;
+		void *rbuf = pat->finfo;
+		//parse mst info of the other component
+		assert(fbuf->cpl_mst_info->nmasters == 0);
+		memcpy(&(fbuf->cpl_mst_info->comm_sz), (unsigned char*)rbuf+offt, sizeof(int));
+		offt+=sizeof(int);
+		memcpy(&(fbuf->cpl_mst_info->nmasters), (unsigned char*)rbuf+offt, sizeof(int));
+		offt+=sizeof(int);
+		assert(fbuf->cpl_mst_info->nmasters > 0);
+		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+		memcpy(fbuf->cpl_mst_info->masters, (unsigned char*)rbuf+offt, fbuf->cpl_mst_info->nmasters*sizeof(int));
+		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
+		fbuf->cpl_info_shared = 1;		
 	 }
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s is %d", filename, fbuf->root_writer);
@@ -192,19 +206,13 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
     else
         DTF_DBG(VERBOSE_DBG_LEVEL, "File opened in subcommunicator (%d nprocs)", nranks);
 
-    //~ if(fbuf->my_mst_info->nmasters == 0){ 
+    
+
+	//~ if(fbuf->my_mst_info->nmasters == 0){ 
 		/*Open for the first time*/        
-        /*In scale-letkf we assume completely mirrorer file handling. 
-         * Hence, will simply duplicate the master structre*/
-	 if(gl_scale && (fbuf->cpl_mst_info->nmasters == 0)){
-		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
-		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
-		fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
-		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
-		fbuf->cpl_info_shared = 1;
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Root writer set to %d", fbuf->root_writer);
-	 }
+		/*In scale-letkf we assume completely mirrorer file handling. 
+		 * Hence, will simply duplicate the master structre*/
+	
     //~ } else {
 		//~ /*do a simple check that the same set of processes as before opened the file*/
 		//~ int rank;
@@ -223,6 +231,16 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		fbuf->fready_notify_flag = DTF_UNDEFINED;
 	 }	   
 
+	if(gl_scale && (fbuf->cpl_mst_info->nmasters == 0)){
+		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
+		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
+		fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
+		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
+		fbuf->cpl_info_shared = 1;
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Root writer set to %d", fbuf->root_writer);
+	 }
+
 	if(pat == NULL){
 		pat = find_fname_pattern(filename);
 		assert(pat != NULL);
@@ -237,47 +255,55 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 			pat->wrt_recorded = IO_PATTERN_RECORDED;
 		 if(pat->rdr_recorded == IO_PATTERN_RECORDING)
 			pat->rdr_recorded = IO_PATTERN_RECORDED;
+		
+		//Get the file info (header, list of vars etc. and info about the other component) 
+		//saved from previous session. Assume that this information is unchanged in this session.
+		if(pat->finfo_sz > 0 && fbuf->header == NULL)
+			unpack_file_info(pat->finfo_sz, pat->finfo, fbuf);
 	}
-	
+		
 	 /*If component opens this file for reading and before it 
   * opened the file for writing, root process must broad
   * cast master list of the coupled component to other 
   * processes in this component. */
   
-    if( !(omode & NC_WRITE) && fbuf->writer_id == gl_my_comp_id && !fbuf->cpl_info_shared){
-		int err;
+    //~ if( !(omode & NC_WRITE) && fbuf->writer_id == gl_my_comp_id && !fbuf->cpl_info_shared){
+		//~ int err;
 		
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about other component");
-		assert(0); //TODO remove this code block later
-		if(fbuf->root_writer == gl_my_rank)
-			assert(fbuf->cpl_mst_info->nmasters > 0);
+		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about other component");
+		//~ assert(0); //TODO remove this code block later
+		//~ if(fbuf->root_writer == gl_my_rank)
+			//~ assert(fbuf->cpl_mst_info->nmasters > 0);
 	
-		err = MPI_Bcast(&(fbuf->cpl_mst_info->comm_sz), 1, MPI_INT, 0, comm);
-		CHECK_MPI(err);
+		//~ err = MPI_Bcast(&(fbuf->cpl_mst_info->comm_sz), 1, MPI_INT, 0, comm);
+		//~ CHECK_MPI(err);
 	
-		err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
-		CHECK_MPI(err);
+		//~ err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
+		//~ CHECK_MPI(err);
 		
-		if(gl_my_rank != fbuf->root_writer){
-			assert(fbuf->cpl_mst_info->masters== NULL);
-			fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));	
-		}
+		//~ if(gl_my_rank != fbuf->root_writer){
+			//~ assert(fbuf->cpl_mst_info->masters== NULL);
+			//~ fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));	
+		//~ }
 		
-		err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
-		CHECK_MPI(err);
+		//~ err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
+		//~ CHECK_MPI(err);
 		
-		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
-		fbuf->cpl_info_shared = 1;
-	}
+		//~ fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
+		//~ fbuf->cpl_info_shared = 1;
+	//~ }
 	
 	/*Set who's the reader and writer component in this session*/
 	cpl_cmp = (pat->comp1 == gl_my_comp_id) ? pat->comp2 : pat->comp1; 
-	DTF_DBG(VERBOSE_DBG_LEVEL, "cpl cmp %d", cpl_cmp);
+	
 	/*if this is not the first transfer session, the root from the other coponent is 
 	 * known from previous session*/
-	cpl_root = (fbuf->reader_id == gl_my_comp_id) ? fbuf->root_writer : fbuf->root_reader;
-	if(gl_scale)
+	if(fbuf->cpl_mst_info->nmasters > 0)
 		cpl_root = fbuf->cpl_mst_info->masters[0];
+	else 
+		cpl_root = (fbuf->reader_id == gl_my_comp_id) ? fbuf->root_writer : fbuf->root_reader;
+	//~ if(gl_scale)
+	//cpl_root = fbuf->cpl_mst_info->masters[0];
 	
 	if( omode & NC_WRITE && !fbuf->is_write_only){
 		//fbuf->omode = DTF_WRITE;
@@ -305,7 +331,8 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	}
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d), omode %d", gl_comps[fbuf->writer_id].name, fbuf->root_writer, gl_comps[fbuf->reader_id].name, fbuf->root_reader, omode);	  
-    open_file(fbuf, comm);
+
+	open_file(fbuf, comm);
     
     DTF_DBG(VERBOSE_ERROR_LEVEL,"Exit open");
 }
@@ -389,9 +416,12 @@ _EXTERN_C_ void dtf_close(const char* filename)
 	pat = find_fname_pattern(filename);			
 	assert(pat != NULL);
 	if(pat->replay_io){
+		//need to confirm that io pattern for this eposh has been recorded
+		//if file is closed before transfer function is called then 
+		//pattern is not recorded yet
 		if(pat->rdr_recorded == IO_PATTERN_RECORDING)
 			pat->rdr_recorded = IO_PATTERN_RECORDED;
-		else if(pat->wrt_recorded == IO_PATTERN_RECORDING)  //TODO this will not work in nonblocking version
+		else if(pat->wrt_recorded == IO_PATTERN_RECORDING) 
 			pat->wrt_recorded = IO_PATTERN_RECORDED;
 	}
 	

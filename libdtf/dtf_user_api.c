@@ -255,7 +255,7 @@ _EXTERN_C_ int dtf_finalize()
     
     assert(gl_finfo_req_q == NULL);
    
-	finfo = gl_finfo_list;
+	finfo = gl_finfo_list; //TODO is it still needed?
 	while(finfo != NULL){
 		gl_finfo_list = gl_finfo_list->next;
 		dtf_free(finfo, sizeof(file_info_t));

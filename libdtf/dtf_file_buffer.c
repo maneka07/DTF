@@ -6,7 +6,8 @@
 #include "dtf_file_buffer.h"
 #include "dtf.h"
 
-static void unpack_file_info(MPI_Offset bufsz, void *buf)
+//TODO in pack-unpack no need to send file name since no way to confuse
+void unpack_file_info(MPI_Offset bufsz, void *buf, file_buffer_t *fbf)
 {
     int i, varid, nvars;
     file_buffer_t *fbuf;
@@ -29,13 +30,18 @@ static void unpack_file_info(MPI_Offset bufsz, void *buf)
        - number of vars
        - vars
     */
-
-    /*filename*/
-    memcpy(filename, chbuf, MAX_FILE_NAME);
-    offt += MAX_FILE_NAME ;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "unpack filename %s", filename);
-    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
-    assert(fbuf != NULL);
+	
+	if(fbf == NULL){
+		/*filename*/
+		memcpy(filename, chbuf, MAX_FILE_NAME);
+		offt += MAX_FILE_NAME ;
+		DTF_DBG(VERBOSE_DBG_LEVEL, "unpack filename %s", filename);
+		fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+		assert(fbuf != NULL);
+	} else {
+		fbuf = fbf;
+		offt += MAX_FILE_NAME ;
+	}
     /*ncid*/
     fbuf->ncid = -1;
     /*how many ranks created the file*/
@@ -236,6 +242,8 @@ fname_pattern_t* new_fname_pattern()
     pat->wrt_recorded = DTF_UNDEFINED;
     pat->write_only = 0;
     pat->io_pats = NULL;
+    pat->finfo = NULL;
+    pat->finfo_sz = 0;
     pat->num_sessions = 1; //default we assume file will be used only once
     
     gl_stats.num_fpats++;
@@ -635,6 +643,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 			int bufsz;	
 
             if(fbuf->header == NULL){
+				fname_pattern_t *pat;
 				/*Zero rank will inquire the pnetcdf header/dtf vars info/masters info
 				from writer's global zero rank and then broadcast this info to other
 				readers that opened the file*/
@@ -664,8 +673,16 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 				err = MPI_Bcast(buf, bufsz, MPI_BYTE, 0, comm);
 				CHECK_MPI(err);
 
-				unpack_file_info(bufsz, buf);
-				dtf_free(buf, bufsz);
+				unpack_file_info(bufsz, buf, fbuf);
+				
+				pat = find_fname_pattern(fbuf->file_path);
+				assert(pat != NULL);
+				if(pat->replay_io){
+					assert(pat->finfo_sz == 0);
+					pat->finfo_sz = bufsz;
+					pat->finfo = buf;
+				} else 				
+					dtf_free(buf, bufsz);
 				
 			}
 

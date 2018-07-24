@@ -149,7 +149,9 @@ void clean_config(){
 		dtf_free(name_pat->excl_fnames[i], sizeof(char)*MAX_FILE_NAME);
 	 if(name_pat->nexcls > 0)
 		dtf_free(name_pat->excl_fnames, sizeof(char*)*name_pat->nexcls);
-	
+	if(name_pat->finfo_sz > 0)
+		dtf_free(name_pat->finfo, name_pat->finfo_sz);
+		
 	iopat = name_pat->io_pats;
 	while(iopat != NULL){
 		rpat = iopat->rank_pats;
