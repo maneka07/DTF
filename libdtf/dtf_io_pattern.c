@@ -81,7 +81,7 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 		rpat->data = tmp;
 		memcpy((unsigned char*)rpat->data + rpat->datasz, (unsigned char*)pat_data + shift, datasz - shift);
 		rpat->datasz += datasz - shift;
-		gl_stats.malloc_size += datasz - shift;
+		gl_proc.stats_info.malloc_size += datasz - shift;
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Appended pattern for rank %d", rank);
 	}
 }
@@ -109,7 +109,7 @@ void replay_io_pat(fname_pattern_t *pat, char *filename, int epoch)
 	rpat = iopat->rank_pats;
 	while(rpat != NULL){
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Replay data for file %s for rank %d", filename, rpat->rank);
-		fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+		fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
 		if(fbuf == NULL)
 			assert(0); 
 		

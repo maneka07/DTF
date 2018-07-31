@@ -147,7 +147,7 @@ void add_var(struct file_buffer *fbuf, dtf_var_t *var)
     DTF_DBG(VERBOSE_DBG_LEVEL, "var id %d, cnt %d", var->id, fbuf->nvars);
 
     fbuf->vars[fbuf->nvars-1] = var;
-    gl_stats.malloc_size += sizeof(dtf_var_t*);
+    gl_proc.stats_info.malloc_size += sizeof(dtf_var_t*);
 }
 
 MPI_Offset read_write_var(struct file_buffer *fbuf,
@@ -201,14 +201,14 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 		}
 	}
 
-	int buffered = gl_conf.buffer_data;
+	int buffered = gl_proc.conf.buffer_data;
 
 	if(rw_flag == DTF_READ)
 		buffered = 0;
 
 	req = new_ioreq(fbuf->rreq_cnt+fbuf->wreq_cnt, var->ndims, dtype, start, count, derived_params, buf, rw_flag, buffered);
 	
-	if(gl_conf.do_checksum && (rw_flag == DTF_WRITE))
+	if(gl_proc.conf.do_checksum && (rw_flag == DTF_WRITE))
 		var->checksum += req->checksum;
 
 	if(rw_flag == DTF_READ)
@@ -247,20 +247,11 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 	
     if(fbuf->t_last_sent_ioreqs == 0)
 		fbuf->t_last_sent_ioreqs = MPI_Wtime();
-		
-    //~ if(MPI_Wtime() - fbuf->t_last_sent_ioreqs >= gl_conf.t_send_ioreqs_freq){
-		//~ //Send request to master immediately
-		//~ if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
-			//~ send_ioreqs_by_var(fbuf);
-		//~ else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
-			//~ send_ioreqs_by_block(fbuf);
-		//~ fbuf->t_last_sent_ioreqs = MPI_Wtime();
-	//~ }
 
     ret = nelems*req_el_sz;
     
    // dtf_log_ioreq(fbuf->file_path, varid, var->ndims, start, count, dtype, buf, rw_flag);	                         	
-    gl_stats.t_rw_var += MPI_Wtime() - t_start;
+    gl_proc.stats_info.t_rw_var += MPI_Wtime() - t_start;
     return ret;
 }
 

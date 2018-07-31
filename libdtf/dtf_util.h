@@ -71,7 +71,7 @@
     if(gl_verbose >= dbg_level){  \
                 memset(_buff,0,1024);                         \
                 snprintf(_buff,1024,__VA_ARGS__);             \
-                fprintf(stdout, "%s %d [%.3f]: %s\n", gl_my_comp_name, gl_my_rank, MPI_Wtime() - gl_stats.walltime, _buff);  \
+                fprintf(stdout, "%s %d [%.3f]: %s\n", _comp_name, gl_proc.myrank, MPI_Wtime() - gl_proc.stats_info.walltime, _buff);  \
                 fflush(stdout);   \
     }           \
 }while(0)
@@ -79,8 +79,8 @@
 #define CHECK_MPI(errcode) do{   \
         if (errcode != MPI_SUCCESS) {   \
            int length_of_error_string;  \
-           MPI_Error_string(errcode, error_string, &length_of_error_string);  \
-           DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error is: %s", error_string);       \
+           MPI_Error_string(errcode, _error_string, &length_of_error_string);  \
+           DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error is: %s", _error_string);       \
            MPI_Abort(MPI_COMM_WORLD, errcode);                              \
         }                                                                   \
 } while(0)
@@ -95,7 +95,7 @@ typedef struct dtf_config{
     MPI_Offset  iodb_range;  		  /*the size of the data block in the first dimension*/
     int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
     int         log_ioreqs;
-	double      t_send_ioreqs_freq;  /*time out upon reaching which I/O reqs must be sent*/
+	int 		sclltkf_flag; /*special flag for scale-letkf execution*/
 }dtf_config_t;
 
 typedef struct stats{
@@ -114,7 +114,7 @@ typedef struct stats{
     double          t_rw_var;
     double          master_time;  /*measure accum time for master-related work*/
     int             ndb_match;       /*How many times I/O req matching was performed*/
-    double          walltime;
+    double          walltime;   //TODO move to gl_proc
     size_t          malloc_size;
     unsigned long   nprogress_call;
     unsigned long   nioreqs;
@@ -125,7 +125,7 @@ typedef struct stats{
     double          timer_accum;
     double          user_timer_start;
     double          user_timer_accum;
-    int             nfiles;
+    unsigned int    nfiles;
     
     double          transfer_time;  /*data transfer time=I/O calls+dtf_transfer */
     double          dtf_time;       /*Total time spent inside DTF*/
@@ -135,52 +135,37 @@ typedef struct stats{
 } stats_t;
 
 typedef struct dtf_msg{
-    MPI_Request *reqs;
-    int         nreqs; 
-    int src;   //if src is DTF_UNDEFINED, this is an outgoing message, otherwise incoming
-    void *buf;
-    int tag;
-    size_t bufsz;
-    struct dtf_msg *next;
-    struct dtf_msg *prev;
+    MPI_Request*	reqs;
+    int         	nreqs; 
+    int 			src;   //if src is DTF_UNDEFINED, this is an outgoing message, otherwise incoming
+    void*			buf;
+    int 			tag;
+    size_t 			bufsz;
+    struct dtf_msg* next;
+    struct dtf_msg* prev;
 }dtf_msg_t;
 
-typedef struct file_info{
-	char filename[MAX_FILE_NAME];
-	int root_writer;
-	struct file_info *next;
-	struct file_info *prev;
-}file_info_t;
-
-//TODO move other stuff inside this struct
 typedef struct dtf_proc{
-	char tmp_file_path[L_tmpnam];
-	MPI_File tmpfile;
+	file_buffer_t* 		filebuf_list;   /*List of all file buffers*/
+	fname_pattern_t*	fname_ptrns;    /*Patterns for file name*/
+	dtf_config_t		conf;        /*Framework settings*/
+    stats_t 			stats_info;       /*Execution statistics*/
+    component_t*		comps;                 /*List of components*/
+	int 				my_comp;                          /*Id of this compoinent*/
+	int 				ncomps;                               /*Number of components*/
+	int 				myrank;                         /*For debug messages*/
+	char 				tmp_file_path[L_tmpnam];
+	MPI_File 			tmpfile;
+	void* 				msgbuf;
 }dtf_proc_t;
 
-struct file_buffer;
-struct file_info_req_q;
-
 /*GLOBAL VARIABLES*/
-extern file_buffer_t* 	gl_filebuf_list;        /*List of all file buffers*/
-extern struct fname_pattern*	gl_fname_ptrns;    /*Patterns for file name*/
-extern struct component *gl_comps;                 /*List of components*/
-extern int gl_my_comp_id;                          /*Id of this compoinent*/
-extern int gl_ncomp;                               /*Number of components*/
 extern int gl_verbose;
-extern int gl_my_rank;                         /*For debug messages*/
-extern int gl_scale;                           /*special flag for scale-letkf execution*/
-extern struct dtf_config gl_conf;                 /*Framework settings*/
-extern struct stats gl_stats;
-extern char *gl_my_comp_name;
-extern void* gl_msg_buf;
-extern struct file_info_req_q *gl_finfo_req_q;    
-extern file_info_t *gl_finfo_list;
-char _buff[1024];
 extern struct dtf_proc gl_proc;
 
-char error_string[1024];
-
+char _error_string[1024];
+char _buff[1024];
+char _comp_name[MAX_COMP_NAME];
 
 /*FUNCTIONS*/
 void 		notify_file_ready(file_buffer_t *fbuf);

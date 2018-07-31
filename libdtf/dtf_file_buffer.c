@@ -36,7 +36,7 @@ void unpack_file_info(MPI_Offset bufsz, void *buf, file_buffer_t *fbf)
 		memcpy(filename, chbuf, MAX_FILE_NAME);
 		offt += MAX_FILE_NAME ;
 		DTF_DBG(VERBOSE_DBG_LEVEL, "unpack filename %s", filename);
-		fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+		fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
 		assert(fbuf != NULL);
 	} else {
 		fbuf = fbf;
@@ -55,7 +55,7 @@ void unpack_file_info(MPI_Offset bufsz, void *buf, file_buffer_t *fbf)
     fbuf->header = dtf_malloc(fbuf->hdr_sz);
     memcpy(fbuf->header, chbuf+offt, fbuf->hdr_sz);
     offt += fbuf->hdr_sz + fbuf->hdr_sz%sizeof(MPI_Offset);
-    if(gl_scale){
+    if(gl_proc.conf.sclltkf_flag){
 		/*skip all the master related info since 
 		 * we assume it's the same*/
 		 offt+= sizeof(MPI_Offset)*(fbuf->cpl_mst_info->nmasters+1);
@@ -193,7 +193,7 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     if(myrank == 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Nmasters %d", mst_info->nmasters);
 
-    translate_ranks(&my_master, 1, comm, gl_comps[gl_my_comp_id].comm, &my_master_glob);
+    translate_ranks(&my_master, 1, comm, gl_proc.comps[gl_proc.my_comp].comm, &my_master_glob);
     mst_info->my_mst = my_master_glob;
 
     mst_info->masters = (int*)dtf_malloc(mst_info->nmasters * sizeof(int));
@@ -204,7 +204,7 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
     for(i = 1; i < mst_info->nmasters; i++){
         masters[i] = masters[i-1] + wg;
     }    
-    translate_ranks(masters, mst_info->nmasters, comm, gl_comps[gl_my_comp_id].comm, mst_info->masters);
+    translate_ranks(masters, mst_info->nmasters, comm, gl_proc.comps[gl_proc.my_comp].comm, mst_info->masters);
 
     if(myrank == 0){
         for(i = 0; i < mst_info->nmasters; i++)
@@ -246,7 +246,7 @@ fname_pattern_t* new_fname_pattern()
     pat->finfo_sz = 0;
     pat->num_sessions = 1; //default we assume file will be used only once
     
-    gl_stats.num_fpats++;
+    gl_proc.stats_info.num_fpats++;
     return pat;
 }
 
@@ -259,7 +259,7 @@ fname_pattern_t *find_fname_pattern(const char *filename)
 	
 	if (strlen (filename) == 0) return NULL;
 		
-    pat = gl_fname_ptrns;
+    pat = gl_proc.fname_ptrns;
 	while(pat != NULL){
 		
 		if(match_str(pat->fname, filename)){
@@ -313,7 +313,7 @@ void delete_file_buffer(file_buffer_t* fbuf)
     if(fbuf == NULL)
         return;
 	
-    assert(gl_filebuf_list != NULL);
+    assert(gl_proc.filebuf_list != NULL);
     
     DTF_DBG(VERBOSE_DBG_LEVEL, "Will delete file buffer for %s", fbuf->file_path);
 
@@ -359,8 +359,8 @@ void delete_file_buffer(file_buffer_t* fbuf)
     assert(fbuf->rreq_cnt == 0);
     assert(fbuf->wreq_cnt == 0);
 
-    if(gl_filebuf_list == fbuf)
-		gl_filebuf_list = fbuf->next;
+    if(gl_proc.filebuf_list == fbuf)
+		gl_proc.filebuf_list = fbuf->next;
 
 	if(fbuf->prev != NULL)
 		fbuf->prev->next = fbuf->next;
@@ -371,13 +371,13 @@ void delete_file_buffer(file_buffer_t* fbuf)
     
     {
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Deleted fbuf. Left:");
-		fbuf = gl_filebuf_list;
+		fbuf = gl_proc.filebuf_list;
 		while(fbuf != NULL){
 			DTF_DBG(VERBOSE_DBG_LEVEL, "%s", fbuf->file_path);
 			fbuf = fbuf->next;
 		}
 	}
-    gl_stats.nfiles--;
+    gl_proc.stats_info.nfiles--;
 }
 
 
@@ -433,51 +433,51 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
 	buf->is_transferring = 0;
 	buf->comm = comm;
 	//insert
-	if(gl_filebuf_list == NULL)
-		gl_filebuf_list = buf;
+	if(gl_proc.filebuf_list == NULL)
+		gl_proc.filebuf_list = buf;
 	else{
-		buf->next = gl_filebuf_list;
+		buf->next = gl_proc.filebuf_list;
 		buf->next->prev = buf;
-		gl_filebuf_list = buf;
+		gl_proc.filebuf_list = buf;
 	}
 	
 	init_req_match_masters(comm, buf->my_mst_info);
 	
-	gl_stats.nfiles++;
+	gl_proc.stats_info.nfiles++;
 	return buf;
 }
 
 void finalize_files()
 {
     int file_cnt = 0;
-    file_buffer_t *fbuf = gl_filebuf_list;
+    file_buffer_t *fbuf = gl_proc.filebuf_list;
 
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize files");
     while(fbuf != NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, fready_notif_flag %d", fbuf->file_path,  fbuf->fready_notify_flag);
         if(fbuf->iomode == DTF_IO_MODE_FILE){
-			 if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == DTF_UNDEFINED)
+			 if(fbuf->writer_id == gl_proc.my_comp && fbuf->fready_notify_flag == DTF_UNDEFINED)
 				file_cnt++;
         } 
 
         fbuf = fbuf->next;
     }
 
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Process has to finalize notifications for %d files (out of %d files)", file_cnt, gl_stats.nfiles);
-    assert(file_cnt <= gl_stats.nfiles);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Process has to finalize notifications for %d files (out of %d files)", file_cnt, gl_proc.stats_info.nfiles);
+    assert(file_cnt <= gl_proc.stats_info.nfiles);
 
 	file_cnt = 0;
-	fbuf = gl_filebuf_list;
+	fbuf = gl_proc.filebuf_list;
 	while(fbuf != NULL){
 
 		if(fbuf->iomode == DTF_IO_MODE_FILE){
 
-			//~ if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
+			//~ if(fbuf->writer_id == gl_proc.my_comp && fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
 				//~ while(fbuf->root_reader == -1)
 					//~ progress_comm();
 				//~ notify_file_ready(fbuf);
 			//~ }
-			if(fbuf->writer_id == gl_my_comp_id && fbuf->fready_notify_flag == DTF_UNDEFINED)
+			if(fbuf->writer_id == gl_proc.my_comp && fbuf->fready_notify_flag == DTF_UNDEFINED)
 				while(fbuf->fready_notify_flag != RDR_NOTIFIED)
 					progress_comm();
 			 
@@ -485,24 +485,25 @@ void finalize_files()
 		file_cnt++;
 		fbuf = fbuf->next;
 	}
-	if(file_cnt != gl_stats.nfiles){
-		DTF_DBG(VERBOSE_ERROR_LEVEL, "Ooops, something wrong with file counting: cnt %d vs gl_stats.nfiles %d", file_cnt, gl_stats.nfiles);
-		fbuf = gl_filebuf_list;
+	if(file_cnt != gl_proc.stats_info.nfiles){
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "Ooops, something wrong with file counting: cnt %d vs gl_proc.stats_info.nfiles %d", file_cnt, gl_proc.stats_info.nfiles);
+		fbuf = gl_proc.filebuf_list;
 		while(fbuf != NULL){
 			DTF_DBG(VERBOSE_ERROR_LEVEL, "%s", fbuf->file_path);
 			fbuf = fbuf->next;
 		}
 	}
-	assert(file_cnt == gl_stats.nfiles);
+	assert(file_cnt == gl_proc.stats_info.nfiles);
 
-    //MPI_Barrier(gl_comps[gl_my_comp_id].comm);
+    //MPI_Barrier(gl_proc.comps[gl_proc.my_comp].comm);
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished finalizing notifications. Will delete file bufs");
     /*Now, delete all file buffers*/
-    fbuf = gl_filebuf_list;
+    fbuf = gl_proc.filebuf_list;
     while(fbuf != NULL){
         delete_file_buffer(fbuf);
-        fbuf = gl_filebuf_list;
+        fbuf = gl_proc.filebuf_list;
     }
+    gl_proc.filebuf_list = NULL;
 }
 
 void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
@@ -514,7 +515,7 @@ void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
     if(iodb == NULL){
 		return;
 	}
-//    DTF_DBG(VERBOSE_DBG_LEVEL, "Clean iodb: memuse %lu, peak %lu", gl_stats.iodb_cur_memuse, gl_stats.iodb_peak_memuse);
+//    DTF_DBG(VERBOSE_DBG_LEVEL, "Clean iodb: memuse %lu, peak %lu", gl_proc.stats_info.iodb_cur_memuse, gl_proc.stats_info.iodb_peak_memuse);
 
 	if(iodb->witems != NULL){
 		for(i = 0; i < nvars; i++){
@@ -526,7 +527,7 @@ void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
 
 			if(witem->ndims > 0){
 				RBTreeDestroy(witem->dblocks);
-				gl_stats.malloc_size -= witem->nblocks*(sizeof(block_t)+sizeof(MPI_Offset)*2*witem->ndims);
+				gl_proc.stats_info.malloc_size -= witem->nblocks*(sizeof(block_t)+sizeof(MPI_Offset)*2*witem->ndims);
 			} else
 				dtf_free(witem->dblocks, sizeof(block_t));
 
@@ -571,13 +572,13 @@ void close_file(file_buffer_t *fbuf)
 {
 	
 	//~ if(fbuf->is_transferring){
-		//~ if(gl_conf.iodb_build_mode == IODB_BUILD_VARID)
+		//~ if(gl_proc.conf.iodb_build_mode == IODB_BUILD_VARID)
 			//~ send_ioreqs_by_var(fbuf);
-		//~ else //if(gl_conf.iodb_build_mode == IODB_BUILD_BLOCK)
+		//~ else //if(gl_proc.conf.iodb_build_mode == IODB_BUILD_BLOCK)
 			//~ send_ioreqs_by_block(fbuf);
 	//~ }
 	
-    if(fbuf->writer_id == gl_my_comp_id){
+    if(fbuf->writer_id == gl_proc.my_comp){
 
 		fbuf->is_ready = 1;
 
@@ -585,7 +586,7 @@ void close_file(file_buffer_t *fbuf)
 			//Check for any incoming messages
 			progress_comm();
             if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
-				assert(fbuf->root_writer == gl_my_rank);
+				assert(fbuf->root_writer == gl_proc.myrank);
 				while(fbuf->root_reader == -1)
 					progress_comm();
 				notify_file_ready(fbuf);
@@ -609,7 +610,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
     
     if(fbuf->iomode == DTF_IO_MODE_FILE) fbuf->is_defined = 1;
 
-    if(fbuf->reader_id == gl_my_comp_id){
+    if(fbuf->reader_id == gl_proc.my_comp){
         
         if(fbuf->iomode == DTF_IO_MODE_FILE){
 			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp open file %s", fbuf->file_path);
@@ -631,9 +632,9 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
             fbuf->is_ready = 1;
 			
             //~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-				//~ gl_stats.st_mtch_hist = MPI_Wtime()-gl_stats.walltime;
+				//~ gl_proc.stats_info.st_mtch_hist = MPI_Wtime()-gl_proc.stats_info.walltime;
 			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-				//~ gl_stats.st_mtch_rest = MPI_Wtime()-gl_stats.walltime;
+				//~ gl_proc.stats_info.st_mtch_rest = MPI_Wtime()-gl_proc.stats_info.walltime;
 			
 			
 			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp file ready %s", fbuf->file_path);
@@ -655,12 +656,12 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
 					
 					DTF_DBG(VERBOSE_DBG_LEVEL, "Starting to wait for file info for %s", fbuf->file_path);
-					err = MPI_Probe(fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
+					err = MPI_Probe(fbuf->root_writer, FILE_INFO_TAG, gl_proc.comps[fbuf->writer_id].comm, &status);
 					CHECK_MPI(err);
 					MPI_Get_count(&status, MPI_BYTE, &bufsz);
 
 					buf = dtf_malloc(bufsz);
-					err = MPI_Recv(buf, bufsz, MPI_BYTE, fbuf->root_writer, FILE_INFO_TAG, gl_comps[fbuf->writer_id].comm, &status);
+					err = MPI_Recv(buf, bufsz, MPI_BYTE, fbuf->root_writer, FILE_INFO_TAG, gl_proc.comps[fbuf->writer_id].comm, &status);
 					CHECK_MPI(err);
 				}
 				DTF_DBG(VERBOSE_DBG_LEVEL, "Bcast file info to others");
@@ -692,9 +693,9 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
         
 		fbuf->cpl_info_shared = 1;
     
-    } else if(fbuf->writer_id == gl_my_comp_id){
+    } else if(fbuf->writer_id == gl_proc.my_comp){
 
-		if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
+		if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_proc.myrank)
 			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
 		assert(fbuf->is_defined);
     }

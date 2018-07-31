@@ -1083,6 +1083,7 @@ ncmpii_NC_enddef(NC         *ncp,
 {
     int i, err, status=NC_NOERR, mpireturn;
     char value[MPI_MAX_INFO_VAL];
+
 #ifdef ENABLE_SUBFILING
     NC *ncp_sf=NULL;
 #endif
@@ -1233,7 +1234,6 @@ ncmpii_NC_enddef(NC         *ncp,
     if(dtf_io_mode(ncp->nciop->path) == DTF_IO_MODE_MEMORY)
         dtf_enddef(ncp->nciop->path);
 #endif
-
     return status;
 }
 
@@ -1285,6 +1285,8 @@ ncmpii_enddef(NC *ncp)
     char value[MPI_MAX_INFO_VAL];
     MPI_Offset h_align, v_align, r_align, all_var_size;
     MPI_Offset env_h_align, env_v_align, env_h_chunk, env_r_align;
+    //double t_start = MPI_Wtime();
+    int ret;
 
     assert(!NC_readonly(ncp));
     assert(NC_indef(ncp));
@@ -1347,7 +1349,9 @@ ncmpii_enddef(NC *ncp)
     }
     /* else respect user hint */
 
-    return ncmpii_NC_enddef(ncp, h_align, 0, v_align, 0, r_align);
+    ret = ncmpii_NC_enddef(ncp, h_align, 0, v_align, 0, r_align);
+   // printf("ncmpidef time %.4f\n", MPI_Wtime() - t_start);
+    return ret;
 }
 
 /*----< ncmpii__enddef() >---------------------------------------------------*/

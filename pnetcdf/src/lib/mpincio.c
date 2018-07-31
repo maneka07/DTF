@@ -64,9 +64,15 @@ ncmpiio_free(ncio *nciop) {
         if (nciop->mpiinfo != MPI_INFO_NULL)
             MPI_Info_free(&(nciop->mpiinfo));
 #endif
+#ifdef DTF
+    if(dtf_io_mode(nciop->path) != DTF_IO_MODE_MEMORY){
+#endif
         if (nciop->comm != MPI_COMM_NULL)
             MPI_Comm_free(&(nciop->comm));
-
+#ifdef DTF
+    } else
+        nciop->comm = MPI_COMM_NULL;
+#endif
         NCI_Free(nciop);
     }
 }
@@ -178,6 +184,7 @@ ncmpiio_create(MPI_Comm     comm,
     ncio *nciop;
     int i, rank, mpireturn, err;
     int mpiomode = MPI_MODE_RDWR | MPI_MODE_CREATE;
+    //double t_start;
 
     assert(path != NULL);
     assert(*path != '\0');
@@ -185,6 +192,10 @@ ncmpiio_create(MPI_Comm     comm,
 
     MPI_Comm_rank(comm, &rank);
 
+    //t_start = MPI_Wtime();
+#ifdef DTF
+    if(dtf_io_mode(path) != DTF_IO_MODE_MEMORY){
+#endif
     /* NC_CLOBBER is the default mode, even if it is not used in cmode */
     if (fIsSet(ioflags, NC_NOCLOBBER)) {
         /* check if file exists: NetCDF requires NC_EEXIST returned if the file
@@ -241,7 +252,12 @@ ncmpiio_create(MPI_Comm     comm,
         TRACE_COMM(MPI_Bcast)(&err, 1, MPI_INT, 0, comm);
         if (err != NC_NOERR) return err;
     }
+    //printf("check for file exist %.4f\n", MPI_Wtime() - t_start);
+#ifdef DTF
+    }
+#endif
 
+    //t_start = MPI_Wtime();
     /* ignore if NC_NOWRITE set by user */
     fSet(ioflags, NC_WRITE);
 
@@ -254,6 +270,7 @@ ncmpiio_create(MPI_Comm     comm,
 
     /* extract MPI-IO hints */
     ncmpiio_extract_hints(nciop, info);
+    //printf("ncmpiio_new and extract_hints %.4f\n", MPI_Wtime() - t_start);
 #ifdef DTF
     if(dtf_io_mode((char*)path) == DTF_IO_MODE_MEMORY){
         nciop->collective_fh = *(dtf_get_tmpfile());
@@ -305,14 +322,26 @@ ncmpiio_create(MPI_Comm     comm,
 
     /* collective I/O mode is the default mode */
     set_NC_collectiveFh(nciop);
-
+#ifdef DTF
+    if(dtf_io_mode(path) != DTF_IO_MODE_MEMORY){
+#endif
+    //t_start = MPI_Wtime();
     /* duplicate communicator as user may free it later */
     mpireturn = MPI_Comm_dup(comm, &(nciop->comm));
     if (mpireturn != MPI_SUCCESS)
         return ncmpii_handle_error(mpireturn, "MPI_Comm_dup");
-
+    //printf("comm dup %.4f\n", MPI_Wtime() - t_start);
     /* get the file info actually used by MPI-IO (maybe alter user's info) */
+
+#ifdef DTF
+    } else{
+        nciop->comm = comm;
+    }
+#endif
+
+    //t_start = MPI_Wtime();
     MPI_File_get_info(nciop->collective_fh, &nciop->mpiinfo);
+    //printf("getinfo %.4f\n", MPI_Wtime() - t_start);
 
     ncp->nciop = nciop;
     return NC_NOERR;
@@ -328,6 +357,7 @@ ncmpiio_open(MPI_Comm     comm,
 {
     ncio *nciop;
     int i, mpireturn;
+    //double t_start;
     int mpiomode = fIsSet(ioflags, NC_WRITE) ? MPI_MODE_RDWR : MPI_MODE_RDONLY;
 
     assert(path != NULL);
@@ -387,14 +417,24 @@ ncmpiio_open(MPI_Comm     comm,
 
     set_NC_collectiveFh(nciop);
 
+
+#ifdef DTF
+    if(dtf_io_mode(path) != DTF_IO_MODE_MEMORY){
+#endif
     /* duplicate communicator as user may free it later */
     mpireturn = MPI_Comm_dup(comm, &(nciop->comm));
     if (mpireturn != MPI_SUCCESS)
         return ncmpii_handle_error(mpireturn, "MPI_Comm_dup");
 
-    /* get the file info used by MPI-IO */
+#ifdef DTF
+    } else{
+        nciop->comm = comm;
+    }
+#endif
+    //t_start = MPI_Wtime();
+/* get the file info used by MPI-IO */
     MPI_File_get_info(nciop->collective_fh, &nciop->mpiinfo);
-
+    //printf("getinfo %.4f\n", MPI_Wtime() - t_start);
     ncp->nciop = nciop;
     return NC_NOERR;
 }
@@ -405,6 +445,7 @@ ncmpiio_open(MPI_Comm     comm,
  */
 inline int
 ncmpiio_sync(ncio *nciop) {
+    //double t_start = MPI_Wtime();
 #ifndef DISABLE_FILE_SYNC
     int mpireturn;
 
@@ -420,6 +461,7 @@ ncmpiio_sync(ncio *nciop) {
     }
     TRACE_COMM(MPI_Barrier)(nciop->comm);
 #endif
+    //printf("file sync %.4f\n", MPI_Wtime() - t_start);
     return NC_NOERR;
 }
 

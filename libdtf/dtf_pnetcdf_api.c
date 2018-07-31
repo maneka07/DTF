@@ -23,7 +23,7 @@ extern int lib_initialized;
 _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *header)
 {
     if(!lib_initialized) return;
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    file_buffer_t *fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
     if(fbuf == NULL) return;
     
     double t_start = MPI_Wtime();
@@ -36,8 +36,8 @@ _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *hea
     }
 
     write_hdr(fbuf, hdr_sz, header);
-    gl_stats.t_hdr += MPI_Wtime() - t_start;
-    gl_stats.dtf_time += MPI_Wtime() - t_start;
+    gl_proc.stats_info.t_hdr += MPI_Wtime() - t_start;
+    gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
 _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset, MPI_Offset chunk_sz, void *chunk)
@@ -45,15 +45,15 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
 	MPI_Offset ret;
     if(!lib_initialized) return 0;
 
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    file_buffer_t *fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
     double t_start = MPI_Wtime();
     
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 	
     ret = read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
-    gl_stats.t_hdr += MPI_Wtime() - t_start;
-    gl_stats.dtf_time += MPI_Wtime() - t_start;
+    gl_proc.stats_info.t_hdr += MPI_Wtime() - t_start;
+    gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
     return ret;
 }
 
@@ -64,9 +64,9 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 	
     if(!lib_initialized) return;
     
-	gl_stats.t_idle = MPI_Wtime();
+	gl_proc.stats_info.t_idle = MPI_Wtime();
 
-    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
     if(fbuf != NULL){
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error creating file: a file with the same name (%s) has been created/opened before and has not been closed yet. Abort.", filename);
 		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
@@ -77,8 +77,8 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 		fbuf = create_file_buffer(pat, filename, comm);
 		/*Because this component creates the file, we assume that it's the writer*/
 		//fbuf->omode = DTF_WRITE; 
-		fbuf->writer_id = gl_my_comp_id;
-		fbuf->reader_id = (gl_my_comp_id == pat->comp1) ? pat->comp2 : pat->comp1;
+		fbuf->writer_id = gl_proc.my_comp;
+		fbuf->reader_id = (gl_proc.my_comp == pat->comp1) ? pat->comp2 : pat->comp1;
 	}
 
 	if(fbuf == NULL){
@@ -100,7 +100,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 	
 	 /*In scale-letkf we assume completely mirrorer file handling. 
 	 * Hence, will simply duplicate the master structure*/
-	 if(gl_scale){
+	 if(gl_proc.conf.sclltkf_flag){
 		assert(fbuf->cpl_mst_info->nmasters == 0);
 		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
 		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
@@ -126,7 +126,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s is %d", filename, fbuf->root_writer);
 
-    if(gl_my_rank == fbuf->root_writer && !gl_scale){
+    if(gl_proc.myrank == fbuf->root_writer && !gl_proc.conf.sclltkf_flag){
 		int i;
 		FILE *rootf;
 		char *glob = getenv("DTF_GLOBAL_PATH");
@@ -150,14 +150,14 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 		fclose(rootf);
 	}
 	
-	if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank)
+	if(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_proc.myrank)
 			fbuf->fready_notify_flag = RDR_NOT_NOTIFIED;
     
     
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d)", gl_comps[fbuf->writer_id].name, fbuf->root_writer, gl_comps[fbuf->reader_id].name, fbuf->root_reader);	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d)", gl_proc.comps[fbuf->writer_id].name, fbuf->root_writer, gl_proc.comps[fbuf->reader_id].name, fbuf->root_reader);	
 
     DTF_DBG(VERBOSE_ERROR_LEVEL, "Exit create");
-    gl_stats.dtf_time += MPI_Wtime() - t_start;
+    gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
 /**
@@ -176,9 +176,9 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
     if(!lib_initialized) return;
     DTF_DBG(VERBOSE_ERROR_LEVEL, "Opening file %s", filename);
     
-	gl_stats.t_idle = MPI_Wtime();
+	gl_proc.stats_info.t_idle = MPI_Wtime();
 
-    fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
 
     if(fbuf == NULL){
 		pat = find_fname_pattern(filename);
@@ -201,7 +201,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 
     MPI_Comm_size(comm, &nranks);
 
-    if(comm == gl_comps[gl_my_comp_id].comm)
+    if(comm == gl_proc.comps[gl_proc.my_comp].comm)
         DTF_DBG(VERBOSE_DBG_LEVEL, "File opened in component's communicator (%d nprocs)", nranks);
     else
         DTF_DBG(VERBOSE_DBG_LEVEL, "File opened in subcommunicator (%d nprocs)", nranks);
@@ -218,20 +218,20 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		//~ int rank;
 		//~ MPI_Comm_rank(comm, &rank);
 		//~ if(rank == 0)
-			//~ assert(gl_my_rank == fbuf->my_mst_info->masters[0]);			
+			//~ assert(gl_proc.myrank == fbuf->my_mst_info->masters[0]);			
 	//~ }
 
 	/*Check if the file was opened before and if we need to 
 	 * complete the file-ready notification*/
 	 if(fbuf->fready_notify_flag == RDR_NOTIF_POSTED){
-		assert(fbuf->root_writer == gl_my_rank);
+		assert(fbuf->root_writer == gl_proc.myrank);
 		while(fbuf->fready_notify_flag != RDR_NOTIFIED)
 			progress_comm();
 		//reset
 		fbuf->fready_notify_flag = DTF_UNDEFINED;
 	 }	   
 
-	if(gl_scale && (fbuf->cpl_mst_info->nmasters == 0)){
+	if(gl_proc.conf.sclltkf_flag && (fbuf->cpl_mst_info->nmasters == 0)){
 		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
 		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
 		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
@@ -267,12 +267,12 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
   * cast master list of the coupled component to other 
   * processes in this component. */
   
-    //~ if( !(omode & NC_WRITE) && fbuf->writer_id == gl_my_comp_id && !fbuf->cpl_info_shared){
+    //~ if( !(omode & NC_WRITE) && fbuf->writer_id == gl_proc.my_comp && !fbuf->cpl_info_shared){
 		//~ int err;
 		
 		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about other component");
 		//~ assert(0); //TODO remove this code block later
-		//~ if(fbuf->root_writer == gl_my_rank)
+		//~ if(fbuf->root_writer == gl_proc.myrank)
 			//~ assert(fbuf->cpl_mst_info->nmasters > 0);
 	
 		//~ err = MPI_Bcast(&(fbuf->cpl_mst_info->comm_sz), 1, MPI_INT, 0, comm);
@@ -281,7 +281,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		//~ err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
 		//~ CHECK_MPI(err);
 		
-		//~ if(gl_my_rank != fbuf->root_writer){
+		//~ if(gl_proc.myrank != fbuf->root_writer){
 			//~ assert(fbuf->cpl_mst_info->masters== NULL);
 			//~ fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));	
 		//~ }
@@ -294,20 +294,20 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	//~ }
 	
 	/*Set who's the reader and writer component in this session*/
-	cpl_cmp = (pat->comp1 == gl_my_comp_id) ? pat->comp2 : pat->comp1; 
+	cpl_cmp = (pat->comp1 == gl_proc.my_comp) ? pat->comp2 : pat->comp1; 
 	
 	/*if this is not the first transfer session, the root from the other coponent is 
 	 * known from previous session*/
 	if(fbuf->cpl_mst_info->nmasters > 0)
 		cpl_root = fbuf->cpl_mst_info->masters[0];
 	else 
-		cpl_root = (fbuf->reader_id == gl_my_comp_id) ? fbuf->root_writer : fbuf->root_reader;
-	//~ if(gl_scale)
+		cpl_root = (fbuf->reader_id == gl_proc.my_comp) ? fbuf->root_writer : fbuf->root_reader;
+	//~ if(gl_proc.conf.sclltkf_flag)
 	//cpl_root = fbuf->cpl_mst_info->masters[0];
 	
 	if( omode & NC_WRITE && !fbuf->is_write_only){
 		//fbuf->omode = DTF_WRITE;
-		fbuf->writer_id = gl_my_comp_id;
+		fbuf->writer_id = gl_proc.my_comp;
 		fbuf->reader_id = cpl_cmp;
 		fbuf->root_writer = fbuf->my_mst_info->masters[0];
 		fbuf->root_reader = cpl_root;
@@ -319,7 +319,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		
 		//fbuf->omode = DTF_READ;
 		fbuf->writer_id = cpl_cmp;
-		fbuf->reader_id = gl_my_comp_id;
+		fbuf->reader_id = gl_proc.my_comp;
 		fbuf->root_writer = cpl_root;
 		fbuf->root_reader = fbuf->my_mst_info->masters[0];
 	
@@ -330,7 +330,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 			DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is a write only file, consider as if opened for reading", filename);
 	}
 	
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d), omode %d", gl_comps[fbuf->writer_id].name, fbuf->root_writer, gl_comps[fbuf->reader_id].name, fbuf->root_reader, omode);	  
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d), omode %d", gl_proc.comps[fbuf->writer_id].name, fbuf->root_writer, gl_proc.comps[fbuf->reader_id].name, fbuf->root_reader, omode);	  
 
 	open_file(fbuf, comm);
     
@@ -342,11 +342,11 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     if(!lib_initialized) return;
     double t_start = MPI_Wtime();
     
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    file_buffer_t *fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
     if(fbuf == NULL) return;
     fbuf->is_defined = 1;
     progress_comm();
-    gl_stats.dtf_time += MPI_Wtime() - t_start;
+    gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
 _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
@@ -354,7 +354,7 @@ _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
     if(!lib_initialized) return;
 	double t_start = MPI_Wtime();
 	
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    file_buffer_t *fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
     if(fbuf == NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s is not treated by DTF. Will not set ncid", filename);
         return;
@@ -362,7 +362,7 @@ _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
     
     DTF_DBG(VERBOSE_ERROR_LEVEL, "Set ncid of file %s to %d (previos value %d)", filename, ncid, fbuf->ncid);
     fbuf->ncid = ncid;
-    gl_stats.dtf_time += MPI_Wtime() - t_start;
+    gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
 /**
@@ -382,11 +382,11 @@ _EXTERN_C_ void dtf_close(const char* filename)
     double t_start = MPI_Wtime();
     
     DTF_DBG(VERBOSE_DBG_LEVEL, "Closing file %s", filename);
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    file_buffer_t *fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
    
     if(fbuf == NULL) return;
     
-	gl_stats.t_idle = MPI_Wtime();
+	gl_proc.stats_info.t_idle = MPI_Wtime();
 		
 	progress_comm();
 
@@ -427,12 +427,12 @@ _EXTERN_C_ void dtf_close(const char* filename)
 	
 	if(fbuf->session_cnt == pat->num_sessions){
 		if( (fbuf->iomode == DTF_IO_MODE_MEMORY && !fbuf->is_transferring) || 
-			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_my_rank && fbuf->fready_notify_flag == RDR_NOTIFIED) ||
-			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer != gl_my_rank))
+			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_proc.myrank && fbuf->fready_notify_flag == RDR_NOTIFIED) ||
+			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer != gl_proc.myrank))
 			delete_file_buffer(fbuf);
 	}
 
-    gl_stats.dtf_time += MPI_Wtime() - t_start;
+    gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
 _EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data)
@@ -475,7 +475,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     
     double t_start = MPI_Wtime();
     
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    file_buffer_t *fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
     if(fbuf == NULL) return 0;
   
     
@@ -505,7 +505,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
 		return ret;
 	}
     
-    if(rw_flag == DTF_WRITE && fbuf->reader_id == gl_my_comp_id){
+    if(rw_flag == DTF_WRITE && fbuf->reader_id == gl_proc.my_comp){
         int el_sz, i;
         dtf_var_t *var = fbuf->vars[varid];
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: reader component cannot write to the file %s. Ignore I/O call", fbuf->file_path);
@@ -519,7 +519,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     }
     
     if(rw_flag == DTF_READ){
-        if(fbuf->reader_id == gl_my_comp_id){
+        if(fbuf->reader_id == gl_proc.my_comp){
           assert(fbuf->is_ready);
         } else{
             DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: writer process tries to read file %s (var %d)", fbuf->file_path, varid);
@@ -537,7 +537,7 @@ _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
     }
 
     ret = read_write_var(fbuf, varid, start, count, dtype, buf, rw_flag);
-    gl_stats.dtf_time += MPI_Wtime() - t_start;
+    gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
     fbuf->is_transferring = 1;
     return ret;
 }
@@ -553,10 +553,10 @@ _EXTERN_C_ void dtf_log_ioreq(const char *filename,
 {
 	int i, type_sz;
 	if(!lib_initialized) return;
-	if(!gl_conf.log_ioreqs) return;
+	if(!gl_proc.conf.log_ioreqs) return;
 	double t_start = MPI_Wtime();
 	
-    file_buffer_t *fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    file_buffer_t *fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
     if(fbuf == NULL) return;
     //if(fbuf->iomode != DTF_IO_MODE_FILE) return;
     MPI_Type_size(dtype, &type_sz);
@@ -564,7 +564,7 @@ _EXTERN_C_ void dtf_log_ioreq(const char *filename,
     for(i=0; i < ndims; i++)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", start[i], count[i]);
     log_ioreq(fbuf, varid, ndims, start, count, dtype, buf, rw_flag);
-	gl_stats.dtf_time += MPI_Wtime() - t_start;
+	gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
 
@@ -593,7 +593,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
     double t_start = MPI_Wtime();
     
     if(!lib_initialized) return 0;
-    file_buffer_t* fbuf = find_file_buffer(gl_filebuf_list, filename, -1);
+    file_buffer_t* fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
    
     if(fbuf == NULL) return 0;
     
@@ -617,7 +617,7 @@ _EXTERN_C_ int dtf_def_var(const char* filename, int varid, int ndims, MPI_Datat
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     ret = def_var(fbuf, varid, ndims, dtype, shape);
-    gl_stats.dtf_time += MPI_Wtime() - t_start;
+    gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
     return ret;
 }
 
@@ -626,19 +626,19 @@ _EXTERN_C_ void dtf_tstart()
 {
     if(!lib_initialized) return;
     
-    if(gl_stats.timer_start != 0)
+    if(gl_proc.stats_info.timer_start != 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.",
-                gl_stats.timer_start - gl_stats.walltime);
+                gl_proc.stats_info.timer_start - gl_proc.stats_info.walltime);
 
-    gl_stats.timer_start = MPI_Wtime();
+    gl_proc.stats_info.timer_start = MPI_Wtime();
 }
 _EXTERN_C_ void dtf_tend()
 {
     double tt;
     if(!lib_initialized) return;
-    tt = MPI_Wtime() - gl_stats.timer_start;
-    gl_stats.timer_accum += tt;
-    gl_stats.timer_start = 0;
+    tt = MPI_Wtime() - gl_proc.stats_info.timer_start;
+    gl_proc.stats_info.timer_accum += tt;
+    gl_proc.stats_info.timer_start = 0;
    // DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat %.6f", tt);
  
 }

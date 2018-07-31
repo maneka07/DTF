@@ -59,26 +59,26 @@ static char* str_to_lower(char* str){
 static void print_config(){
 
     int i;
-    fname_pattern_t *fb = gl_fname_ptrns;
+    fname_pattern_t *fb = gl_proc.fname_ptrns;
 
-    if(gl_comps == NULL) return;
+    if(gl_proc.comps == NULL) return;
 
-    DTF_DBG(VERBOSE_DBG_LEVEL,   "Number of components: %d", gl_ncomp);
-    DTF_DBG(VERBOSE_DBG_LEVEL,   "I am comp %d, name %s", gl_my_comp_id, gl_comps[gl_my_comp_id].name);
-    for(i = 0; i<gl_ncomp; i++){
-        if(i != gl_my_comp_id){
-            if(gl_comps[i].connect_mode == CONNECT_MODE_CLIENT)
-                DTF_DBG(VERBOSE_DBG_LEVEL,   "Component %s is my server", gl_comps[i].name);
-            else if (gl_comps[i].connect_mode == CONNECT_MODE_SERVER)
-                DTF_DBG(VERBOSE_DBG_LEVEL,   "Component %s is my client", gl_comps[i].name);
+    DTF_DBG(VERBOSE_DBG_LEVEL,   "Number of components: %d", gl_proc.ncomps);
+    DTF_DBG(VERBOSE_DBG_LEVEL,   "I am comp %d, name %s", gl_proc.my_comp, gl_proc.comps[gl_proc.my_comp].name);
+    for(i = 0; i<gl_proc.ncomps; i++){
+        if(i != gl_proc.my_comp){
+            if(gl_proc.comps[i].connect_mode == CONNECT_MODE_CLIENT)
+                DTF_DBG(VERBOSE_DBG_LEVEL,   "Component %s is my server", gl_proc.comps[i].name);
+            else if (gl_proc.comps[i].connect_mode == CONNECT_MODE_SERVER)
+                DTF_DBG(VERBOSE_DBG_LEVEL,   "Component %s is my client", gl_proc.comps[i].name);
             else
-                DTF_DBG(VERBOSE_DBG_LEVEL,   "No I/O with %s\n", gl_comps[i].name);
+                DTF_DBG(VERBOSE_DBG_LEVEL,   "No I/O with %s\n", gl_proc.comps[i].name);
         }
     }
 
     while(fb != NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL,   "File pattern %s, component 1 %s, component 2 %s ",
-                fb->fname, gl_comps[fb->comp1].name, gl_comps[fb->comp2].name);
+                fb->fname, gl_proc.comps[fb->comp1].name, gl_proc.comps[fb->comp2].name);
         switch(fb->iomode){
             case DTF_UNDEFINED:
                 DTF_DBG(VERBOSE_DBG_LEVEL,   "I/O mode: undefined ");
@@ -103,10 +103,10 @@ static int check_config()
 {
 	int ret = 0;
 	int i;
-    fname_pattern_t *cur_fpat = gl_fname_ptrns;
+    fname_pattern_t *cur_fpat = gl_proc.fname_ptrns;
 
-	for(i = 0; i < gl_ncomp; i++)
-		if(gl_comps[i].name[0] == '\0'){
+	for(i = 0; i < gl_proc.ncomps; i++)
+		if(gl_proc.comps[i].name[0] == '\0'){
 			DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: not all component names defined.");
 			ret = 1;
 		}
@@ -138,7 +138,7 @@ static int check_config()
 
 void clean_config(){
   int i;
-  fname_pattern_t *name_pat = gl_fname_ptrns;
+  fname_pattern_t *name_pat = gl_proc.fname_ptrns;
   io_pattern_t *iopat;
   rank_pattern_t *rpat;
   void *tmp;
@@ -166,13 +166,13 @@ void clean_config(){
 		iopat = (io_pattern_t*)tmp;
 	}
 
-	 gl_fname_ptrns = gl_fname_ptrns->next;
+	 gl_proc.fname_ptrns = gl_proc.fname_ptrns->next;
 	 dtf_free(name_pat, sizeof(fname_pattern_t));
-	 name_pat = gl_fname_ptrns;
+	 name_pat = gl_proc.fname_ptrns;
   }
 
-  if(gl_comps != NULL)
-	dtf_free(gl_comps, gl_ncomp*sizeof(component_t));
+  if(gl_proc.comps != NULL)
+	dtf_free(gl_proc.comps, gl_proc.ncomps*sizeof(component_t));
 
 }
 
@@ -183,7 +183,7 @@ static int parse_config(const char *ini_name, const char *comp_name){
   char       param[ASCIILINESZ], value[ASCIILINESZ];
   //char       comp_name[MAX_COMP_NAME];
   int        i, len, lineno=0;
-  struct fname_pattern* cur_fpat = NULL;
+  fname_pattern_t* cur_fpat = NULL;
   char *tmp_ininame;
  // ini = iniparser_load(ini_name);
 
@@ -206,12 +206,6 @@ static int parse_config(const char *ini_name, const char *comp_name){
 	}
   }
 
-
-  gl_conf.log_ioreqs = 0;
-  gl_conf.buffer_data = 0;
-  gl_conf.do_checksum = 0;
-  gl_conf.iodb_build_mode = IODB_BUILD_BLOCK; // default
-
   while(!feof(in)){
 
     fgets(line, ASCIILINESZ, in);
@@ -232,18 +226,18 @@ static int parse_config(const char *ini_name, const char *comp_name){
     if(strcmp(line, "[file]")==0){
 
         //check that we have already parsed the [info] section
-        if (gl_ncomp == 0){
+        if (gl_proc.ncomps == 0){
            DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: [file] section defined before [info] section.");
             goto panic_exit;
         }
         cur_fpat = new_fname_pattern();
         assert(cur_fpat != NULL);
 
-        if(gl_fname_ptrns == NULL)
-			gl_fname_ptrns = cur_fpat;
+        if(gl_proc.fname_ptrns == NULL)
+			gl_proc.fname_ptrns = cur_fpat;
 		else {
-			cur_fpat->next = gl_fname_ptrns;
-			gl_fname_ptrns = cur_fpat;
+			cur_fpat->next = gl_proc.fname_ptrns;
+			gl_proc.fname_ptrns = cur_fpat;
 		}
 
     } else if (sscanf (line, "%[^=] = \"%[^\"]\"", param, value) == 2
@@ -262,51 +256,51 @@ static int parse_config(const char *ini_name, const char *comp_name){
         //if(gl_verbose >= VERBOSE_DBG_LEVEL) fprintf(stdout, "param=%s, val=%s\n", param, value);
 
         if(strcmp(param, "ncomp") == 0){
-            gl_ncomp = atoi(value);
-            if(gl_ncomp <= 0){
+            gl_proc.ncomps = atoi(value);
+            if(gl_proc.ncomps <= 0){
                 DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error parsing config file: invalid number of components.");
                 goto panic_exit;
             }
-            gl_comps = (struct component*)dtf_malloc(gl_ncomp*sizeof(struct component));
-            for(i = 0; i<gl_ncomp; i++){
-                gl_comps[i].id = i;
-                gl_comps[i].connect_mode = DTF_UNDEFINED;
-                gl_comps[i].in_msg_q = NULL;
-                gl_comps[i].name[0] = 0;
-                gl_comps[i].comm = MPI_COMM_NULL;
-                gl_comps[i].finalized = 0;
-                gl_comps[i].out_msg_q = NULL;
+            gl_proc.comps = (struct component*)dtf_malloc(gl_proc.ncomps*sizeof(struct component));
+            for(i = 0; i<gl_proc.ncomps; i++){
+                gl_proc.comps[i].id = i;
+                gl_proc.comps[i].connect_mode = DTF_UNDEFINED;
+                gl_proc.comps[i].in_msg_q = NULL;
+                gl_proc.comps[i].name[0] = 0;
+                gl_proc.comps[i].comm = MPI_COMM_NULL;
+                gl_proc.comps[i].finalized = 0;
+                gl_proc.comps[i].out_msg_q = NULL;
             }
 
         } else if(strcmp(param, "comp_name") == 0){
-            assert(gl_ncomp!=0);
+            assert(gl_proc.ncomps!=0);
             assert(strlen(value) <= MAX_COMP_NAME);
-            for(i = 0; i<gl_ncomp; i++){
-                if(gl_comps[i].name[0] == 0){
-                    strcpy(gl_comps[i].name, value);
-                    if(strcmp(gl_comps[i].name, comp_name) == 0)
-                        gl_my_comp_id = i;
+            for(i = 0; i<gl_proc.ncomps; i++){
+                if(gl_proc.comps[i].name[0] == 0){
+                    strcpy(gl_proc.comps[i].name, value);
+                    if(strcmp(gl_proc.comps[i].name, comp_name) == 0)
+                        gl_proc.my_comp = i;
                     break;
                 }
             }
         } else if(strcmp(param, "iodb_build_mode") == 0){
             if(strcmp(value, "varid") == 0)
-               gl_conf.iodb_build_mode = IODB_BUILD_VARID;
+               gl_proc.conf.iodb_build_mode = IODB_BUILD_VARID;
             else if(strcmp(value, "range") == 0)
-                gl_conf.iodb_build_mode = IODB_BUILD_BLOCK;
+                gl_proc.conf.iodb_build_mode = IODB_BUILD_BLOCK;
             else {
                 DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown iodb build mode (%s)", value);
                 MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
             }
         } else if(strcmp(param, "iodb_range") == 0){
-			gl_conf.iodb_range = (MPI_Offset)atoi(value);
-			assert(gl_conf.iodb_range > 0);
+			gl_proc.conf.iodb_range = (MPI_Offset)atoi(value);
+			assert(gl_proc.conf.iodb_range > 0);
 		} else if(strcmp(param, "buffer_data") == 0){
 
-            gl_conf.buffer_data = atoi(value);
-            if(gl_conf.buffer_data == 0)
+            gl_proc.conf.buffer_data = atoi(value);
+            if(gl_proc.conf.buffer_data == 0)
                 DTF_DBG(VERBOSE_DBG_LEVEL, "buffer_data disabled");
-            else if(gl_conf.buffer_data == 1)
+            else if(gl_proc.conf.buffer_data == 1)
                 DTF_DBG(VERBOSE_DBG_LEVEL, "buffer_data enabled");
             else {
                 DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: Value for buffer_data should be 0 or 1.");
@@ -314,13 +308,13 @@ static int parse_config(const char *ini_name, const char *comp_name){
             }
         } else if(strcmp(param, "do_checksum") == 0){
 
-            gl_conf.do_checksum = atoi(value);
-            assert((gl_conf.do_checksum == 0) || (gl_conf.do_checksum == 1));
+            gl_proc.conf.do_checksum = atoi(value);
+            assert((gl_proc.conf.do_checksum == 0) || (gl_proc.conf.do_checksum == 1));
 
         } else if(strcmp(param, "log_ioreqs") == 0){
 
-            gl_conf.log_ioreqs = atoi(value);
-            assert((gl_conf.log_ioreqs == 0) || (gl_conf.log_ioreqs == 1));
+            gl_proc.conf.log_ioreqs = atoi(value);
+            assert((gl_proc.conf.log_ioreqs == 0) || (gl_proc.conf.log_ioreqs == 1));
 
         } else if(strcmp(param, "filename") == 0){
             assert(cur_fpat != NULL);
@@ -332,7 +326,7 @@ static int parse_config(const char *ini_name, const char *comp_name){
             assert(strlen(value) <= MAX_FILE_NAME);
             char **tmp = realloc(cur_fpat->excl_fnames, sizeof(char*)*(cur_fpat->nexcls+1));
             assert(tmp != NULL);
-            gl_stats.malloc_size += sizeof(char*);
+            gl_proc.stats_info.malloc_size += sizeof(char*);
             cur_fpat->excl_fnames = tmp;
             cur_fpat->excl_fnames[cur_fpat->nexcls] = dtf_malloc(MAX_FILE_NAME*sizeof(char));
             strcpy(cur_fpat->excl_fnames[cur_fpat->nexcls], value);
@@ -340,9 +334,9 @@ static int parse_config(const char *ini_name, const char *comp_name){
 
         } else if(strcmp(param, "comp1") == 0){
             assert(cur_fpat != NULL);
-            assert(gl_ncomp != 0);
-            for(i = 0; i < gl_ncomp; i++){
-                if(strcmp(value, gl_comps[i].name) == 0){
+            assert(gl_proc.ncomps != 0);
+            for(i = 0; i < gl_proc.ncomps; i++){
+                if(strcmp(value, gl_proc.comps[i].name) == 0){
                     cur_fpat->comp1 = i;
                     break;
                 }
@@ -350,14 +344,14 @@ static int parse_config(const char *ini_name, const char *comp_name){
 
         } else if(strcmp(param, "comp2") == 0){
             assert(cur_fpat != NULL);
-            assert(gl_ncomp != 0);
+            assert(gl_proc.ncomps != 0);
 
             if(cur_fpat->comp2 != -1){
                 DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: File %s cannot have multiple readers (%d)", cur_fpat->fname, cur_fpat->comp2);
                 goto panic_exit;
             }
-            for(i = 0; i < gl_ncomp; i++){
-                if(strcmp(value, gl_comps[i].name) == 0){
+            for(i = 0; i < gl_proc.ncomps; i++){
+                if(strcmp(value, gl_proc.comps[i].name) == 0){
                     cur_fpat->comp2 = i;
                     break;
                 }
@@ -405,9 +399,9 @@ static int parse_config(const char *ini_name, const char *comp_name){
     }
     }
 
-//    for(i = 0; i < gl_ncomp; i++)
-//        if(strcmp(gl_comps[i].name, comp_name) == 0)
-//            gl_my_comp_id = i;
+//    for(i = 0; i < gl_proc.ncomps; i++)
+//        if(strcmp(gl_proc.comps[i].name, comp_name) == 0)
+//            gl_proc.my_comp = i;
 
 
 
@@ -418,15 +412,15 @@ static int parse_config(const char *ini_name, const char *comp_name){
   esablish an intercommunicatior between these two components later. If there is no
   file flow then the connection mode is not set(DTF_UNDEFINED).
 */
-    cur_fpat = gl_fname_ptrns;
+    cur_fpat = gl_proc.fname_ptrns;
     while(cur_fpat != NULL){
-        if(cur_fpat->comp1 == gl_my_comp_id){
-            if(gl_comps[ cur_fpat->comp2 ].connect_mode == DTF_UNDEFINED )
-               gl_comps[ cur_fpat->comp2 ].connect_mode = CONNECT_MODE_SERVER; // I am server
+        if(cur_fpat->comp1 == gl_proc.my_comp){
+            if(gl_proc.comps[ cur_fpat->comp2 ].connect_mode == DTF_UNDEFINED )
+               gl_proc.comps[ cur_fpat->comp2 ].connect_mode = CONNECT_MODE_SERVER; // I am server
 
-        } else if( gl_comps[ cur_fpat->comp1 ].connect_mode == DTF_UNDEFINED){
-            if(cur_fpat->comp2 == gl_my_comp_id )
-               gl_comps[ cur_fpat->comp1 ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
+        } else if( gl_proc.comps[ cur_fpat->comp1 ].connect_mode == DTF_UNDEFINED){
+            if(cur_fpat->comp2 == gl_proc.my_comp )
+               gl_proc.comps[ cur_fpat->comp1 ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
         }
 
         cur_fpat = cur_fpat->next;
@@ -454,8 +448,8 @@ void pack_config(void **buf, int *offt1)
 	
 	int offt = 0, sz = 0;
 	
-	sz += 7*sizeof(int)+gl_ncomp*MAX_COMP_NAME;
-	pat = gl_fname_ptrns;
+	sz += 7*sizeof(int)+gl_proc.ncomps*MAX_COMP_NAME;
+	pat = gl_proc.fname_ptrns;
 	while(pat != NULL){
 		sz += 7*sizeof(int)+ MAX_FILE_NAME*(pat->nexcls+1);
 		pat = pat->next;
@@ -464,28 +458,28 @@ void pack_config(void **buf, int *offt1)
 	*buf = dtf_malloc(sz);
 	chbuf = (unsigned char*)*buf;
 	
-    *(int*)(chbuf) = gl_ncomp;
+    *(int*)(chbuf) = gl_proc.ncomps;
     offt+=sizeof(int);
     
-    for(i = 0; i < gl_ncomp; i++){
-		strcpy((char*)(chbuf+offt), gl_comps[i].name);
+    for(i = 0; i < gl_proc.ncomps; i++){
+		strcpy((char*)(chbuf+offt), gl_proc.comps[i].name);
 		offt += MAX_COMP_NAME; 
 	}
 	
-	*(int*)(chbuf+offt) = gl_conf.buffer_data;
+	*(int*)(chbuf+offt) = gl_proc.conf.buffer_data;
 	offt += sizeof(int);
-	*(int*)(chbuf+offt) = gl_conf.iodb_build_mode;
+	*(int*)(chbuf+offt) = gl_proc.conf.iodb_build_mode;
 	offt += sizeof(int);
-	*(int*)(chbuf+offt) = (int)gl_conf.iodb_range;
+	*(int*)(chbuf+offt) = (int)gl_proc.conf.iodb_range;
 	offt += sizeof(int);
-	*(int*)(chbuf+offt) = gl_conf.do_checksum;
+	*(int*)(chbuf+offt) = gl_proc.conf.do_checksum;
 	offt += sizeof(int);
-	*(int*)(chbuf+offt) = gl_conf.log_ioreqs;
+	*(int*)(chbuf+offt) = gl_proc.conf.log_ioreqs;
 	offt += sizeof(int);
-	*(int*)(chbuf+offt) = gl_stats.num_fpats;
+	*(int*)(chbuf+offt) = gl_proc.stats_info.num_fpats;
 	offt += sizeof(int);
 	
-	pat = gl_fname_ptrns;
+	pat = gl_proc.fname_ptrns;
 	while(pat != NULL){
 		
 		strcpy((char*)(chbuf+offt), pat->fname);
@@ -529,40 +523,35 @@ void unpack_config(void *buf,const char* comp_name)
 	assert(buf != NULL);
 	chbuf = (unsigned char*)buf;
 	
-	gl_conf.log_ioreqs = 0;
-    gl_conf.buffer_data = 0;
-    gl_conf.do_checksum = 0;
-    gl_conf.iodb_build_mode = IODB_BUILD_BLOCK; // default
-	
-    gl_ncomp = *(int*)(chbuf);
+    gl_proc.ncomps = *(int*)(chbuf);
     offt+=sizeof(int);
     
-    gl_comps = (struct component*)dtf_malloc(gl_ncomp*sizeof(struct component));
-	for(i = 0; i<gl_ncomp; i++){
-		gl_comps[i].id = i;
-		gl_comps[i].connect_mode = DTF_UNDEFINED;
-		gl_comps[i].in_msg_q = NULL;
+    gl_proc.comps = (struct component*)dtf_malloc(gl_proc.ncomps*sizeof(struct component));
+	for(i = 0; i<gl_proc.ncomps; i++){
+		gl_proc.comps[i].id = i;
+		gl_proc.comps[i].connect_mode = DTF_UNDEFINED;
+		gl_proc.comps[i].in_msg_q = NULL;
 		
-		strcpy(gl_comps[i].name, (char*)(chbuf+offt));
+		strcpy(gl_proc.comps[i].name, (char*)(chbuf+offt));
 		offt += MAX_COMP_NAME; 
 
-		if(strcmp(gl_comps[i].name, comp_name) == 0)
-			gl_my_comp_id = i;
+		if(strcmp(gl_proc.comps[i].name, comp_name) == 0)
+			gl_proc.my_comp = i;
                         
-		gl_comps[i].comm = MPI_COMM_NULL;
-		gl_comps[i].finalized = 0;
-		gl_comps[i].out_msg_q = NULL;
+		gl_proc.comps[i].comm = MPI_COMM_NULL;
+		gl_proc.comps[i].finalized = 0;
+		gl_proc.comps[i].out_msg_q = NULL;
 	}
 	
-	gl_conf.buffer_data = *(int*)(chbuf+offt);
+	gl_proc.conf.buffer_data = *(int*)(chbuf+offt);
 	offt += sizeof(int);
-	gl_conf.iodb_build_mode = *(int*)(chbuf+offt);
+	gl_proc.conf.iodb_build_mode = *(int*)(chbuf+offt);
 	offt += sizeof(int);
-	gl_conf.iodb_range = (MPI_Offset)(*(int*)(chbuf+offt));
+	gl_proc.conf.iodb_range = (MPI_Offset)(*(int*)(chbuf+offt));
 	offt += sizeof(int);
-	gl_conf.do_checksum = *(int*)(chbuf+offt);
+	gl_proc.conf.do_checksum = *(int*)(chbuf+offt);
 	offt += sizeof(int);
-	gl_conf.log_ioreqs = *(int*)(chbuf+offt);
+	gl_proc.conf.log_ioreqs = *(int*)(chbuf+offt);
 	offt += sizeof(int);
 	
 	npats = *(int*)(chbuf+offt);
@@ -572,11 +561,11 @@ void unpack_config(void *buf,const char* comp_name)
 		pat = new_fname_pattern();
         assert(pat != NULL);
 
-        if(gl_fname_ptrns == NULL)
-			gl_fname_ptrns = pat;
+        if(gl_proc.fname_ptrns == NULL)
+			gl_proc.fname_ptrns = pat;
 		else {
-			pat->next = gl_fname_ptrns;
-			gl_fname_ptrns = pat;
+			pat->next = gl_proc.fname_ptrns;
+			gl_proc.fname_ptrns = pat;
 		}
 		
 		strcpy(pat->fname, (char*)(chbuf+offt));
@@ -606,15 +595,15 @@ void unpack_config(void *buf,const char* comp_name)
 		}
 	}
 	
-	pat = gl_fname_ptrns;
+	pat = gl_proc.fname_ptrns;
     while(pat != NULL){
-        if(pat->comp1 == gl_my_comp_id){
-            if(gl_comps[ pat->comp2 ].connect_mode == DTF_UNDEFINED )
-               gl_comps[ pat->comp2 ].connect_mode = CONNECT_MODE_SERVER; // I am server
+        if(pat->comp1 == gl_proc.my_comp){
+            if(gl_proc.comps[ pat->comp2 ].connect_mode == DTF_UNDEFINED )
+               gl_proc.comps[ pat->comp2 ].connect_mode = CONNECT_MODE_SERVER; // I am server
 
-        } else if( gl_comps[ pat->comp1 ].connect_mode == DTF_UNDEFINED){
-            if(pat->comp2 == gl_my_comp_id )
-               gl_comps[ pat->comp1 ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
+        } else if( gl_proc.comps[ pat->comp1 ].connect_mode == DTF_UNDEFINED){
+            if(pat->comp2 == gl_proc.my_comp )
+               gl_proc.comps[ pat->comp1 ].connect_mode = CONNECT_MODE_CLIENT;  //I am client
         }
 
         pat = pat->next;
@@ -625,25 +614,31 @@ int load_config(const char *dtf_ini_path, const char *comp_name)
 {
 	int offt = 0, err;
 	void *buf = NULL;
+	int nprocs;
 	
-	if(gl_my_rank == 0){
+	MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
+	
+	if(gl_proc.myrank == 0){
 		err = parse_config(dtf_ini_path, comp_name);
 		if(err) MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
-		pack_config(&buf, &offt);
 	}
 	
-	 err = MPI_Bcast(&offt, 1, MPI_INT, 0, MPI_COMM_WORLD );
-     CHECK_MPI(err);
-     
-     if(gl_my_rank != 0)
-		buf = dtf_malloc(offt);
-		
-	 err = MPI_Bcast(buf, offt, MPI_CHAR, 0, MPI_COMM_WORLD );
-     CHECK_MPI(err);
-     
-     if(gl_my_rank != 0)
-		unpack_config(buf, comp_name);
-		
-	dtf_free(buf, offt);
+	if(nprocs > 1) { 
+		if(gl_proc.myrank == 0)
+			pack_config(&buf, &offt);
+		 err = MPI_Bcast(&offt, 1, MPI_INT, 0, MPI_COMM_WORLD );
+		 CHECK_MPI(err);
+		 
+		 if(gl_proc.myrank != 0)
+			buf = dtf_malloc(offt);
+			
+		 err = MPI_Bcast(buf, offt, MPI_CHAR, 0, MPI_COMM_WORLD );
+		 CHECK_MPI(err);
+		 
+		 if(gl_proc.myrank != 0)
+			unpack_config(buf, comp_name);
+			
+		dtf_free(buf, offt);
+	}
 	return 0;
 }

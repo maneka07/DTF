@@ -205,7 +205,7 @@ ncmpi_create(MPI_Comm    comm,
     MPI_Info   env_info;
     MPI_Offset chunksize=NC_DEFAULT_CHUNKSIZE;
     NC *ncp;
-
+    //double t_start;
 #ifdef PNC_DEBUG
     safe_mode = 1;
     /* this configure time setting will be overwritten by the run-time
@@ -216,6 +216,7 @@ ncmpi_create(MPI_Comm    comm,
     dtf_create(path, comm);
 #endif // DTF
 
+    //t_start = MPI_Wtime();
     /* get environment variable PNETCDF_SAFE_MODE
      * if it is set to 1, then we perform a strict parameter consistent test
      */
@@ -354,12 +355,15 @@ ncmpi_create(MPI_Comm    comm,
 
     fSet(ncp->flags, NC_NOFILL);
 
+    //printf("first part %.4f\n", MPI_Wtime()-t_start);
+
+    //t_start = MPI_Wtime();
     err = ncmpiio_create(comm, path, cmode, env_info, ncp);
     if (err != NC_NOERR) { /* fatal error */
         ncmpii_free_NC(ncp);
         return err;
     }
-
+    //printf("ncmpiio_create %.4f\n", MPI_Wtime()-t_start);
     fSet(ncp->flags, NC_CREAT);
 
     /* the linked list storing the outstanding non-blocking requests */
@@ -392,7 +396,7 @@ ncmpi_open(MPI_Comm    comm,
     MPI_Info   env_info;
     MPI_Offset chunksize=NC_DEFAULT_CHUNKSIZE;
     NC *ncp;
-
+    //double t_start;
 #ifdef PNC_DEBUG
     safe_mode = 1;
     /* this configure time setting will be overwritten by the run-time
@@ -434,8 +438,8 @@ ncmpi_open(MPI_Comm    comm,
 
 #ifdef DTF
     dtf_open(path, omode, comm);
+#endif
 
-#endif // DTF
 
     /* take hints from the environment variable PNETCDF_HINTS
      * a string of hints separated by ";" and each hint is in the
@@ -444,6 +448,9 @@ ncmpi_open(MPI_Comm    comm,
      * were set by using calls to MPI_Info_set in the application code.
      */
     env_info = info;
+#ifdef DTF
+    if(dtf_io_mode(path) != DTF_IO_MODE_MEMORY){
+#endif // DTF
     if ((env_str = getenv("PNETCDF_HINTS")) != NULL) {
         if (env_info == MPI_INFO_NULL)
             MPI_Info_create(&env_info); /* ignore error */
@@ -467,13 +474,20 @@ ncmpi_open(MPI_Comm    comm,
                      value, &flag);
         if (flag) chunksize = atoll(value);
     }
-
+#ifdef DTF
+    }
+#endif
+    //t_start = MPI_Wtime();
     ncp = ncmpii_new_NC(&chunksize);
     if (ncp == NULL)
         DEBUG_RETURN_ERROR(NC_ENOMEM)
 
     ncp->safe_mode = safe_mode;
     ncp->old       = NULL;
+    //printf("ncmpii_new_NC time %.4f\n", MPI_Wtime() - t_start);
+#ifdef DTF
+    if(dtf_io_mode(path) != DTF_IO_MODE_MEMORY){
+#endif
 #ifdef ENABLE_SUBFILING
     ncp->subfile_mode = 1;
     if (env_info != MPI_INFO_NULL) {
@@ -486,22 +500,26 @@ ncmpi_open(MPI_Comm    comm,
     ncp->ncid_sf   = -1;
     ncp->nc_num_subfiles = 0;
 #endif
-
+#ifdef DTF
+    }
+#endif
+    //t_start = MPI_Wtime();
     err = ncmpiio_open(comm, path, omode, env_info, ncp);
     if (err != NC_NOERR) { /* fatal error */
         ncmpii_free_NC(ncp);
         return err;
     }
-
+    //printf("ncmpiio_open time %.4f\n", MPI_Wtime() - t_start);
     assert(ncp->flags == 0);
     fSet(ncp->flags, NC_NOFILL);
-
+    //t_start = MPI_Wtime();
     err = ncmpii_hdr_get_NC(ncp); /* read header from file */
     if (err != NC_NOERR) { /* fatal error */
         ncmpiio_close(ncp->nciop, 0);
         ncmpii_free_NC(ncp);
         return err;
     }
+    //printf("ncmpii_hdr_get_NC time %.4f\n", MPI_Wtime() - t_start);
     ncp->head = NULL;
     ncp->tail = NULL;
     ncp->numGetReqs = 0;
@@ -983,6 +1001,7 @@ int
 ncmpi_close(int ncid) {
     int status = NC_NOERR;
     NC *ncp;
+    //double t_start = MPI_Wtime();
 #ifdef DTF
     char *path;
     int len;
@@ -1000,6 +1019,7 @@ ncmpi_close(int ncid) {
 #endif
     /* calling the implementation of ncmpi_close() */
     status = ncmpii_close(ncp);
+   // printf("close time %.4f\n", MPI_Wtime() - t_start);
 #ifdef DTF
     dtf_close(path);
     free(path);
