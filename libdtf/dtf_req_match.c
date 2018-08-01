@@ -1977,9 +1977,9 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 
 				if(gl_proc.my_comp == fbuf->writer_id){
 					assert(comp == fbuf->reader_id);
-					assert(gl_proc.myrank == fbuf->root_writer);
+					//assert(gl_proc.myrank == fbuf->root_writer);
 					if(fbuf->my_mst_info->nread_completed == fbuf->cpl_mst_info->nmasters){
-						notify_processes(DTF_GROUP_MST, fbuf, NULL, 0, MATCH_DONE_TAG);
+						//notify_processes(DTF_GROUP_MST, fbuf, NULL, 0, MATCH_DONE_TAG);
 						notify_processes(DTF_GROUP_WG, fbuf,  NULL, 0, MATCH_DONE_TAG);
 						fbuf->done_matching_flag = 1;
 						DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE, Done matching at %.3f", MPI_Wtime()-gl_proc.stats_info.walltime);
@@ -1991,18 +1991,22 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					assert(fbuf->my_mst_info->my_mst == gl_proc.myrank);
 					
 					if(fbuf->my_mst_info->nread_completed == fbuf->my_mst_info->my_wg_sz){
-							int flag=0;
+							int flag=0, err, i;
 							char *fname = dtf_malloc(MAX_FILE_NAME);
 							strcpy(fname, fbuf->file_path);
-							DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root %d that my workgroup completed reading", fbuf->root_writer);
+							DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer masters %d that my workgroup completed reading", fbuf->root_writer);
 							
-							dtf_msg_t *msg = new_dtf_msg(fname, MAX_FILE_NAME, DTF_UNDEFINED, READ_DONE_TAG, 1);
-							int err = MPI_Isend(fname, MAX_FILE_NAME, MPI_CHAR, fbuf->root_writer, READ_DONE_TAG, 
-												gl_proc.comps[fbuf->writer_id].comm, msg->reqs);
+							dtf_msg_t *msg = new_dtf_msg(fname, MAX_FILE_NAME, DTF_UNDEFINED, READ_DONE_TAG, fbuf->cpl_mst_info->nmasters);
+							for(i=0; i < fbuf->cpl_mst_info->nmasters; i++){
+								err = MPI_Isend(fname, MAX_FILE_NAME, MPI_CHAR, fbuf->cpl_mst_info->masters[i], READ_DONE_TAG, 
+												gl_proc.comps[fbuf->writer_id].comm, &(msg->reqs[i]));
+								CHECK_MPI(err);
+							}
+							//~ err = MPI_Test(msg->reqs, &flag, MPI_STATUS_IGNORE);
+							err = MPI_Waitall(fbuf->cpl_mst_info->nmasters, msg->reqs, MPI_STATUSES_IGNORE);
 							CHECK_MPI(err);
-							err = MPI_Test(msg->reqs, &flag, MPI_STATUS_IGNORE);
-							CHECK_MPI(err);
-							ENQUEUE_ITEM(msg, gl_proc.comps[fbuf->writer_id].out_msg_q);
+							delete_dtf_msg(msg);
+							//~ ENQUEUE_ITEM(msg, gl_proc.comps[fbuf->writer_id].out_msg_q);
 							fbuf->done_matching_flag = 1;
 							DTF_DBG(VERBOSE_DBG_LEVEL, "Done matching flag set for file %s", fbuf->file_path);
 					}
