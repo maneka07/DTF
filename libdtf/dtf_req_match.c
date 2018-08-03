@@ -812,8 +812,6 @@ void send_ioreqs_by_var(file_buffer_t *fbuf)
         parse_ioreqs(fbuf,sbuf[idx], offt[idx], gl_proc.myrank, gl_proc.comps[gl_proc.my_comp].comm);
         dtf_free(sbuf[idx], bufsz[idx]);
     } 
-
-    fbuf->t_last_sent_ioreqs = MPI_Wtime();
 fn_exit:
     dtf_free(sbuf, nmasters*sizeof(unsigned char*));
     dtf_free(bufsz,nmasters*sizeof(unsigned char*));
@@ -1083,8 +1081,6 @@ void send_ioreqs_by_block(file_buffer_t *fbuf)
         dtf_free(sbuf[idx], bufsz[idx]);
     }
     
-    fbuf->t_last_sent_ioreqs = MPI_Wtime();
-
 fn_exit:
     dtf_free(sbuf, nmasters*sizeof(unsigned char*));
     dtf_free(bufsz, nmasters*sizeof(unsigned char*));
@@ -1212,12 +1208,11 @@ int match_ioreqs(file_buffer_t *fbuf)
 		
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Will replay I/O instead of matching");
 		
-		if(gl_proc.my_comp == fbuf->writer_id) 
+		if(gl_proc.my_comp == fbuf->writer_id){ 
 			 replay_io_pat(pat, fbuf->file_path, fbuf->cur_transfer_epoch);
-			
-		while(!fbuf->done_matching_flag){
-			progress_comm();
-		}
+			 fbuf->done_matching_flag = 1;
+		} else 		
+			while(!fbuf->done_matching_flag) progress_comm();
 			
 	} else {
 
@@ -1449,7 +1444,7 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
             if(fit_nelems == 0){
 				int flag;
                 assert(sofft != MAX_FILE_NAME );
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Send msg to %d, size %d at %.3f", rdr_rank,(int)sofft, MPI_Wtime() - gl_proc.stats_info.walltime);
+                DTF_DBG(VERBOSE_DBG_LEVEL, "Send msg to %d, size %d", rdr_rank,(int)sofft);
                 /*Send this message*/
                 MPI_Request req;
                 int dsz = (int)sofft;
@@ -1752,21 +1747,29 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
             delete_ioreq(fbuf, var_id, &ioreq);
 
             if(fbuf->rreq_cnt == 0){
-				int err;
-                DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE:Completed all rreqs for file %s", fbuf->file_path);
-				dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG, 1);
-				err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
-                          READ_DONE_TAG, gl_proc.comps[gl_proc.my_comp].comm, msg->reqs);
-				CHECK_MPI(err);
-
-				//Reader ranks except for root complete the send immediately
-				if(gl_proc.myrank != fbuf->my_mst_info->my_mst){
-					err = MPI_Wait(msg->reqs, MPI_STATUS_IGNORE);
-					CHECK_MPI(err);
-					dtf_free(msg, sizeof(dtf_msg_t));
+				fname_pattern_t *pat = find_fname_pattern(fbuf->file_path);
+				assert(pat != NULL);
+				if(pat->replay_io && pat->rdr_recorded == IO_PATTERN_RECORDED){
+					DTF_DBG(VERBOSE_DBG_LEVEL, "Completed rreqs for file %s, won't notify writer because replaying I/O", fbuf->file_path);
 					fbuf->done_matching_flag = 1;
-				} else
-					ENQUEUE_ITEM(msg, gl_proc.comps[gl_proc.my_comp].out_msg_q);
+				} else {
+		
+					int err;
+					DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE:Completed all rreqs for file %s", fbuf->file_path);
+					dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, READ_DONE_TAG, 1);
+					err = MPI_Isend(fbuf->file_path, MAX_FILE_NAME, MPI_CHAR, fbuf->my_mst_info->my_mst,
+							  READ_DONE_TAG, gl_proc.comps[gl_proc.my_comp].comm, msg->reqs);
+					CHECK_MPI(err);
+
+					//Reader ranks except for root complete the send immediately
+					if(gl_proc.myrank != fbuf->my_mst_info->my_mst){
+						err = MPI_Wait(msg->reqs, MPI_STATUS_IGNORE);
+						CHECK_MPI(err);
+						dtf_free(msg, sizeof(dtf_msg_t));
+						fbuf->done_matching_flag = 1;
+					} else
+						ENQUEUE_ITEM(msg, gl_proc.comps[gl_proc.my_comp].out_msg_q);
+				}
             }
         }
     } //while(bufsz)
@@ -1982,7 +1985,6 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 						//notify_processes(DTF_GROUP_MST, fbuf, NULL, 0, MATCH_DONE_TAG);
 						notify_processes(DTF_GROUP_WG, fbuf,  NULL, 0, MATCH_DONE_TAG);
 						fbuf->done_matching_flag = 1;
-						DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE, Done matching at %.3f", MPI_Wtime()-gl_proc.stats_info.walltime);
 					}
 					
 					
@@ -1991,7 +1993,7 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					assert(fbuf->my_mst_info->my_mst == gl_proc.myrank);
 					
 					if(fbuf->my_mst_info->nread_completed == fbuf->my_mst_info->my_wg_sz){
-							int flag=0, err, i;
+							int err, i;
 							char *fname = dtf_malloc(MAX_FILE_NAME);
 							strcpy(fname, fbuf->file_path);
 							DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer masters %d that my workgroup completed reading", fbuf->root_writer);

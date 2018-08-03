@@ -134,7 +134,7 @@ void print_stats()
 
     dblint_t dblint_in, dblint_out;
 
-    walltime = MPI_Wtime() - gl_proc.stats_info.walltime;
+    walltime = MPI_Wtime() - gl_proc.walltime;
     MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &nranks);
 
     if(gl_proc.stats_info.accum_dbuff_sz > 0){

@@ -129,7 +129,7 @@ static int create_intercomm(int comp_id, char* global_path){
 
 	//The two components are roughly synched now. Reset
 	//the start time value
-	gl_proc.stats_info.walltime = MPI_Wtime();
+	gl_proc.walltime = MPI_Wtime();
     DTF_DBG(VERBOSE_DBG_LEVEL, "Intercomm established");
     return 0;
 }

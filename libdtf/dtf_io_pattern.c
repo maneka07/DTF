@@ -86,7 +86,6 @@ void record_io_pat(char *filename, int rank, void *pat_data, size_t datasz,  int
 	}
 }
 
-//TODO figure out how to replay for nonblocking
 void replay_io_pat(fname_pattern_t *pat, char *filename, int epoch)
 {
 	io_pattern_t *iopat;

@@ -261,37 +261,6 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		if(pat->finfo_sz > 0 && fbuf->header == NULL)
 			unpack_file_info(pat->finfo_sz, pat->finfo, fbuf);
 	}
-		
-	 /*If component opens this file for reading and before it 
-  * opened the file for writing, root process must broad
-  * cast master list of the coupled component to other 
-  * processes in this component. */
-  
-    //~ if( !(omode & NC_WRITE) && fbuf->writer_id == gl_proc.my_comp && !fbuf->cpl_info_shared){
-		//~ int err;
-		
-		//~ DTF_DBG(VERBOSE_DBG_LEVEL, "Broadcast info about other component");
-		//~ assert(0); //TODO remove this code block later
-		//~ if(fbuf->root_writer == gl_proc.myrank)
-			//~ assert(fbuf->cpl_mst_info->nmasters > 0);
-	
-		//~ err = MPI_Bcast(&(fbuf->cpl_mst_info->comm_sz), 1, MPI_INT, 0, comm);
-		//~ CHECK_MPI(err);
-	
-		//~ err = MPI_Bcast(&(fbuf->cpl_mst_info->nmasters), 1, MPI_INT, 0, comm);
-		//~ CHECK_MPI(err);
-		
-		//~ if(gl_proc.myrank != fbuf->root_writer){
-			//~ assert(fbuf->cpl_mst_info->masters== NULL);
-			//~ fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));	
-		//~ }
-		
-		//~ err = MPI_Bcast(fbuf->cpl_mst_info->masters, fbuf->cpl_mst_info->nmasters, MPI_INT, 0, comm);
-		//~ CHECK_MPI(err);
-		
-		//~ fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
-		//~ fbuf->cpl_info_shared = 1;
-	//~ }
 	
 	/*Set who's the reader and writer component in this session*/
 	cpl_cmp = (pat->comp1 == gl_proc.my_comp) ? pat->comp2 : pat->comp1; 
@@ -434,30 +403,6 @@ _EXTERN_C_ void dtf_close(const char* filename)
 
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
-
-_EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data)
-{
-    return;
-//
-//    int i, nelems=1, max_print;
-//    if(count == NULL)
-//        return;
-//    for(i = 0; i < ndims; i++)
-//        nelems*=count[i];
-//
-//    if(nelems < 20)
-//        max_print = nelems;
-//    else
-//        max_print = 20;
-//    DTF_DBG(VERBOSE_ERROR_LEVEL, "Data for var %d:", varid);
-//    for(i = 0; i < max_print; i++)
-//        if(dtype == 0)
-//            printf("%.3f\t", ((float*)data)[i]);
-//        else if(dtype == 1)
-//            printf("%.3f\t", ((double*)data)[i]);
-//    printf("\n");
-}
-
 
 _EXTERN_C_ MPI_Offset dtf_read_write_var(const char *filename,
                                           int varid,
@@ -628,7 +573,7 @@ _EXTERN_C_ void dtf_tstart()
     
     if(gl_proc.stats_info.timer_start != 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: user timer was started at %.3f and not finished.",
-                gl_proc.stats_info.timer_start - gl_proc.stats_info.walltime);
+                gl_proc.stats_info.timer_start - gl_proc.walltime);
 
     gl_proc.stats_info.timer_start = MPI_Wtime();
 }

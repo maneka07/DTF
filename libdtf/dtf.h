@@ -31,7 +31,6 @@ _EXTERN_C_ void dtf_time_start();
 _EXTERN_C_ void dtf_time_tend();
 _EXTERN_C_ int  dtf_transfer(const char *filename, int ncid );
 _EXTERN_C_ int  dtf_transfer_all_files();
-_EXTERN_C_ int  dtf_transfer_v2(const char *filename, int ncid, int it );
 
 
 /*     Fortran interfaces    */
@@ -40,7 +39,6 @@ void dtf_time_start_();
 void dtf_init_(const char *filename, char *module_name, int* ierr);
 void dtf_finalize_(int* ierr);
 void dtf_transfer_(const char *filename, int *ncid, int *ierr);
-void dtf_transfer_v2_(const char *filename, int *ncid, int *it, int *ierr );
 void dtf_transfer_all_files_();
 void dtf_transfer_multiple_(const char *filename, int *ncid);
 void dtf_complete_multiple_(const char *filename, int *ncid);
@@ -73,7 +71,6 @@ _EXTERN_C_ void dtf_log_ioreq(const char *filename,
                                           void *buf,
                                           int rw_flag);
 _EXTERN_C_ void dtf_enddef(const char *filename);
-_EXTERN_C_ void dtf_print_data(int varid, int dtype, int ndims, MPI_Offset* count, void* data);
 _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid);
 _EXTERN_C_ MPI_File *dtf_get_tmpfile();
 

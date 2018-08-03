@@ -69,7 +69,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_proc.stats_info.ndata_msg_sent = 0;
     gl_proc.stats_info.transfer_time = 0;
     gl_proc.stats_info.ndb_match = 0;
-    gl_proc.stats_info.walltime = MPI_Wtime();
+    gl_proc.walltime = MPI_Wtime();
     gl_proc.stats_info.t_comm = 0;
     gl_proc.stats_info.t_hdr = 0;
     gl_proc.stats_info.nprogress_call = 0;
@@ -248,33 +248,11 @@ _EXTERN_C_ int dtf_finalize()
 
     if(gl_proc.msgbuf != NULL)
         dtf_free(gl_proc.msgbuf, gl_proc.conf.data_msg_size_limit);
-
-  //  if(gl_proc.stats_info.malloc_size != MAX_COMP_NAME )
-    //  DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: DTF memory leak size: %lu", gl_proc.stats_info.malloc_size - MAX_COMP_NAME);
     
 	DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalized");
     lib_initialized = 0;
     fflush(stdout);
     fflush(stderr);
-    return 0;
-}
-
-_EXTERN_C_ int dtf_transfer_v2(const char *filename, int ncid, int it )
-{
-	if(!lib_initialized) return 0;
-	char *s = getenv("DTF_IGNORE_ITER");
-	
-	if(it < 0)
-		return dtf_transfer(filename, ncid);
-		
-	if(s != NULL){
-		if(it > atoi(s)){
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Match io call for iter %d", it);
-			return dtf_transfer(filename, ncid);
-		} else 
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Ignore match io call for iter %d", it);
-	} else 
-		return dtf_transfer(filename, ncid);
     return 0;
 }
 
@@ -493,11 +471,6 @@ void dtf_transfer_(const char *filename, int *ncid, int *ierr)
     *ierr = dtf_transfer(filename, *ncid);
 }
 
-void dtf_transfer_v2_(const char *filename, int *ncid, int *it, int *ierr )
-{
-	*ierr = dtf_transfer_v2(filename, *ncid, *it);
-}
-
 void dtf_transfer_all_files_()
 {
 	dtf_transfer_all_files();
@@ -516,10 +489,5 @@ void dtf_complete_multiple_(const char *filename, int *ncid)
 void dtf_print_(const char *str, int *verbose)
 {
     dtf_print(str, *verbose);
-}
-
-void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void* data)
-{
-    dtf_print_data(*varid, *dtype, *ndims, count, data);
 }
 

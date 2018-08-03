@@ -65,8 +65,7 @@ static dtype_params_t *get_dtype_params(MPI_Datatype dtype, int ndims, /*out*/ M
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Original size -> subarray start from:");
 	for(i = 0; i < ndims; i++)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", params->orig_array_size[i], params->orig_start[i]);
-	
-	//TODO temporary solution. what about other fortran->ctype conversions?
+		
 	*eltype = array_of_dtypes[0];
 	if(*eltype == MPI_DOUBLE_PRECISION) *eltype = MPI_DOUBLE;
 	else if(*eltype == MPI_REAL) *eltype = MPI_FLOAT;
@@ -245,8 +244,6 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
 		var->ioreqs = req;
 	}
 	
-    if(fbuf->t_last_sent_ioreqs == 0)
-		fbuf->t_last_sent_ioreqs = MPI_Wtime();
 
     ret = nelems*req_el_sz;
     

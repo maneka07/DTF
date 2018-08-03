@@ -71,7 +71,7 @@
     if(gl_verbose >= dbg_level){  \
                 memset(_buff,0,1024);                         \
                 snprintf(_buff,1024,__VA_ARGS__);             \
-                fprintf(stdout, "%s %d [%.3f]: %s\n", _comp_name, gl_proc.myrank, MPI_Wtime() - gl_proc.stats_info.walltime, _buff);  \
+                fprintf(stdout, "%s %d [%.3f]: %s\n", _comp_name, gl_proc.myrank, MPI_Wtime() - gl_proc.walltime, _buff);  \
                 fflush(stdout);   \
     }           \
 }while(0)
@@ -113,8 +113,7 @@ typedef struct stats{
     double          t_do_match;
     double          t_rw_var;
     double          master_time;  /*measure accum time for master-related work*/
-    int             ndb_match;       /*How many times I/O req matching was performed*/
-    double          walltime;   //TODO move to gl_proc
+    int             ndb_match;       /*How many times I/O req matching was performed*/  
     size_t          malloc_size;
     unsigned long   nprogress_call;
     unsigned long   nioreqs;
@@ -157,6 +156,7 @@ typedef struct dtf_proc{
 	char 				tmp_file_path[L_tmpnam];
 	MPI_File 			tmpfile;
 	void* 				msgbuf;
+	double          	walltime; 
 }dtf_proc_t;
 
 /*GLOBAL VARIABLES*/

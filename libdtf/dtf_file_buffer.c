@@ -6,7 +6,6 @@
 #include "dtf_file_buffer.h"
 #include "dtf.h"
 
-//TODO in pack-unpack no need to send file name since no way to confuse
 void unpack_file_info(MPI_Offset bufsz, void *buf, file_buffer_t *fbf)
 {
     int i, varid, nvars;
@@ -429,7 +428,6 @@ file_buffer_t *create_file_buffer(fname_pattern_t *pat, const char* file_path, M
     buf->is_defined = 0;
 	buf->iomode = pat->iomode;
 	buf->cur_transfer_epoch = 0;
-	buf->t_last_sent_ioreqs = 0;
 	buf->is_transferring = 0;
 	buf->comm = comm;
 	//insert
@@ -629,13 +627,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 					progress_comm();
 			}
 			MPI_Barrier(comm);
-            fbuf->is_ready = 1;
-			
-            //~ if(strstr(fbuf->file_path, "hist.d")!=NULL)
-				//~ gl_proc.stats_info.st_mtch_hist = MPI_Wtime()-gl_proc.stats_info.walltime;
-			//~ else if(strstr(fbuf->file_path, "anal.d")!=NULL)
-				//~ gl_proc.stats_info.st_mtch_rest = MPI_Wtime()-gl_proc.stats_info.walltime;
-			
+            fbuf->is_ready = 1;			
 			
 			DTF_DBG(VERBOSE_DBG_LEVEL, "time_stamp file ready %s", fbuf->file_path);
 
