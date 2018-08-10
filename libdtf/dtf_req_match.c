@@ -402,7 +402,7 @@ static void do_matching(file_buffer_t *fbuf)
 
             if(my_idx != -1){
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Parse data req to myself");
-                send_data(fbuf, sbuf[my_idx] + MAX_FILE_NAME, offt[my_idx] - MAX_FILE_NAME);
+                send_data_nonblocking(fbuf, sbuf[my_idx] + MAX_FILE_NAME, offt[my_idx] - MAX_FILE_NAME);
                 dtf_free(sbuf[my_idx], bufsz[my_idx]);
             }
             DTF_DBG(VERBOSE_DBG_LEVEL, "Matched rreq for rank %d", ritem->global_rank);
@@ -425,7 +425,6 @@ static void do_matching(file_buffer_t *fbuf)
     dtf_free(offt, allocd_nwriters*sizeof(size_t));
     dtf_free(bufsz, allocd_nwriters*sizeof(int));
     dtf_free(sbuf, allocd_nwriters*sizeof(unsigned char*));
-    gl_proc.stats_info.ndb_match++;
 
     if(nwriters == 0)
         gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
@@ -446,9 +445,6 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
     unsigned char *chbuf = (unsigned char*)buf;
 	read_db_item_t *ritem = NULL;
 	int file_rank;
-    double t_st = MPI_Wtime();
-    
-   // offt += MAX_FILE_NAME;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start parsing reqs for file %s", fbuf->file_path);
     if(comm == gl_proc.comps[fbuf->reader_id].comm)
@@ -588,7 +584,6 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int global_r
     }
     assert(offt == (size_t)bufsz);
 	fbuf->my_mst_info->iodb->updated_flag = 1;
-    gl_proc.stats_info.parse_ioreq_time += MPI_Wtime() - t_st;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_proc.stats_info.malloc_size);
 }
 
@@ -1114,7 +1109,7 @@ void match_ioreqs_all_files()
 	
 	while(1){
 		
-		progress_comm();
+		progress_comm(0);
 		
 		file_cnt = 0;
 		fbuf = gl_proc.filebuf_list;
@@ -1197,7 +1192,7 @@ int match_ioreqs(file_buffer_t *fbuf)
 	if(replay){
 		
 		while(fbuf->cpl_mst_info->nmasters == 0){
-			progress_comm();
+			progress_comm(0);
 			if( ((fbuf->writer_id == gl_proc.my_comp) && gl_proc.comps[fbuf->reader_id].finalized)  ||
 				((fbuf->reader_id == gl_proc.my_comp) && gl_proc.comps[fbuf->writer_id].finalized) ){
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
@@ -1212,7 +1207,7 @@ int match_ioreqs(file_buffer_t *fbuf)
 			 replay_io_pat(pat, fbuf->file_path, fbuf->cur_transfer_epoch);
 			 fbuf->done_matching_flag = 1;
 		} else 		
-			while(!fbuf->done_matching_flag) progress_comm();
+			while(!fbuf->done_matching_flag) progress_comm(0);
 			
 	} else {
 
@@ -1229,7 +1224,7 @@ int match_ioreqs(file_buffer_t *fbuf)
 			DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching phase");
 			
 			while(!fbuf->done_matching_flag){					
-				progress_comm();
+				progress_comm(0);
 				if( (fbuf->writer_id == gl_proc.my_comp) && (fbuf->my_mst_info->my_mst == gl_proc.myrank)  )
 					do_matching(fbuf);
 				
@@ -1263,9 +1258,7 @@ done_match:
     return 0;
 }
 
-
-/*writer->reader || writer->writer*/
-void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
+void send_data_blocking(file_buffer_t *fbuf, void* buf, int bufsz)
 {
     int var_id, rdr_rank, err, i;
     io_req_t *ioreq = NULL;
@@ -1276,7 +1269,6 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
     int def_el_sz;
     unsigned char *rbuf = (unsigned char*)buf;
     MPI_Offset *start, *count;
-    int nblocks_written = 0;
     MPI_Offset *new_count = NULL, *new_start = NULL, *tmp;
     MPI_Offset nelems, fit_nelems;
     int min_bl_ndims;
@@ -1286,7 +1278,7 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
     rofft += sizeof(MPI_Offset);
     DTF_DBG(VERBOSE_DBG_LEVEL, "Sending data to rank %d", rdr_rank);
 	
-	if(gl_proc.msgbuf == NULL) gl_proc.msgbuf = dtf_malloc(gl_proc.conf.data_msg_size_limit);
+	assert(gl_proc.msgbuf != NULL);
                     
     sbuf = (unsigned char*)gl_proc.msgbuf; //dtf_malloc(gl_proc.conf.data_msg_size_limit);//
     sbufsz = (int)gl_proc.conf.data_msg_size_limit;
@@ -1543,9 +1535,6 @@ void send_data(file_buffer_t *fbuf, void* buf, int bufsz)
 						DTF_DBG(VERBOSE_DBG_LEVEL, "chsum getput for req %lu is %.4f", ioreq->id, chsum);
 					}
 				}
-                
-				nblocks_written++;
-                gl_proc.stats_info.nbl++;
                 sofft += fit_nelems*def_el_sz+/*padding*/(fit_nelems*def_el_sz)%sizeof(MPI_Offset);
                 nelems -= fit_nelems;
                 DTF_DBG(VERBOSE_DBG_LEVEL, "Left to get put %lld", nelems);
@@ -1605,6 +1594,243 @@ fn_exit:
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished sending the data");
    // dtf_free(sbuf, sbufsz); //comment out since use gl_proc.msgbuf
 }
+
+
+/*writer->reader || writer->writer*/
+void send_data_nonblocking(file_buffer_t *fbuf, void* buf, int bufsz)
+{
+    int var_id, rdr_rank, err, i;
+    io_req_t *ioreq = NULL;
+    dtf_var_t *var = NULL;
+    size_t rofft = 0, sofft = 0;
+    unsigned char *sbuf = NULL;
+    size_t sbufsz = 0;
+    int def_el_sz;
+    unsigned char *rbuf = (unsigned char*)buf;
+    MPI_Offset *start, *count;
+  
+    MPI_Offset fit_nelems;
+	int type_mismatch;
+	int cnt_mismatch;
+	
+    /*First compute how big a buffer we need to send data. 
+	 * If the buffer is bigger than data_msg_size_limit then switch to 
+	 * blocking sending of data.*/
+	 
+	sbufsz = MAX_FILE_NAME;
+	rofft = sizeof(MPI_Offset);
+	while(rofft != (size_t)bufsz){
+		var_id = (int)(*(MPI_Offset*)(rbuf+rofft));
+        rofft += sizeof(MPI_Offset);
+		
+        var = fbuf->vars[var_id];
+		MPI_Type_size(var->dtype, &def_el_sz);
+		rofft += var->ndims*sizeof(MPI_Offset); //skip start
+		count = (MPI_Offset*)(rbuf+rofft);
+        rofft += var->ndims*sizeof(MPI_Offset);
+		int tmp = 1;
+		for (i = 0; i < var->ndims; i++)
+			tmp *= count[i]; 
+		sbufsz += sizeof(MPI_Offset)*(var->ndims*2 + 1) + tmp*def_el_sz + (tmp*def_el_sz) % sizeof(MPI_Offset);
+	}
+	
+	DTF_DBG(VERBOSE_DBG_LEVEL, "PROFILE: use data buf of sz %d", (int)sbufsz);
+	sbuf = dtf_malloc(sbufsz);
+   
+    //reset 
+    rofft = 0;
+
+	rdr_rank = (int)(*(MPI_Offset*)(rbuf+rofft));
+	rofft += sizeof(MPI_Offset);
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Sending data to rank %d", rdr_rank);
+	
+    while(rofft != (size_t)bufsz){
+
+        if(sofft == 0){
+            memcpy(sbuf, fbuf->file_path, MAX_FILE_NAME);
+            sofft = MAX_FILE_NAME;
+        }
+
+        var_id = (int)(*(MPI_Offset*)(rbuf+rofft));
+        rofft += sizeof(MPI_Offset);
+
+        var = fbuf->vars[var_id];
+		MPI_Type_size(var->dtype, &def_el_sz);
+
+        /*Prepare/Init things*/
+        start = (MPI_Offset*)(rbuf+rofft);
+        rofft += var->ndims*sizeof(MPI_Offset);
+        count = (MPI_Offset*)(rbuf+rofft);
+        rofft += var->ndims*sizeof(MPI_Offset);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "var id %d. Start -> count:", var->id);
+        for(i = 0; i < var->ndims; i++)
+            DTF_DBG(VERBOSE_DBG_LEVEL, "       %lld --> %lld", start[i], count[i]);
+
+        /*Find the ioreq that has info about this block*/
+        ioreq = fbuf->vars[var_id]->ioreqs;
+        while(ioreq != NULL){
+            if(ioreq->rw_flag == DTF_WRITE){
+                int match = 0;
+
+                if(var->ndims == 0){
+                    match = 1;
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Matched ioreq for scalar var %d", var->id);
+                    break;
+                }
+
+                for(i = 0; i < var->ndims; i++)
+                    if( (start[i] >= ioreq->start[i]) && (start[i] < ioreq->start[i]+ioreq->count[i]))
+                        match++;
+                    else
+                        break;
+
+                if(match == var->ndims){
+
+                    DTF_DBG(VERBOSE_DBG_LEVEL, "Matched ioreq with userbuf %p (strt->cnt): ", ioreq->user_buf);
+                    for(i = 0; i < var->ndims; i++){
+                        DTF_DBG(VERBOSE_DBG_LEVEL, "%lld\t --> %lld", ioreq->start[i], ioreq->count[i]);
+                        assert(start[i] + count[i] <= ioreq->start[i] + ioreq->count[i]);
+
+                    }
+                    break;
+                }
+            }
+            ioreq = ioreq->next;
+        }
+        if(ioreq == NULL){
+            DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: Matching request not found.");
+        }
+        assert(ioreq != NULL);
+        if(gl_proc.conf.do_checksum){
+            double chsum = compute_checksum(ioreq->user_buf, var->ndims, ioreq->count, ioreq->dtype);
+            if(chsum != ioreq->checksum)
+                DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: ioreq checksum does not match with the old value: new %.4f, old %.4f", chsum, ioreq->checksum);
+        }
+
+		if(sofft == 0){
+			memcpy(sbuf, fbuf->file_path, MAX_FILE_NAME);
+			sofft = MAX_FILE_NAME;
+		}
+              
+		type_mismatch = 0;
+		cnt_mismatch = 0;
+                
+                      
+	   /*copy the block to the sbuf*/
+		/*save var_id, start[], count[]*/
+		*(MPI_Offset*)(sbuf+sofft) = (MPI_Offset)var_id;
+		sofft += sizeof(MPI_Offset);
+		memcpy(sbuf+sofft, start, var->ndims*sizeof(MPI_Offset));
+		sofft += var->ndims*sizeof(MPI_Offset);
+		memcpy(sbuf+sofft, count, var->ndims*sizeof(MPI_Offset));
+		sofft += var->ndims*sizeof(MPI_Offset);
+                
+		if(var->dtype != ioreq->dtype) type_mismatch = 1;
+     
+		/*Copy data*/
+		fit_nelems = 1;
+		for(i = 0; i < var->ndims; i++) fit_nelems *= count[i];
+		
+		for(i = 0; i < var->ndims; i++) 
+			if( (count[i] != 1) && (count[i] < ioreq->count[i])){
+				cnt_mismatch = 1;
+				break;
+			}
+					
+		if(ioreq->derived_params != NULL) cnt_mismatch = 1;
+
+		if(cnt_mismatch == 0){//it's a continious block of memory
+			int req_el_sz;
+			MPI_Offset start_cpy_offt;
+			MPI_Type_size(ioreq->dtype, &req_el_sz);
+			start_cpy_offt = to_1d_index(var->ndims, ioreq->start, ioreq->count, start)*req_el_sz;
+			DTF_DBG(VERBOSE_DBG_LEVEL, "cpy offt %lld", start_cpy_offt);
+			if(type_mismatch){
+				convertcpy(ioreq->dtype, var->dtype, (unsigned char*)ioreq->user_buf+start_cpy_offt,
+						   (void*)(sbuf+sofft), (int)fit_nelems);
+			}else{
+				memcpy(sbuf+sofft, (unsigned char*)ioreq->user_buf+start_cpy_offt,fit_nelems*def_el_sz);
+			}
+			
+			if(gl_proc.conf.do_checksum){
+				double chsum = compute_checksum(sbuf+sofft, var->ndims, count, var->dtype);
+				DTF_DBG(VERBOSE_DBG_LEVEL, "chsum contin for req %lu is %.4f", ioreq->id, chsum);
+			}
+		} else {
+			//adjust start coordinate with respect to the user buffer
+			MPI_Offset *rel_start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+			for(i = 0; i < var->ndims; i++)
+				rel_start[i] = start[i] - ioreq->start[i];
+			
+			if(ioreq->derived_params == NULL)
+				get_put_data(var->ndims, ioreq->dtype, var->dtype, ioreq->count, ioreq->user_buf, 
+							 rel_start, count, sbuf+sofft, DTF_READ, type_mismatch);
+			else{
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Will extract data from derived data type");
+				//adjust with respect to shift of subarray inside to original array
+				for(i = 0; i < var->ndims; i++)
+					rel_start[i] = ioreq->derived_params->orig_start[i] + rel_start[i];
+					
+				get_put_data(var->ndims, ioreq->dtype, var->dtype, 
+							ioreq->derived_params->orig_array_size, ioreq->user_buf, rel_start, count, sbuf+sofft, DTF_READ, type_mismatch);
+			}
+			dtf_free(rel_start, var->ndims*sizeof(MPI_Offset));
+			
+			if(gl_proc.conf.do_checksum){
+				double chsum = compute_checksum(sbuf+sofft, var->ndims, count, var->dtype);
+				DTF_DBG(VERBOSE_DBG_LEVEL, "chsum getput for req %lu is %.4f", ioreq->id, chsum);
+			}
+		}
+                
+		sofft += fit_nelems*def_el_sz+/*padding*/(fit_nelems*def_el_sz)%sizeof(MPI_Offset);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "rofft %d (bufsz %d), Sofft %d", (int)rofft,bufsz, (int)sofft);
+        //assert(sofft == sbufsz);
+
+    } /*while(rofft != sbufsz)*/
+
+    if(sofft != sbufsz){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "sofft %lu, sbufsz %lu", sofft, sbufsz);
+		assert(sofft == sbufsz);
+	}
+	
+	int flag;
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Send msg to %d size %d", rdr_rank,(int)sofft);
+	dtf_msg_t *msg = new_dtf_msg(sbuf, sbufsz, DTF_UNDEFINED, IO_DATA_TAG, 1);
+	
+	double t_start_comm = MPI_Wtime();
+	err = MPI_Isend((void*)sbuf, (int)sofft, MPI_BYTE, rdr_rank, IO_DATA_TAG, gl_proc.comps[fbuf->reader_id].comm, msg->reqs);
+	CHECK_MPI(err); 
+	
+	err = MPI_Iprobe(MPI_ANY_SOURCE, COMP_FINALIZED_TAG, gl_proc.comps[fbuf->reader_id].comm, &flag, MPI_STATUS_IGNORE);
+	CHECK_MPI(err);
+	
+	if(flag){
+		err = MPI_Cancel(msg->reqs);
+		CHECK_MPI(err);
+		delete_dtf_msg(msg);
+		goto fn_exit;
+	}
+	err = MPI_Test(msg->reqs, &flag, MPI_STATUS_IGNORE);
+	CHECK_MPI(err);
+	
+	gl_proc.stats_info.t_comm += MPI_Wtime() - t_start_comm;
+	gl_proc.stats_info.ndata_msg_sent++;
+	gl_proc.stats_info.data_msg_sz += sofft;
+	
+	if(flag) 
+		delete_dtf_msg(msg);
+	else
+		ENQUEUE_ITEM(msg, gl_proc.comps[fbuf->reader_id].out_msg_q);
+		
+	/*Record the pattern if needed*/
+	record_io_pat(fbuf->file_path, rdr_rank, buf, bufsz, fbuf->cur_transfer_epoch);
+fn_exit:
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Finished sending the data");
+   // dtf_free(sbuf, sbufsz); //comment out since use gl_proc.msgbuf
+}
+
+
+
 
 /*writer->reader*/
 static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
@@ -1717,7 +1943,6 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
 			}
 			dtf_free(rel_start, var->ndims*sizeof(MPI_Offset));
         }
-        gl_proc.stats_info.nbl++;
         offt += nelems*def_el_sz +(nelems*def_el_sz)%sizeof(MPI_Offset);
         ioreq->get_sz += (MPI_Offset)(nelems*req_el_sz);
         
@@ -1726,19 +1951,6 @@ static void recv_data_rdr(file_buffer_t *fbuf, void* buf, int bufsz)
         
         if(ioreq->get_sz == ioreq->req_data_sz){
             DTF_DBG(VERBOSE_DBG_LEVEL, "Complete req %lu (left %lu), var %d, ", ioreq->id, fbuf->rreq_cnt-1, var->id);
-            //for(i = 0; i < var->ndims; i++)
-              //  DTF_DBG(VERBOSE_DBG_LEVEL, "%lld --> %lld", ioreq->start[i], ioreq->count[i]);
-            //~ int nnels = 1;
-
-			//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "------------COMPLETE IOREQ--------:");
-			//~ for(i = 0; i < var->ndims; i++){
-				//~ DTF_DBG(VERBOSE_ERROR_LEVEL, "  %lld --> %lld", ioreq->start[i], ioreq->count[i]);
-				//~ nnels *= ioreq->count[i];
-			//~ }
-			//~ for(i = 0; i < nnels; i++)
-				//~ printf("%.2f\t", ((double*)ioreq->user_buf)[i]);
-			//~ printf("\n");
-
             if(gl_proc.conf.do_checksum){
                 double chsum = compute_checksum(ioreq->user_buf, var->ndims, ioreq->count, ioreq->dtype);
                 DTF_DBG(VERBOSE_DBG_LEVEL, "chsum for req %lu is %.4f", ioreq->id, chsum);
@@ -1853,39 +2065,40 @@ static void notify_processes(int group, file_buffer_t *fbuf, void *buf, int bufs
 
 static void print_recv_msg(int tag, int src)
 {
+	int dbg = VERBOSE_DBG_LEVEL;
     switch(tag){
         case FILE_READY_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_READY_TAG from %d", src);
+            DTF_DBG(dbg, "Received tag FILE_READY_TAG from %d", src);
             break;
         case IO_DATA_REQ_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_DATA_REQ_TAG from %d", src);
+            DTF_DBG(dbg, "Received tag IO_DATA_REQ_TAG from %d", src);
             break;
         case READ_DONE_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag READ_DONE_TAG from %d", src);
+            DTF_DBG(dbg, "Received tag READ_DONE_TAG from %d", src);
             break;
         case FILE_INFO_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_TAG from %d", src);
+            DTF_DBG(dbg, "Received tag FILE_INFO_TAG from %d", src);
             break;
         case FILE_INFO_REQ_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag FILE_INFO_REQ_TAG from %d", src);
+            DTF_DBG(dbg, "Received tag FILE_INFO_REQ_TAG from %d", src);
             break;
         case MATCH_DONE_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag MATCH_DONE_TAG from %d", src);
+            DTF_DBG(dbg, "Received tag MATCH_DONE_TAG from %d", src);
             break;
         case DONE_MULTIPLE_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag DONE_MULTIPLE_TAG from %d", src);
+            DTF_DBG(dbg, "Received tag DONE_MULTIPLE_TAG from %d", src);
             break;
         case IO_REQS_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_REQS_TAG from %d", src);
+            DTF_DBG(dbg, "Received tag IO_REQS_TAG from %d", src);
             break;
         case IO_DATA_TAG:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag IO_DATA_TAG from %d", src);
+            DTF_DBG(dbg, "Received tag IO_DATA_TAG from %d", src);
             break;
 		case COMP_FINALIZED_TAG:
-			DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag COMP_FINALIZED_TAG from %d", src);
+			DTF_DBG(dbg, "Received tag COMP_FINALIZED_TAG from %d", src);
 			break;	
         default:
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Received tag unknown %d from %d", tag, src);
+            DTF_DBG(dbg, "Received tag unknown %d from %d", tag, src);
             assert(0);
     }
 }
@@ -1967,7 +2180,10 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 				break;
 			case IO_DATA_REQ_TAG:
 				if(!fbuf->is_transferring) goto fn_exit;  //Not ready to process this message yet
-				send_data(fbuf, (unsigned char*)rbuf+offt, bufsz - offt);
+				if(gl_proc.conf.use_msg_buffer)
+					send_data_blocking(fbuf, (unsigned char*)rbuf+offt, bufsz - offt);
+				else
+					send_data_nonblocking(fbuf, (unsigned char*)rbuf+offt, bufsz - offt);
 				break;
 			case IO_DATA_TAG:
 				if(!fbuf->is_transferring) goto fn_exit;  //Not ready to process this message yet
@@ -2052,21 +2268,21 @@ fn_exit:
 	return 0;
 }
 
-void progress_comm()
+void progress_comm(int receive_only)
 {
     MPI_Status status;
     int comp, flag, err, bufsz, tag, src;
-    gl_proc.stats_info.nprogress_call++;
     double t_st, t_start_comm;
     void *rbuf = NULL;
 	t_st = MPI_Wtime();
-	progress_recv_queue();
-    progress_send_queue();
+	if(!receive_only)
+		progress_recv_queue();
+	progress_send_queue();
 
     for(comp = 0; comp < gl_proc.ncomps; comp++){
-        if( (gl_proc.comps[comp].comm == MPI_COMM_NULL) || (comp == gl_proc.my_comp)){
+        //~ if( (gl_proc.comps[comp].comm == MPI_COMM_NULL)  || (comp == gl_proc.my_comp)){
+        if(gl_proc.comps[comp].comm == MPI_COMM_NULL)
             continue;
-        }
 
         while(1){
             err = MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, gl_proc.comps[comp].comm, &flag, &status);
@@ -2085,36 +2301,42 @@ void progress_comm()
             src = status.MPI_SOURCE;
 			MPI_Get_count(&status, MPI_BYTE, &bufsz);
 			if(bufsz > 0) rbuf = dtf_malloc(bufsz);
-            print_recv_msg(tag, src);
             t_start_comm = MPI_Wtime();
 			err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_proc.comps[comp].comm, &status);
 			gl_proc.stats_info.t_comm += MPI_Wtime() - t_start_comm;
 			CHECK_MPI(err);
+			print_recv_msg(tag, src);
+			if(receive_only){
+				DTF_DBG(VERBOSE_DBG_LEVEL, "buffer msg tag %d from %d for later", tag, src);
+				dtf_msg_t *msg = new_dtf_msg(rbuf, bufsz, src, tag, 0);
+				ENQUEUE_ITEM(msg, gl_proc.comps[comp].in_msg_q);
+				break;
+			}
 			parse_msg(comp, src, tag, rbuf, bufsz, 0);
         }
     }
-    rbuf = NULL;
+    //~ rbuf = NULL;
     //check messages in my component
-    comp = gl_proc.my_comp;
-    while(1){
-            err = MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, gl_proc.comps[comp].comm, &flag, &status);
-            CHECK_MPI(err);
+    //~ comp = gl_proc.my_comp;
+    //~ while(1){
+            //~ err = MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, gl_proc.comps[comp].comm, &flag, &status);
+            //~ CHECK_MPI(err);
 
-            if(!flag){
-                gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
-                break;
-            }         
-			tag = status.MPI_TAG;
-			src = status.MPI_SOURCE;
-			MPI_Get_count(&status, MPI_BYTE, &bufsz);
-			if(bufsz > 0) rbuf = dtf_malloc(bufsz);
-            print_recv_msg(tag, src);
-            t_start_comm = MPI_Wtime();
-			err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_proc.comps[comp].comm, &status);
-			gl_proc.stats_info.t_comm += MPI_Wtime() - t_start_comm;
-			CHECK_MPI(err);
-			parse_msg(comp, src, tag, rbuf, bufsz, 0);
-	}
+            //~ if(!flag){
+                //~ gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
+                //~ break;
+            //~ }         
+			//~ tag = status.MPI_TAG;
+			//~ src = status.MPI_SOURCE;
+			//~ MPI_Get_count(&status, MPI_BYTE, &bufsz);
+			//~ if(bufsz > 0) rbuf = dtf_malloc(bufsz);
+            //~ print_recv_msg(tag, src);
+            //~ t_start_comm = MPI_Wtime();
+			//~ err = MPI_Recv(rbuf, bufsz, MPI_BYTE, src, tag, gl_proc.comps[comp].comm, &status);
+			//~ gl_proc.stats_info.t_comm += MPI_Wtime() - t_start_comm;
+			//~ CHECK_MPI(err);
+			//~ parse_msg(comp, src, tag, rbuf, bufsz, 0);
+	//~ }
     gl_proc.stats_info.t_progr_comm += MPI_Wtime() - t_st;
 }
 

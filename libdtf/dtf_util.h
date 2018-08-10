@@ -91,6 +91,7 @@ typedef struct dtf_config{
     int         distr_mode;
     int         buffer_data;    /*Should we buffer the data if request matching is enabled?*/
     int         data_msg_size_limit;
+    int         use_msg_buffer;
     int         do_checksum;
     MPI_Offset  iodb_range;  		  /*the size of the data block in the first dimension*/
     int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
@@ -104,22 +105,15 @@ typedef struct stats{
     double          accum_dbuff_time;
     size_t          accum_dbuff_sz;
     double          t_comm;
-    double          t_hdr;
-    double          parse_ioreq_time;
     size_t          data_msg_sz;      /*Accumulated size of messages */
     double          idle_time;
     double          idle_do_match_time;
     double          t_progr_comm;
     double          t_do_match;
-    double          t_rw_var;
-    double          master_time;  /*measure accum time for master-related work*/
-    int             ndb_match;       /*How many times I/O req matching was performed*/  
+    double          master_time;  /*measure accum time for master-related work*/ 
     size_t          malloc_size;
-    unsigned long   nprogress_call;
     unsigned long   nioreqs;
     unsigned long   iodb_nioreqs;   /*number of blocks in iodb for matching*/
-    unsigned        nbl;    /*number of blocks transfered*/
-    unsigned        ngetputcall;  /*how many times had to use a subblock extraction function*/
     double          timer_start;   
     double          timer_accum;
     double          user_timer_start;
@@ -128,8 +122,6 @@ typedef struct stats{
     
     double          transfer_time;  /*data transfer time=I/O calls+dtf_transfer */
     double          dtf_time;       /*Total time spent inside DTF*/
-    double          t_mtch_hist;
-    double          t_mtch_rest;
     double          t_idle;        /*used to figure out when program aborted*/
 } stats_t;
 

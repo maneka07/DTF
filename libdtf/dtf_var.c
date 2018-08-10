@@ -162,7 +162,6 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
     int i;
     int def_el_sz, req_el_sz;
     MPI_Offset nelems;
-    double t_start = MPI_Wtime();
     dtype_params_t *derived_params = NULL;
 
     dtf_var_t *var = fbuf->vars[varid];
@@ -248,7 +247,6 @@ MPI_Offset read_write_var(struct file_buffer *fbuf,
     ret = nelems*req_el_sz;
     
    // dtf_log_ioreq(fbuf->file_path, varid, var->ndims, start, count, dtype, buf, rw_flag);	                         	
-    gl_proc.stats_info.t_rw_var += MPI_Wtime() - t_start;
     return ret;
 }
 

@@ -36,7 +36,6 @@ _EXTERN_C_ void dtf_write_hdr(const char *filename, MPI_Offset hdr_sz, void *hea
     }
 
     write_hdr(fbuf, hdr_sz, header);
-    gl_proc.stats_info.t_hdr += MPI_Wtime() - t_start;
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
@@ -52,7 +51,6 @@ _EXTERN_C_ MPI_Offset dtf_read_hdr_chunk(const char *filename, MPI_Offset offset
     if(fbuf->iomode != DTF_IO_MODE_MEMORY) return 0;
 	
     ret = read_hdr_chunk(fbuf, offset, chunk_sz, chunk);
-    gl_proc.stats_info.t_hdr += MPI_Wtime() - t_start;
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
     return ret;
 }
@@ -126,20 +124,10 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s is %d", filename, fbuf->root_writer);
 
-    if(gl_proc.myrank == fbuf->root_writer && !gl_proc.conf.sclltkf_flag){
-		int i;
+    if(gl_proc.myrank == fbuf->root_writer && fbuf->cpl_mst_info->nmasters == 0){
 		FILE *rootf;
-		char *glob = getenv("DTF_GLOBAL_PATH");
-		assert(glob != NULL);
-		char outfname[MAX_FILE_NAME*2];
-		char fname[MAX_FILE_NAME];
-		strcpy(fname, filename);
-		for(i = 0; i <strlen(filename); i++)
-			if(fname[i]=='/' || fname[i]=='\\')
-				fname[i]='_';
-		strcpy(outfname, glob);
-		strcat(outfname, "/");
-		strcat(outfname, fname);
+		char outfname[MAX_FILE_NAME+5];
+		strcpy(outfname, filename);
 		strcat(outfname, ".root");
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Will write root to file %s", outfname);
 		//we assume that there are no race conditions
@@ -156,7 +144,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
     
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d)", gl_proc.comps[fbuf->writer_id].name, fbuf->root_writer, gl_proc.comps[fbuf->reader_id].name, fbuf->root_reader);	
 
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "Exit create");
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Exit create");
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
@@ -197,7 +185,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
     
     fbuf->is_transferring = 0;  //reset
 
-	progress_comm();
+	progress_comm(0);
 
     MPI_Comm_size(comm, &nranks);
 
@@ -226,7 +214,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	 if(fbuf->fready_notify_flag == RDR_NOTIF_POSTED){
 		assert(fbuf->root_writer == gl_proc.myrank);
 		while(fbuf->fready_notify_flag != RDR_NOTIFIED)
-			progress_comm();
+			progress_comm(0);
 		//reset
 		fbuf->fready_notify_flag = DTF_UNDEFINED;
 	 }	   
@@ -303,7 +291,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 
 	open_file(fbuf, comm);
     
-    DTF_DBG(VERBOSE_ERROR_LEVEL,"Exit open");
+    DTF_DBG(VERBOSE_DBG_LEVEL,"Exit open");
 }
 
 _EXTERN_C_ void dtf_enddef(const char *filename)
@@ -314,7 +302,7 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     file_buffer_t *fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
     if(fbuf == NULL) return;
     fbuf->is_defined = 1;
-    progress_comm();
+    progress_comm(0);
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
@@ -329,7 +317,7 @@ _EXTERN_C_ void dtf_set_ncid(const char *filename, int ncid)
         return;
     }
     
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "Set ncid of file %s to %d (previos value %d)", filename, ncid, fbuf->ncid);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Set ncid of file %s to %d (previos value %d)", filename, ncid, fbuf->ncid);
     fbuf->ncid = ncid;
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
@@ -357,7 +345,7 @@ _EXTERN_C_ void dtf_close(const char* filename)
     
 	gl_proc.stats_info.t_idle = MPI_Wtime();
 		
-	progress_comm();
+	progress_comm(0);
 
 	if(fbuf->ioreq_log != NULL){ // && strstr(fbuf->file_path, "anal")!=NULL){
 		double check;
@@ -528,7 +516,7 @@ _EXTERN_C_ int dtf_io_mode(const char* filename)
     if(pat == NULL){
         return DTF_UNDEFINED;
     }
-    
+    progress_comm(1);
     return pat->iomode;
 }
 

@@ -80,7 +80,7 @@ io_req_t *new_ioreq(int id,
                     int buffered);
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
 void delete_ioreqs(file_buffer_t *fbuf);
-void progress_comm();
+void progress_comm(int receive_only);
 int  match_ioreqs(file_buffer_t *fbuf);
 void match_ioreqs_all_files();
 void send_file_info(file_buffer_t *fbuf, int reader_root);
@@ -92,7 +92,8 @@ void log_ioreq(file_buffer_t *fbuf,
 			  MPI_Datatype dtype,
 			  void *buf,
 			  int rw_flag);
-void send_data(file_buffer_t *fbuf, void* buf, int bufsz);
+void send_data_blocking(file_buffer_t *fbuf, void* buf, int bufsz);
+void send_data_nonblocking(file_buffer_t *fbuf, void* buf, int bufsz);
 int  parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued);
 void send_ioreqs_by_block(file_buffer_t *fbuf);
 void send_ioreqs_by_var(file_buffer_t *fbuf);

@@ -104,15 +104,18 @@ void replay_io_pat(fname_pattern_t *pat, char *filename, int epoch)
 		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: trying to replay I/O for epoch %d but I/O pattern for this epoch hasn't been recorded yet", epoch);
 		assert(0);
 	}
-	
+	fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
+	if(fbuf == NULL)
+		assert(0); 
 	rpat = iopat->rank_pats;
 	while(rpat != NULL){
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Replay data for file %s for rank %d", filename, rpat->rank);
-		fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
-		if(fbuf == NULL)
-			assert(0); 
-		
-		send_data(fbuf, (unsigned char*)(rpat->data), rpat->datasz);
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Replay data for for rank %d", rpat->rank);
+		if(gl_proc.conf.use_msg_buffer)
+			send_data_blocking(fbuf, (unsigned char*)(rpat->data), rpat->datasz);
+		else
+			send_data_nonblocking(fbuf, (unsigned char*)(rpat->data), rpat->datasz);
 		rpat = rpat->next;
 	}
+	while(gl_proc.comps[fbuf->reader_id].out_msg_q != NULL)
+		progress_send_queue();
 } 

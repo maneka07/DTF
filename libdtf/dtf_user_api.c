@@ -33,7 +33,6 @@ struct dtf_proc gl_proc;
  */
 _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 {
-  //  char* conf_filepath;
     int err, mpi_initialized;
     char* s;
     int verbose;
@@ -68,19 +67,13 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_proc.stats_info.data_msg_sz = 0;
     gl_proc.stats_info.ndata_msg_sent = 0;
     gl_proc.stats_info.transfer_time = 0;
-    gl_proc.stats_info.ndb_match = 0;
     gl_proc.walltime = MPI_Wtime();
     gl_proc.stats_info.t_comm = 0;
-    gl_proc.stats_info.t_hdr = 0;
-    gl_proc.stats_info.nprogress_call = 0;
     gl_proc.stats_info.nioreqs = 0;
-    gl_proc.stats_info.nbl = 0;
-    gl_proc.stats_info.ngetputcall = 0;
     gl_proc.stats_info.timer_accum = 0;
     gl_proc.stats_info.timer_start = 0;
     gl_proc.stats_info.accum_dbuff_sz = 0;
     gl_proc.stats_info.accum_dbuff_time = 0;
-    gl_proc.stats_info.t_rw_var = 0;
     gl_proc.stats_info.t_progr_comm = 0;
     gl_proc.stats_info.t_do_match = 0;
     gl_proc.stats_info.nfiles = 0;
@@ -88,9 +81,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_proc.stats_info.idle_do_match_time = 0;
     gl_proc.stats_info.master_time = 0;
     gl_proc.stats_info.iodb_nioreqs = 0;
-    gl_proc.stats_info.parse_ioreq_time = 0;
-    gl_proc.stats_info.t_mtch_hist = 0;
-    gl_proc.stats_info.t_mtch_rest = 0;
 	gl_proc.stats_info.dtf_time = 0;
 	gl_proc.stats_info.t_idle = MPI_Wtime();
 	gl_proc.msgbuf = NULL;
@@ -129,7 +119,13 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     if(s == NULL)
         gl_proc.conf.data_msg_size_limit = DTF_DATA_MSG_SIZE_LIMIT;
     else
-        gl_proc.conf.data_msg_size_limit = atoi(s) * 1024;
+        gl_proc.conf.data_msg_size_limit = atoi(s) * 1024;      
+    
+	s = getenv("DTF_USE_MSG_BUFFER");
+    if(s == NULL)
+		gl_proc.conf.use_msg_buffer = 0;
+	else 
+		gl_proc.conf.use_msg_buffer = atoi(s);
     
 	s = getenv("DTF_IODB_RANGE");
     if(s == NULL)
@@ -157,8 +153,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_verbose = verbose;
         
     create_tmp_file();
-
-    DTF_DBG(VERBOSE_DBG_LEVEL,   "DTF: Finished initializing");
+	
+	if(gl_proc.myrank==0)
 	DTF_DBG(VERBOSE_ERROR_LEVEL, "Time to init DTF %.3f",  MPI_Wtime() - t_start);
 
     return 0;
@@ -230,7 +226,7 @@ _EXTERN_C_ int dtf_finalize()
 			continue;
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Finalize message queue for comp %s", gl_proc.comps[comp].name);
 		while(gl_proc.comps[comp].out_msg_q != NULL)
-			progress_comm();	
+			progress_comm(0);	
 	}
 	
 	gl_proc.comps[gl_proc.my_comp].finalized = 1;
@@ -266,10 +262,6 @@ _EXTERN_C_ int dtf_finalize()
  * NOTE: The user cannot call dtf_transfer_start or dtf_transfer for the 
  * same file if there is already an active data transfer
  * */
-//_EXTERN_C_ int dtf_transfer_start(const char *filename)
-//{
-	
-//}
 
 /*
  * Process will block until all active data transfers are completed.
@@ -428,8 +420,6 @@ _EXTERN_C_ void dtf_time_start()
   
     gl_proc.stats_info.user_timer_start = MPI_Wtime();
     DTF_DBG(VERBOSE_ERROR_LEVEL, "user_time start");
-    
-    
 }
 
 _EXTERN_C_ void dtf_time_end()

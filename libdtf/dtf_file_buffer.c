@@ -472,12 +472,12 @@ void finalize_files()
 
 			//~ if(fbuf->writer_id == gl_proc.my_comp && fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
 				//~ while(fbuf->root_reader == -1)
-					//~ progress_comm();
+					//~ progress_comm(0);
 				//~ notify_file_ready(fbuf);
 			//~ }
 			if(fbuf->writer_id == gl_proc.my_comp && fbuf->fready_notify_flag == DTF_UNDEFINED)
 				while(fbuf->fready_notify_flag != RDR_NOTIFIED)
-					progress_comm();
+					progress_comm(0);
 			 
 		} 
 		file_cnt++;
@@ -582,11 +582,11 @@ void close_file(file_buffer_t *fbuf)
 
         if(fbuf->iomode == DTF_IO_MODE_FILE) {
 			//Check for any incoming messages
-			progress_comm();
+			progress_comm(0);
             if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
 				assert(fbuf->root_writer == gl_proc.myrank);
 				while(fbuf->root_reader == -1)
-					progress_comm();
+					progress_comm(0);
 				notify_file_ready(fbuf);
 			}
 		} 
@@ -624,7 +624,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 				 then it will broadcast that the file is ready to everyone else*/
 
 				while(!fbuf->is_ready)
-					progress_comm();
+					progress_comm(0);
 			}
 			MPI_Barrier(comm);
             fbuf->is_ready = 1;			

@@ -364,7 +364,8 @@ static int parse_config(const char *ini_name, const char *comp_name){
             else if(strcmp(value, "transfer") == 0){
 
                 cur_fpat->iomode = DTF_IO_MODE_MEMORY;
-                    
+                if(gl_proc.conf.use_msg_buffer && gl_proc.msgbuf == NULL)
+					gl_proc.msgbuf = dtf_malloc(gl_proc.conf.data_msg_size_limit);
             } else {
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error parsing config file: unknown I/O mode: %s.", value);
 				goto panic_exit;
@@ -577,6 +578,8 @@ void unpack_config(void *buf,const char* comp_name)
 		offt+=sizeof(int);
 		pat->iomode = *(int*)(chbuf+offt);
 		offt+=sizeof(int);
+		if(pat->iomode == DTF_IO_MODE_MEMORY && gl_proc.conf.use_msg_buffer && gl_proc.msgbuf == NULL)
+			gl_proc.msgbuf = dtf_malloc(gl_proc.conf.data_msg_size_limit);
 		pat->num_sessions = *(int*)(chbuf+offt);
 		offt+=sizeof(int);
 		pat->write_only = *(int*)(chbuf+offt);
