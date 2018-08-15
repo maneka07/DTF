@@ -133,6 +133,10 @@ void print_stats()
 
     dblint_t dblint_in, dblint_out;
 
+	char *s = getenv("DTF_PRINT_STATS");
+	if(s == NULL) return;
+	else if(!atoi(s)) return;
+
     walltime = MPI_Wtime() - gl_proc.walltime;
     MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &nranks);
 

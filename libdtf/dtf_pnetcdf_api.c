@@ -83,7 +83,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Created file %s. File is not treated by DTF", filename);
         return;
     } else {
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "Creating file %s", filename);
+        DTF_DBG(VERBOSE_DBG_LEVEL, "Creating file %s", filename);
     }
 	
     fbuf->comm = comm;
@@ -162,7 +162,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	fname_pattern_t *pat = NULL;
 	
     if(!lib_initialized) return;
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "Opening file %s", filename);
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Opening file %s", filename);
     
 	gl_proc.stats_info.t_idle = MPI_Wtime();
 
@@ -385,7 +385,8 @@ _EXTERN_C_ void dtf_close(const char* filename)
 	if(fbuf->session_cnt == pat->num_sessions){
 		if( (fbuf->iomode == DTF_IO_MODE_MEMORY && !fbuf->is_transferring) || 
 			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_proc.myrank && fbuf->fready_notify_flag == RDR_NOTIFIED) ||
-			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer != gl_proc.myrank))
+			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer != gl_proc.myrank) || 
+			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->reader_id == gl_proc.my_comp))
 			delete_file_buffer(fbuf);
 	}
 

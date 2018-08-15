@@ -1,0 +1,69 @@
+*** DESCRIPTION ***
+
+This is a simple example that demonstrates the use of the DTF using 
+the PnetCDF-based implementation of the S3D-IO benchmark
+ (http://cucis.ece.northwestern.edu/projects/PnetCDF/)  developed 
+by the Northwestern University and the Sandia National Laboratory. 
+
+S3D-IO is the I/O kernel of the S3D combustion simulation code developed
+ at Sandia National Laboratory. In the benchmark, a checkpoint file is 
+written at regular intervals. If the restart file (a checkpoint file from 
+a previous execution) is available, then in the beginning of the 
+execution, processes read the restart file. 
+
+The checkpoint consists of four variables: 
+Two three-dimensional and two four-dimensional, representing mass, 
+velocity, pressure, and temperature. All four variables share the 
+lowest three spatial dimensions X, Y and Z which are partitioned among 
+the processes in block fashion. The value of the fourth dimension is fixed.
+
+We imitate a multi-component execution by running concurrently
+two instances of the S3D-IO benchmark. Processes of the first instance 
+write to a shared file, processes in the second instance read from it.
+The original benchmark was slightly modified for the purpose of 
+demonstrating the work of the DTF: Instead of reading the restart file and 
+then writing multiple checkpoints, one instance of S3D-IO writes the checkpoints 
+and another instance continuously reads them.
+
+See the README file of the S3D-IO code for more information on the benchmark 
+parameters and how to run it. 
+
+*** DIRECTORY OVERVIEW ***
+
+./writer - source code of the S3D-IO instance that continuously writes 
+           a number of checkpoints
+./reader -  source code of the S3D-IO instance that continuously reads 
+           the checkpoint files
+dtf.ini  - DTF configuration file used by both instances
+run.sh   - script to run the test
+
+***  TO COMPILE ***
+
+First, compile the DTF framework (../libdtf directory), then compile and 
+install the modified PnetCDF library (../pnetcdf directory). 
+Specify PNETCDF_DIR and DTF_DIR in the Makefile of the writer and 
+reader instances and compile them. 
+
+***  TO RUN ***
+
+Set the DTF_DIR in the run.sh and execute the script.  
+See the README file of the DTF library for more detail on the DTF 
+configuration file and environment variables. 
+
+*** NOTES ***
+
+- To enable the data transfer between the two instances of S3D-IO 
+subroutines main (main.f90), write_savefile() and read_savefile() 
+(io.f90) were modified: Calling of dtf_init, dtf_finalize was added to 
+the main subroutine; dtf_transfer was added to the write and read routines
+of the respective reader and writer components. 
+
+- The checkpoint file name consist of the constant part ("pressure_wave_test") 
+and the time stamp that changes with every iteration. In the dtf.ini file 
+we specified only the constant part of the file name in the [FILE] section 
+in order for the DTF to detect that any file whose name constains this string
+should be transferred. 
+
+
+
+

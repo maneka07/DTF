@@ -1,6 +1,4 @@
-******************** General I/O Arbitration Middleware ******************
 
-TODO: general description of what the middleware does
 
 
 ******************* BASIC USAGE *************************
@@ -37,15 +35,15 @@ TODO: general description of what the middleware does
 	2 - extended debug information 
 
 *** DTF_SCALE - special flag for SCALE-LETKF, should be set to 1 for SCALE-LETKF executions (default 0)
-*** SCALE_ENSEMBLE_SZ - number of processes in one ensemble in SCALE-LETKF. Should be set to 
-    corresponding number in order to exclude the last ensemble (mean) from calculating the timing statistics.
-*** DTF_IGNORE_ITER - used in combination with dtf_transfer_v2(). If set, any transfer function 
-    for iterations up this iteration will be ignored. Used in SCALE-LETKF. 
 *** DTF_INI_FILE - if this is set, the value will overrride the path to the ini file passed in dtf_init()
 
 *** MAX_WORKGROUP_SIZE - number of processes I/O requests from which are handled by one master 
     (i.e. number of masters in the execution = number of processes per component / MAX_WORKGROUP_SIZE) (default 64)
     Try different number of masters for reasonable performance.
+*** DTF_PRINT_STATS
+*** DTF_USE_MSG_BUFFER
+*** DTF_DATA_MSG_SIZE_LIMIT
+*** DTF_IODB_RANGE
 
 ******************** USER API *****************************
 
@@ -81,7 +79,6 @@ NOTE:
         call dtf_finalize(error)	
 
 *** int dtf_transfer(const char *filename, int ncid)
-    int dtf_transfer_v2(const char *filename, int ncid, int it )
     int dtf_transfer_complete_all()
 
 DESCRIPTION: 
@@ -158,10 +155,3 @@ DESCRIPTION:
 	If used multiple times during the execution, the accumulative time will 
 	be printed in the end. 
 
-
-
-
-
-
-
-                         

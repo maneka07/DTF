@@ -1,0 +1,22 @@
+******************** DESCRIPTION ******************
+
+DTF (Data Transfer Framework) is a general I/O arbitration middleware
+designed for multi-component applications that use file-base component
+coupling. DTF works for applications that use the Parallel netCDF 
+(PnetCDF) library for file I/O. It allows the user to transparently 
+replace file I/O with sending the data directly between the components.
+
+There is no need to modify the original PnetCDF calls, however, the user 
+needs to add a few DTF API calls to the source code of each of the 
+coupled components as well as provide a simple configuration file to the DTF.
+  
+Additionally, DTF only works with the modified version of PnetCDF-1.7.0
+ that is provided as part of this distribution. 
+ 
+
+
+
+
+
+
+                         

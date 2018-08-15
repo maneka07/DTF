@@ -155,12 +155,12 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     create_tmp_file();
 	
 	if(gl_proc.myrank==0)
-	DTF_DBG(VERBOSE_ERROR_LEVEL, "Time to init DTF %.3f",  MPI_Wtime() - t_start);
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Time to init DTF %.3f",  MPI_Wtime() - t_start);
 
     return 0;
 
 panic_exit:
-	DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Error: failed to initialize the framework. Aborting..");
+	DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Error: failed to initialize the framework. Aborting..");
     dtf_finalize();
     MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     return 1;
@@ -187,7 +187,7 @@ _EXTERN_C_ int dtf_finalize()
         exit(1);
     }
 
-	DTF_DBG(VERBOSE_ERROR_LEVEL,"time_stamp DTF: finalize");
+	DTF_DBG(VERBOSE_DBG_LEVEL,"time_stamp DTF: finalize");
 	MPI_Barrier(gl_proc.comps[gl_proc.my_comp].comm);
 	
 	progress_send_queue();
@@ -252,20 +252,11 @@ _EXTERN_C_ int dtf_finalize()
     return 0;
 }
 
-/*
- * Start non-blocking data transfer. Processes will try to progress
- * with data transfer as much as they can but if there is no more work 
- * to do at the moment, the process will simply return. 
- * The user needs to eventually call dtf_transfer_complete or 
- * dtf_transfer_complete_all to ensure the completion of the data tranfer.
- * 
- * NOTE: The user cannot call dtf_transfer_start or dtf_transfer for the 
- * same file if there is already an active data transfer
- * */
 
 /*
  * Process will block until all active data transfers are completed.
  * */
+ //TODO is this still working?
 _EXTERN_C_ int dtf_transfer_all_files()
 {
 	double t_start;
@@ -281,6 +272,7 @@ _EXTERN_C_ int dtf_transfer_all_files()
 	return 0;
 }
 
+//TODO add dtf_start_transfer and dtf_end_transfer
 
 /*called by user to do explicit matching*/
 /*
