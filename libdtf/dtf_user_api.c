@@ -127,7 +127,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 	else 
 		gl_proc.conf.use_msg_buffer = atoi(s);
     
-	s = getenv("DTF_IODB_RANGE");
+	s = getenv("DTF_VAR_BLOCK_RANGE");
     if(s == NULL)
         gl_proc.conf.iodb_range = 0;
     else

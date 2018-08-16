@@ -65,7 +65,7 @@
     send the data. This parameter is used in combination with 
     DTF_USE_MSG_BUFFER.
     
-*** DTF_IODB_RANGE (default 0) - if set to a value > 0 then it defines 
+*** DTF_VAR_BLOCK_RANGE (default 0) - if set to a value > 0 then it defines 
     the size of the block of data array in the slowest changing dimension 
     for which one I/O matcher arbitrates data transfer. By default, the 
     size of the data array in the slowest dimension is divided among 
@@ -123,7 +123,8 @@ DESCRIPTION:
 	Writer may write more data than the reader reads, only the requested 
 	data is transferred. 
 	The user should not modify or use the buffers used for holding data
-	until the dtf_transfer is completed.
+	until the dtf_transfer is completed. Write I/O buffers may be reused 
+	if buffer_data setting is enabled in the DTF configuration file.
 	 
     While dtf_transfer may be envoked any number of times, for performance 
     reasons it is recommended to call it as few times as possible.    
