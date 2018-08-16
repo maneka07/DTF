@@ -19,10 +19,9 @@
 
 #define DTF_UNLIMITED  0L  /*Unlimited dimension*/
 
-/*User API*/
+/*		User API		*/
 _EXTERN_C_ int dtf_init(const char *filename, char *module_name);
 _EXTERN_C_ int dtf_finalize();
-_EXTERN_C_ void dtf_print(const char *str, int verbose);
 _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid);
 _EXTERN_C_ void dtf_transfer_multiple(const char *filename, int ncid);
 _EXTERN_C_ void dtf_tstart();
@@ -41,12 +40,8 @@ void dtf_finalize_(int* ierr);
 void dtf_transfer_(const char *filename, int *ncid, int *ierr);
 void dtf_transfer_all_files_();
 void dtf_transfer_multiple_(const char *filename, int *ncid);
-void dtf_complete_multiple_(const char *filename, int *ncid);
-void dtf_print_(const char *str, int *verbose);
-void dtf_print_data_(int *varid, int *dtype, int *ndims, MPI_Offset* count, void* data);
 
-
-/*Interfaces used by PnetCDF*/
+/*		Interfaces used by PnetCDF		*/
 _EXTERN_C_ void dtf_open(const char* filename, int omode, MPI_Comm comm);
 _EXTERN_C_ void dtf_close(const char* filename);
 _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm);

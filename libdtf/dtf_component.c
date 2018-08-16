@@ -149,7 +149,6 @@ static void destroy_intercomm(int comp_id){
     if(gl_proc.myrank == 0 && mode == CONNECT_MODE_SERVER){
 
         global_path = getenv("DTF_GLOBAL_PATH");
-        assert(global_path!=NULL);
         strcpy(portfile_name, global_path);
         strcat(portfile_name, "/port_");
 

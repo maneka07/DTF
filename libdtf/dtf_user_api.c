@@ -129,7 +129,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     
 	s = getenv("DTF_IODB_RANGE");
     if(s == NULL)
-        gl_proc.conf.iodb_range = -1;
+        gl_proc.conf.iodb_range = 0;
     else
         gl_proc.conf.iodb_range = (MPI_Offset)atoi(s);
         
@@ -315,7 +315,7 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
 }
 
 /*Supposed to be called by the writer process.
-  Used to match against several dtf_match_io functions on the reader side*/
+  Used to match against several dtf_transfer functions on the reader side*/
 _EXTERN_C_ void dtf_transfer_multiple(const char* filename, int ncid)
 {
     if(!lib_initialized) return;
@@ -398,13 +398,6 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
-_EXTERN_C_ void dtf_print(const char *str, int verbose)
-{
-    if(!lib_initialized) return;
-    DTF_DBG(verbose, "%s", str);
-}
-
-
 /*User controled timers*/
 _EXTERN_C_ void dtf_time_start()
 {
@@ -467,9 +460,3 @@ void dtf_complete_multiple_(const char *filename, int *ncid)
 {
     dtf_complete_multiple(filename, *ncid);
 }
-
-void dtf_print_(const char *str, int *verbose)
-{
-    dtf_print(str, *verbose);
-}
-

@@ -1,10 +1,8 @@
-
-
-
 ******************* BASIC USAGE *************************
 
-1) Add path to the provided (modified) version of PnetCDF and the DTF library
-   when compiling/linking the library. DTF library is linked as: -L$(PATH_TO_DTF) -ldtf.
+1) Link the application with the modified version of PnetCDF provided in 
+   this distribution and the DTF library. DTF library is linked as: 
+   -L$(PATH_TO_DTF) -ldtf.
 
 * C users:
    #include "dtf.h" 
@@ -13,62 +11,91 @@
 
   external dtf_init
 
-
-2) Modify each component: 
+2) Create DTF configuration file that describes the components and list 
+   files that create dependency, i.e. components are coupled via these 
+   files. See README.config for more detail.  
+   
+3) Modify each component: 
    - Include "dtf.h" 
-   - Add dtf_init() and dtf_finalize() (see description in the API description section) in each component. 
-   - add any of the transfer functions in corresponding place in each component
-
-3) Before run set set global variable DTF_GLOBAL_PATH to some path accessible by all processes in all components:
+   - Add dtf_init() and dtf_finalize() (see description in the API 
+     description section) in each component. 
+   - For each file that needs to be transferred add any of the transfer functions 
+     in corresponding place in each component.
+     
+3) Set any necessary environment variables before run. The only compulsory 
+   variable to set is DTF_GLOBAL_PATH.
 
 	e.g.:  export DTF_GLOBAL_PATH=/some/path/in/PFS
 
-******************* ENVIROMENT VARIABLES *************************
+******************* ENVIRONMENT VARIABLES *************************
 
-*** DTF_GLOBAL_PATH - should be set to a directory visible to all processes. 
-    Used to establish connection via a port between the components.
-*** DTF_VERBOSE_LEVEL: how much information to print out (default 0). 
-
+*** DTF_GLOBAL_PATH - should be set to a directory accessible by processes
+    in all components. 
+    
+*** MAX_WORKGROUP_SIZE (default 64) - Number of processes for which one 
+	process (I/O matcher) among the compute processes will be assigned 
+	to arbitrate the data transfer. Total number of matchers in one 
+	component = number of processes in component / MAX_WORKGROUP_SIZE).
+	This setting directly impacts performance and the user advised to try
+	different values and choose the one that rendered best performance.
+	
+*** DTF_VERBOSE_LEVEL (default 0) - how much information to print out . 
 	Possible values:
 	0 - only errors and warnings
 	1 - debug information
 	2 - extended debug information 
 
-*** DTF_SCALE - special flag for SCALE-LETKF, should be set to 1 for SCALE-LETKF executions (default 0)
-*** DTF_INI_FILE - if this is set, the value will overrride the path to the ini file passed in dtf_init()
+*** DTF_SCALE (default 0) - special flag for SCALE-LETKF, should be set to 1 for 
+    SCALE-LETKF executions 
+    
+*** DTF_INI_FILE - if set, the value will overrride the path 
+    to the ini file passed in dtf_init()
 
-*** MAX_WORKGROUP_SIZE - number of processes I/O requests from which are handled by one master 
-    (i.e. number of masters in the execution = number of processes per component / MAX_WORKGROUP_SIZE) (default 64)
-    Try different number of masters for reasonable performance.
-*** DTF_PRINT_STATS
-*** DTF_USE_MSG_BUFFER
-*** DTF_DATA_MSG_SIZE_LIMIT
-*** DTF_IODB_RANGE
+*** DTF_PRINT_STATS (default 0) - if set, DTF will collect and print out 
+    some execution statistics related to DTF.
+    
+*** DTF_USE_MSG_BUFFER (default 0) - if set, DTF will use one preallocated 
+    buffer of size DTF_DATA_MSG_SIZE_LIMIT to transfer data. I.e. writer 
+    process will be transferring data only to one reader process at a time. 
+    If this parameter is disabled, writer process will send data to 
+    all processes that require it in parallel, i.e. more memory might be 
+    used. 
+    
+*** DTF_DATA_MSG_SIZE_LIMIT (default 64 MB) - size of the buffer used to 
+    send the data. This parameter is used in combination with 
+    DTF_USE_MSG_BUFFER.
+    
+*** DTF_IODB_RANGE (default 0) - if set to a value > 0 then it defines 
+    the size of the block of data array in the slowest changing dimension 
+    for which one I/O matcher arbitrates data transfer. By default, the 
+    size of the data array in the slowest dimension is divided among 
+    I/O mathers  and each matchers is responsible for its own subblock.
 
 ******************** USER API *****************************
 
-***   int dtf_init(char* filename, char* module_name)
+***   int dtf_init(const char* filename, char* module_name)
 
 DESCRIPTION: 
 	Library initialization function. 
 	Every component should call this function. 
-        Init function should be called after MPI_Init. 
+    Init function should be called after MPI_Init. 
 
 PARAMETERS:
 	[in] filename - path to the DTF configuration file
 	[in] module_name - name of the component calling the function. 
-             This name should be listed in the configuration file.              
+         This name must be listed in the configuration file in 
+         the [INFO] section.              
 RETURN: 
 	0 - successfully initialized, otherwise 1
 
 NOTE:
 	Fortran API has an additional parameter error (integer):
-        call dtf_init('../dtf.ini'//CHAR(0), 'letkf'//CHAR(0), error)	
+    call dtf_init('../dtf.ini'//CHAR(0), 'letkf'//CHAR(0), error)	
 
-***  int dtf_finalize():
+***  int dtf_finalize()
 
 DESCRIPTION:
- 	Library finalization. Should be called before MPI_Finalize().
+ 	Library finalization. Must be called before MPI_Finalize().
 
 PARAMETERS:
 	None
@@ -76,69 +103,124 @@ RETURN:
 	0 - successfully initialized, otherwise 1
 NOTE: 
 	Fortran API has an additional parameter error (integer):
-        call dtf_finalize(error)	
+    call dtf_finalize(error)	
 
 *** int dtf_transfer(const char *filename, int ncid)
-    int dtf_transfer_complete_all()
-
+    
 DESCRIPTION: 
 
-	Data transfer functions. Should be called in each component participating in 
-        the data transfer. For performance reasons it is recommended to call this 
-        function as few times as possible, ideally, one time per file right after the 
-        PnetCDF I/O calls but before the file is closed. All functions will block until 
-	the data transfer is complete. 
-
-NOTES 
-	* dtf_transfer() and dtf_transfer_v2():
-	In case, several files are 
-        transfered between the components, the order in which the transfer functions 
-        are called should be the same in both components. I.e., if component 1 first 
-	calls the transfer function for file A and then, file B, component 2 should call
-	the transfer function in the same order. 
-	dtf_transfer_v2() is used in combination with DTF_IGNORE_ITER. Any transfer functions 
-	for iterations up to the iteration set via DTF_IGNORE_ITER will be ignored (Used
-	in SCALE-LETKF).
-	* dtf_transfer_complete_all()
-	completes all active transfers for all files. May be used instead of calling dtf_transfer
-	for each file separately. 
-
-PARAMETERS:
-	[IN] filename - name of the file for which the data transfer should be performed. 
-	     File must be listed in the DTF configuration file.
-	[IN] ncid - file ncid. Not necessary, -1 may be passed. 
-	[IN] it - current iteration
+	Data transfer function. Should be called by both components 
+	participating in the data transfer of a given file.  	
+	The function must be called after corresponding PnetCDF read or 
+	write calls. Both reader and writer processes block until reader 
+	gets all the data it requested before calling the transfer function, i.e. 
+	all the data for which it had issued PnetCDF read call. Therefore, 
+	the user must ensure that writer does not call transfer function before it 
+	issued write calls for that data. The I/O pattern of the reader and writer
+	components may be different, but it is important to insure that writer 
+	does not start data transfer before it wrote all the data that reader is 
+	going to request in a given data transfer session. 
+	Writer may write more data than the reader reads, only the requested 
+	data is transferred. 
+	The user should not modify or use the buffers used for holding data
+	until the dtf_transfer is completed.
+	 
+    While dtf_transfer may be envoked any number of times, for performance 
+    reasons it is recommended to call it as few times as possible.    
+    Ideally, one time per file right after the PnetCDF I/O calls and 
+	before or after the file is closed. 
 	
-RETURN:
-	Always 0. If an error occurs, the program aborts.
-
-EXAMPLE: For example, if there are two files A and B passed between the 
-	the components the possible combinations of transfer functions are: 
-
-	Component 1:		Component 2:
-	-------------		-----------
-	I/O for file A		I/O for file A
-	dtf_transfer(A)		
-	I/O for file B		I/O for file B
-	dtf_transfer(B)		dtf_transfer_complete_all()
-
-	Component 1:		Component 2:
-	-------------		-----------
-	I/O for file A		I/O for file B
-	dtf_transfer(A)		
-	I/O for file B		I/O for file A
-	dtf_transfer(B)		dtf_transfer_complete_all()
-
-	Component 1:		Component 2:
+	In case, several files are transfered between the components, the 
+	order in which the transfer functions are called should be the same 
+	in both components, otherwise a deadlock will occur: 
+	
+    Component 1:		Component 2:
 	-------------		-----------
 	I/O for file A		I/O for file A
 	dtf_transfer(A)		dtf_transfer(A)
 	I/O for file B		I/O for file B
 	dtf_transfer(B)		dtf_transfer(B)
 
-	(*dtf_transfer_v2 may be used instead of dtf_transfer)
+PARAMETERS:
+	[IN] filename - name of the file for which the data transfer should be performed. 
+	     File must be listed in the DTF configuration file.
+	[IN] ncid - file ncid. Not necessary, -1 may be passed. 
+	
+RETURN:
+	Always 0. If an error occurs, the program aborts.
+NOTE: 
+	Fortran API has an additional parameter error (integer)
+	
+	dtf_transfer(const char *filename, int *ncid, int *ierr);
 
-*** void dtf_print(const char *str)
+
+*** int dtf_transfer_all_files()
+
+DESCRIPTION: 
+	Completes all active transfers for all files for which I/O calls have
+	been issued before this function is called. May be used instead of 
+	calling dtf_transfer for each file separately. However, performance-wise
+	this function is worse because components start data transfer later 
+	than in the case where transfer function is called individually for 
+	each file.	
+	Either only one or both components may call this function. However, 
+    the components must ensure that they invoke a transfer session for 
+    each file.
+    For example, if there are three files A, B and C passed between the 
+	the components possible combinations of transfer calls are: 
+
+	Component 1:		Component 2:
+	-------------		-----------
+	I/O for file A		I/O for file A
+	dtf_transfer(A)		
+	I/O for file B		I/O for file B
+	dtf_transfer(B)		
+	I/O for file C		I/O for file C
+	dtf_transfer(C)	    dtf_transfer_all_files()  !perform transfer 
+	                                              !for all three files 
+	                                              !at once
+	
+	Component 1:		Component 2:   
+	-------------		-----------
+	I/O for file A		I/O for file C   !file I/O order different 
+	dtf_transfer(A)		                 !from component 1.
+	I/O for file B		I/O for file B
+	dtf_transfer(B)		
+	I/O for file C		I/O for file A 
+	dtf_transfer(C)	    dtf_transfer_complete_all()
+
+    Component 1:		Component 2:
+	-------------		-----------
+	I/O for file A		I/O for file A
+	dtf_transfer(A)		dtf_transfer(A)    !transfer file A
+	I/O for file B		I/O for file C
+	dtf_transfer(B)		
+	I/O for file C		I/O for file B
+	dtf_transfer(C)	    dtf_transfer_all_files() !combine transfer for 
+	                                             !files B and C
+PARAMETERS:
+	None.
+	
+RETURN:
+	Always 0.
+
+
+*** void dtf_transfer_multiple(const char *filename, int ncid);
+    void dtf_complete_multiple(const char *filename, int ncid);
+    
+DESCRIPTION:
+    One dtf_transfer_multiple can match against several dtf_transfer 
+    calls in the second component. The second component must eventually call 
+    dtf_complete_multiple to notify the first componetn that it can 
+    complete dtf_transfer_multiple:
+    
+	Component 1:				Component 2:
+	-------------				-----------
+	some I/O calls for A   		I/O for file A
+	dtf_transfer(A)		
+	more I/O calls for A		
+	dtf_transfer(A)				
+	dtf_complete_multiple(A)	dtf_transfer_multiple(A)
 
 DESCRIPTION:
 	Print a message. 
@@ -151,7 +233,8 @@ PARAMETERS:
 
 DESCRIPTION:
 	Timer functions. May be put around whatever code the user wants to time.
-	The value is printed out at the end of the execution. 
-	If used multiple times during the execution, the accumulative time will 
-	be printed in the end. 
+	A message will also be printed out when the function is called so the 
+	user can see the time stamp when this call was executed. 
+	If DTF_PRINT_STATS is set, the accumulative time will 
+	be printed in the end with the statistics. 
 
