@@ -133,13 +133,27 @@ void print_stats()
 
     dblint_t dblint_in, dblint_out;
 
+    walltime = MPI_Wtime() - gl_proc.walltime;
+    MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &nranks);
+    
+   
+    err = MPI_Reduce(&walltime, &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_proc.comps[gl_proc.my_comp].comm);
+    CHECK_MPI(err);
+    if(gl_proc.myrank == 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg walltime: %.4f", dblsum/nranks);
+    
+	err = MPI_Allreduce(&(gl_proc.stats_info.timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_proc.comps[gl_proc.my_comp].comm);
+    CHECK_MPI(err);
+    avglibt = dblsum/nranks;
+    dev = stand_devi(gl_proc.stats_info.timer_accum, dblsum, nranks);
+
+    if(gl_proc.myrank==0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg pnetcdf time: %.5f : %.5f", avglibt, dev);
+    
 	char *s = getenv("DTF_PRINT_STATS");
 	if(s == NULL) return;
 	else if(!atoi(s)) return;
-
-    walltime = MPI_Wtime() - gl_proc.walltime;
-    MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &nranks);
-
+	
     if(gl_proc.stats_info.accum_dbuff_sz > 0){
     //    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering time: %.5f: %.4f", gl_proc.stats_info.accum_dbuff_time,(gl_proc.stats_info.accum_dbuff_time/gl_proc.stats_info.timer_accum)*100);
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: buffering size: %lu",  gl_proc.stats_info.accum_dbuff_sz);
@@ -156,10 +170,7 @@ void print_stats()
     if(gl_proc.stats_info.dtf_time > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: total dtf time: %.4f", gl_proc.stats_info.dtf_time);
 
-	err = MPI_Reduce(&walltime, &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_proc.comps[gl_proc.my_comp].comm);
-    CHECK_MPI(err);
-    if(gl_proc.myrank == 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg walltime: %.4f", dblsum/nranks);
+	
 
 	if(gl_proc.myrank == 0)
 		rb_print_stats();
@@ -168,13 +179,7 @@ void print_stats()
     if(gl_proc.stats_info.iodb_nioreqs > 0 && gl_proc.myrank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: nioreqs in iodb %lu", gl_proc.stats_info.iodb_nioreqs);
 
-    err = MPI_Allreduce(&(gl_proc.stats_info.timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_proc.comps[gl_proc.my_comp].comm);
-    CHECK_MPI(err);
-    avglibt = dblsum/nranks;
-    dev = stand_devi(gl_proc.stats_info.timer_accum, dblsum, nranks);
 
-    if(gl_proc.myrank==0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg pnetcdf time: %.5f : %.5f", avglibt, dev);
 
     err = MPI_Allreduce(&(gl_proc.stats_info.user_timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_proc.comps[gl_proc.my_comp].comm);
     CHECK_MPI(err);

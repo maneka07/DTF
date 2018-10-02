@@ -1,5 +1,11 @@
+/*
+ *  Copyright (C) 2018, RIKEN
+ *  See COPYRIGHT notice in top-level directory.
+ * 
+ * Written by 
+ */
+ 
 #include <unistd.h>
-
 #include "dtf_component.h"
 #include "dtf_util.h"
 #include "dtf.h"

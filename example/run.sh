@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DTF_DIR= #set path to where the DTF library is
+DTF_DIR=$(HOME)/comm_lib/libdtf #set path to where the DTF library is
 PNETCDF_DIR= #set path to the installed PnetCDF library
 
 export LD_LIBRARY_PATH=$DTF_DIR:$PNETCDF_DIR/lib:$LD_LIBRARY_PATH
