@@ -1192,7 +1192,7 @@ int match_ioreqs(file_buffer_t *fbuf)
 	if(replay){
 		
 		while(fbuf->cpl_mst_info->nmasters == 0){
-			progress_comm(0);
+			progress_comm(1);
 			if( ((fbuf->writer_id == gl_proc.my_comp) && gl_proc.comps[fbuf->reader_id].finalized)  ||
 				((fbuf->reader_id == gl_proc.my_comp) && gl_proc.comps[fbuf->writer_id].finalized) ){
 				DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Warning: skipping a data transfer session for file %s as the other component has finalized", fbuf->file_path);
@@ -2268,15 +2268,14 @@ fn_exit:
 	return 0;
 }
 
-void progress_comm(int receive_only)
+void progress_comm(int ignore_idle)
 {
     MPI_Status status;
     int comp, flag, err, bufsz, tag, src;
     double t_st, t_start_comm;
     void *rbuf = NULL;
 	t_st = MPI_Wtime();
-	if(!receive_only)
-		progress_recv_queue();
+	progress_recv_queue();
 	progress_send_queue();
 
     for(comp = 0; comp < gl_proc.ncomps; comp++){
@@ -2290,7 +2289,7 @@ void progress_comm(int receive_only)
 
             if(!flag){
                 gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
-                if(MPI_Wtime() - gl_proc.stats_info.t_idle > DTF_TIMEOUT){
+                if(!gl_proc.conf.ignore_idle && !ignore_idle && (MPI_Wtime() - gl_proc.stats_info.t_idle > gl_proc.conf.timeout)){
 					DTF_DBG(VERBOSE_ERROR_LEVEL, "Process have been idle for %.2f seconds. Consider that it hang and abort execution", MPI_Wtime() - gl_proc.stats_info.t_idle);
 					MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
 				}
@@ -2306,12 +2305,6 @@ void progress_comm(int receive_only)
 			gl_proc.stats_info.t_comm += MPI_Wtime() - t_start_comm;
 			CHECK_MPI(err);
 			print_recv_msg(tag, src);
-			if(receive_only){
-				DTF_DBG(VERBOSE_DBG_LEVEL, "buffer msg tag %d from %d for later", tag, src);
-				dtf_msg_t *msg = new_dtf_msg(rbuf, bufsz, src, tag, 0);
-				ENQUEUE_ITEM(msg, gl_proc.comps[comp].in_msg_q);
-				break;
-			}
 			parse_msg(comp, src, tag, rbuf, bufsz, 0);
         }
     }

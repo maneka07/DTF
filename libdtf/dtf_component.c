@@ -17,7 +17,7 @@ static int create_intercomm(int comp_id, char* global_path){
     FILE* portfile;
     int err, mode, myrank, l1, l2;
     char portfile_name[MAX_FILE_NAME];
-    int wait_timeout;
+	double t_con;
 
     mode = gl_proc.comps[comp_id].connect_mode;
     if(mode == DTF_UNDEFINED) return 0;
@@ -53,29 +53,28 @@ static int create_intercomm(int comp_id, char* global_path){
      strcat(portfile_name, "/port_");
      strcat(portfile_name, service_name);
 
-
+	t_con = MPI_Wtime();
+	
     if(mode == CONNECT_MODE_CLIENT){
         DTF_DBG(VERBOSE_DBG_LEVEL,   "Trying to connect to comp %s. Open portfile %s", gl_proc.comps[comp_id].name, portfile_name);
 
         /*To avoid contention on the PFS only rank 0 will try to get the port to connect to.*/
         if(myrank == 0){
-            wait_timeout = 0;
+            double t_st = MPI_Wtime();
 
             //try to open the file
             sleep(1);
             while((portfile = fopen(portfile_name, "rt")) == NULL){
                 sleep(1);
-                wait_timeout++;
 
-                if(wait_timeout == DTF_TIMEOUT){
+                if(MPI_Wtime() - t_st >= gl_proc.conf.timeout){
                     DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: timed out waiting for port file %s.", portfile_name);
                     return 1;
                 }
             }
 
-            //try to read the file
-            wait_timeout = 0;
-
+			t_st = MPI_Wtime();
+            
             while(1){
                 fgets(portname, MPI_MAX_PORT_NAME, portfile);
                 l1 = strlen(portname);
@@ -83,9 +82,8 @@ static int create_intercomm(int comp_id, char* global_path){
                     break;
 
                 sleep(1);
-                wait_timeout++;
-
-                if(wait_timeout == DTF_TIMEOUT){
+              
+                if(MPI_Wtime() - t_st >= gl_proc.conf.timeout){
                     DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: timed out waiting for port name in %s.", portfile_name);
                     return 1;
                 }
@@ -132,11 +130,12 @@ static int create_intercomm(int comp_id, char* global_path){
         
     }
     MPI_Comm_set_errhandler(gl_proc.comps[comp_id].comm, MPI_ERRORS_RETURN);
-
 	//The two components are roughly synched now. Reset
 	//the start time value
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Took %.3f secs to esablish intercomm", MPI_Wtime() - t_con);
 	gl_proc.walltime = MPI_Wtime();
     DTF_DBG(VERBOSE_DBG_LEVEL, "Intercomm established");
+    
     return 0;
 }
 

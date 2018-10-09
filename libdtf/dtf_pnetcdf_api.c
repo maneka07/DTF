@@ -143,7 +143,6 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
     
     
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d)", gl_proc.comps[fbuf->writer_id].name, fbuf->root_writer, gl_proc.comps[fbuf->reader_id].name, fbuf->root_reader);	
-
     DTF_DBG(VERBOSE_DBG_LEVEL, "Exit create");
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
@@ -185,7 +184,7 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
     
     fbuf->is_transferring = 0;  //reset
 
-	progress_comm(0);
+	progress_comm(1);
 
     MPI_Comm_size(comm, &nranks);
 
@@ -290,7 +289,8 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Writer %s (root %d), reader %s (root %d), omode %d", gl_proc.comps[fbuf->writer_id].name, fbuf->root_writer, gl_proc.comps[fbuf->reader_id].name, fbuf->root_reader, omode);	  
 
 	open_file(fbuf, comm);
-    
+    //reset 
+    gl_proc.stats_info.t_idle = MPI_Wtime();
     DTF_DBG(VERBOSE_DBG_LEVEL,"Exit open");
 }
 
@@ -302,7 +302,7 @@ _EXTERN_C_ void dtf_enddef(const char *filename)
     file_buffer_t *fbuf = find_file_buffer(gl_proc.filebuf_list, filename, -1);
     if(fbuf == NULL) return;
     fbuf->is_defined = 1;
-    progress_comm(0);
+    progress_comm(1);
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
 }
 
@@ -345,7 +345,7 @@ _EXTERN_C_ void dtf_close(const char* filename)
     
 	gl_proc.stats_info.t_idle = MPI_Wtime();
 		
-	progress_comm(0);
+	progress_comm(1);
 
 	if(fbuf->ioreq_log != NULL){ // && strstr(fbuf->file_path, "anal")!=NULL){
 		double check;
@@ -517,7 +517,6 @@ _EXTERN_C_ int dtf_io_mode(const char* filename)
     if(pat == NULL){
         return DTF_UNDEFINED;
     }
-    progress_comm(1);
     return pat->iomode;
 }
 

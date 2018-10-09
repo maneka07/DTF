@@ -80,7 +80,7 @@ io_req_t *new_ioreq(int id,
                     int buffered);
 void add_ioreq(io_req_t **list, io_req_t *ioreq);
 void delete_ioreqs(file_buffer_t *fbuf);
-void progress_comm(int receive_only);
+void progress_comm(int ignore_idle);
 int  match_ioreqs(file_buffer_t *fbuf);
 void match_ioreqs_all_files();
 void send_file_info(file_buffer_t *fbuf, int reader_root);

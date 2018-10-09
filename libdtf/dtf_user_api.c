@@ -114,7 +114,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 		gl_proc.conf.sclltkf_flag = atoi(s);
 	else
 		gl_proc.conf.sclltkf_flag = 0;
-
+		
     s = getenv("DTF_DATA_MSG_SIZE_LIMIT");
     if(s == NULL)
         gl_proc.conf.data_msg_size_limit = DTF_DATA_MSG_SIZE_LIMIT;
@@ -132,6 +132,18 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_proc.conf.iodb_range = 0;
     else
         gl_proc.conf.iodb_range = (MPI_Offset)atoi(s);
+    
+    s = getenv("DTF_TIMEOUT");
+	if(s == NULL)
+		gl_proc.conf.timeout = 180;
+	else
+		gl_proc.conf.timeout = atoi(s);
+    
+    s = getenv("DTF_IGNORE_IDLE");
+    if(s == NULL)
+        gl_proc.conf.ignore_idle = 0;
+    else
+        gl_proc.conf.ignore_idle = atoi(s);
         
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Data message size limit set to %d", gl_proc.conf.data_msg_size_limit);
 
@@ -146,16 +158,18 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     err = init_comp_comm();
     if(err) goto panic_exit;
 
+    create_tmp_file();
+   
     lib_initialized = 1;
 
     //enable print setting for other ranks again
     if(gl_proc.myrank != 0)
         gl_verbose = verbose;
         
-    create_tmp_file();
+  
 	
 	if(gl_proc.myrank==0)
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Time to init DTF %.3f",  MPI_Wtime() - t_start);
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Time to init DTF %.3f",  MPI_Wtime() - t_start);
 
     return 0;
 
@@ -264,6 +278,7 @@ _EXTERN_C_ int dtf_transfer_all_files()
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Start transfer_complete_all");
 	t_start = MPI_Wtime();
+	gl_proc.stats_info.t_idle = MPI_Wtime();
 	match_ioreqs_all_files();
 	gl_proc.stats_info.transfer_time += MPI_Wtime() - t_start;
 	gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
@@ -301,6 +316,8 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
     
 	if(!fbuf->is_transferring) return 0;
     
+    gl_proc.stats_info.t_idle = MPI_Wtime();
+    
     match_ioreqs(fbuf);
      
 	fname_pattern_t *pat = find_fname_pattern(filename);			
@@ -335,6 +352,8 @@ _EXTERN_C_ void dtf_transfer_multiple(const char* filename, int ncid)
         MPI_Abort(MPI_COMM_WORLD, MPI_ERR_OTHER);
     }
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start matching multiple");
+   
+   	gl_proc.stats_info.t_idle = MPI_Wtime();
    
     fbuf->done_multiple_flag = 0;
     while(!fbuf->done_multiple_flag){
@@ -384,6 +403,8 @@ _EXTERN_C_ void dtf_complete_multiple(const char *filename, int ncid)
     }
     
     MPI_Barrier(fbuf->comm);
+    
+    gl_proc.stats_info.t_idle = MPI_Wtime();
     
     if( ((fbuf->writer_id == gl_proc.my_comp) && !gl_proc.comps[fbuf->reader_id].finalized)  ||
 		((fbuf->reader_id == gl_proc.my_comp) && !gl_proc.comps[fbuf->writer_id].finalized) )			

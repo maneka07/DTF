@@ -582,7 +582,7 @@ void close_file(file_buffer_t *fbuf)
 
         if(fbuf->iomode == DTF_IO_MODE_FILE) {
 			//Check for any incoming messages
-			progress_comm(0);
+			progress_comm(1);
             if(fbuf->fready_notify_flag == RDR_NOT_NOTIFIED){
 				assert(fbuf->root_writer == gl_proc.myrank);
 				while(fbuf->root_reader == -1)

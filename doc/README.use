@@ -71,6 +71,16 @@
     size of the data array in the slowest dimension is divided among 
     I/O mathers  and each matchers is responsible for its own subblock.
 
+*** DTF_TIMEOUT (default 180 seconds) - if DTF has not been able to progress
+    for this amount of time the process will consider that the execution 
+    stalled and will abort it (unless DTF_IGNORE_IDLE is set to 1).
+    
+
+*** DTF_IGNORE_IDLE (default 0) - if a process detects that 
+    the DTF library did not progress for DTF_TIMEOUT period of time, it 
+    will consider that the execution has stalled and will abort it. Set
+    the parameter to 1 to disable this feature. 
+
 ******************** USER API *****************************
 
 ***   int dtf_init(const char* filename, char* module_name)

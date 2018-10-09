@@ -33,8 +33,6 @@
 #define VERBOSE_ALL_LEVEL     2
 #define VERBOSE_RB_TREE_LEVEL 3
 
-#define DTF_TIMEOUT       180 
-
 /*NOTE: These two definitions are copied from pnetcdf.h
  * since I wanted to be able to compile DTF without having 
  * to link it to pnetcdf.*/
@@ -93,6 +91,8 @@ typedef struct dtf_config{
     int         data_msg_size_limit;
     int         use_msg_buffer;
     int         do_checksum;
+    int 		timeout;        /*How long to wait before consider that DTF stalled?*/
+    int         ignore_idle;    /*don't abort process if has ben idle for timeout seconds*/
     MPI_Offset  iodb_range;  		  /*the size of the data block in the first dimension*/
     int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
     int         log_ioreqs;
