@@ -278,8 +278,13 @@ void send_mst_info(file_buffer_t *fbuf, int tgt_root, int tgt_comp)
 	memcpy(chbuf+offt, &(fbuf->my_mst_info->nmasters), sizeof(int));
 	offt += sizeof(int);
 	DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->my_mst_info->nmasters);
-	/*list of masters*/
-	memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
+	
+	if(gl_proc.conf.single_mpirun_mode)
+		translate_ranks(fbuf->my_mst_info->masters,fbuf->my_mst_info->nmasters, 
+						MPI_COMM_WORLD, gl_proc.comps[tgt_comp].comm, (int*)(chbuf+offt));
+	else 
+		/*list of masters*/
+		memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Notify writer root that I am reader root of file %s", fbuf->file_path);
 	dtf_msg_t *msg = new_dtf_msg(buf, bufsz, DTF_UNDEFINED, FILE_INFO_REQ_TAG, 1);
@@ -613,6 +618,7 @@ void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm 
 {
 	MPI_Group from_group, to_group;
 	int err;
+	int i;
 	
 	assert(from_ranks != NULL);
 	assert(to_ranks != NULL);
@@ -622,6 +628,10 @@ void translate_ranks(int *from_ranks,  int nranks, MPI_Comm from_comm, MPI_Comm 
     
     err = MPI_Group_translate_ranks(from_group, nranks, from_ranks, to_group, to_ranks);
     CHECK_MPI(err);
+    
+    DTF_DBG(VERBOSE_DBG_LEVEL, "Translated ranks:");
+    for(i=0; i<nranks; i++)
+		DTF_DBG(VERBOSE_DBG_LEVEL, "%d -> %d", from_ranks[i], to_ranks[i]);
     
     MPI_Group_free(&from_group);
     MPI_Group_free(&to_group);

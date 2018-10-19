@@ -86,7 +86,7 @@
 
 
 typedef struct dtf_config{
-    int         distr_mode;
+    int         single_mpirun_mode;
     int         buffer_data;    /*Should we buffer the data if request matching is enabled?*/
     int         data_msg_size_limit;
     int         use_msg_buffer;
@@ -96,7 +96,6 @@ typedef struct dtf_config{
     MPI_Offset  iodb_range;  		  /*the size of the data block in the first dimension*/
     int         iodb_build_mode;      /*IODB_BUILD_VARID - based on var ids, IODB_BUILD_RANGE - based on data block range*/
     int         log_ioreqs;
-	int 		sclltkf_flag; /*special flag for scale-letkf execution*/
 }dtf_config_t;
 
 typedef struct stats{

@@ -1251,7 +1251,6 @@ done_match:
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished match ioreqs for %s", fbuf->file_path);
 
-	//if(gl_proc.conf.sclltkf_flag)
 	DTF_DBG(VERBOSE_ERROR_LEVEL, "dtf_time transfer for %s: %.4f", fbuf->file_path, MPI_Wtime() - t_start);
 	fbuf->cur_transfer_epoch++;
 
@@ -2126,8 +2125,6 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 	
 	switch(tag){
 			case FILE_INFO_REQ_TAG:
-				if(!gl_proc.conf.sclltkf_flag){
-					//parse mst info of the other component
 					assert(fbuf->cpl_mst_info->nmasters == 0);
 					memcpy(&(fbuf->cpl_mst_info->comm_sz), (unsigned char*)rbuf+offt, sizeof(int));
 					offt+=sizeof(int);
@@ -2137,7 +2134,6 @@ int parse_msg(int comp, int src, int tag, void *rbuf, int bufsz, int is_queued)
 					fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
 					memcpy(fbuf->cpl_mst_info->masters, (unsigned char*)rbuf+offt, fbuf->cpl_mst_info->nmasters*sizeof(int));
 					fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
-				}
 				
 				if(fbuf->my_mst_info->my_mst == gl_proc.myrank){
 					

@@ -22,6 +22,18 @@ static int create_intercomm(int comp_id, char* global_path){
     mode = gl_proc.comps[comp_id].connect_mode;
     if(mode == DTF_UNDEFINED) return 0;
 
+	t_con = MPI_Wtime();
+	
+	if(gl_proc.conf.single_mpirun_mode){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Duplicate intercomm");
+		err = MPI_Pcontrol(0);
+		assert(err == MPI_SUCCESS);
+		err = MPI_Comm_dup(MPI_COMM_WORLD, &(gl_proc.comps[comp_id].comm));
+		CHECK_MPI(err);
+		MPI_Pcontrol(1);
+		goto fn_exit;
+	}  
+
     portname[0] = 0;
 
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
@@ -52,8 +64,6 @@ static int create_intercomm(int comp_id, char* global_path){
      strcpy(portfile_name, global_path);
      strcat(portfile_name, "/port_");
      strcat(portfile_name, service_name);
-
-	t_con = MPI_Wtime();
 	
     if(mode == CONNECT_MODE_CLIENT){
         DTF_DBG(VERBOSE_DBG_LEVEL,   "Trying to connect to comp %s. Open portfile %s", gl_proc.comps[comp_id].name, portfile_name);
@@ -132,6 +142,7 @@ static int create_intercomm(int comp_id, char* global_path){
     MPI_Comm_set_errhandler(gl_proc.comps[comp_id].comm, MPI_ERRORS_RETURN);
 	//The two components are roughly synched now. Reset
 	//the start time value
+fn_exit:
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Took %.3f secs to esablish intercomm", MPI_Wtime() - t_con);
 	gl_proc.walltime = MPI_Wtime();
     DTF_DBG(VERBOSE_DBG_LEVEL, "Intercomm established");
@@ -141,7 +152,7 @@ static int create_intercomm(int comp_id, char* global_path){
 
 static void destroy_intercomm(int comp_id){
 
-    int mode;
+    int mode, err;
     char* global_path;
     char portfile_name[MAX_FILE_NAME];
 
@@ -149,6 +160,14 @@ static void destroy_intercomm(int comp_id){
 
     if(mode == DTF_UNDEFINED) return;
     if(gl_proc.comps[comp_id].comm == MPI_COMM_NULL) return;
+	
+	if(gl_proc.conf.single_mpirun_mode){
+
+		err = MPI_Comm_free(&(gl_proc.comps[comp_id].comm));
+		CHECK_MPI(err);
+		return;
+	}  
+    
     MPI_Comm_disconnect(&(gl_proc.comps[comp_id].comm));
     //rank 0 of the server component will remove the file
     if(gl_proc.myrank == 0 && mode == CONNECT_MODE_SERVER){
@@ -195,11 +214,11 @@ int init_comp_comm(){
         if(i == gl_proc.my_comp){
             err = MPI_Comm_dup(MPI_COMM_WORLD, &(gl_proc.comps[i].comm));
             CHECK_MPI(err);
-            continue;
-        }
-        err = create_intercomm(gl_proc.comps[i].id, s);
-        if(err)
-            goto panic_exit;
+        } else {
+			err = create_intercomm(gl_proc.comps[i].id, s);
+			
+			if(err) goto panic_exit;
+		}
     }
     return 0;
 
@@ -224,7 +243,7 @@ void finalize_comp_comm(){
 				msg = tmp;
 			}
 		}
-		
+	   
        destroy_intercomm(gl_proc.comps[i].id);
     }
 

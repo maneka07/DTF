@@ -52,8 +52,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     
     t_start = MPI_Wtime();
     
-    MPI_Comm_rank(MPI_COMM_WORLD, &(gl_proc.myrank));
-
     if(strlen(module_name)>MAX_COMP_NAME){
         fprintf(stderr, "DTF Error: module name %s too long\n", module_name);
         fflush(stderr);
@@ -92,14 +90,15 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 	gl_proc.conf.log_ioreqs = 0;
     gl_proc.conf.buffer_data = 0;
     gl_proc.conf.do_checksum = 0;
-    gl_proc.conf.iodb_build_mode = IODB_BUILD_BLOCK; // default
-    
+    gl_proc.conf.iodb_build_mode = IODB_BUILD_BLOCK; // default     
     
     s = getenv("DTF_VERBOSE_LEVEL");
     if(s == NULL)
         gl_verbose = VERBOSE_ERROR_LEVEL;
     else
         gl_verbose = atoi(s);
+
+	MPI_Comm_rank(MPI_COMM_WORLD, &(gl_proc.myrank));
 
     //during init only root will print out stuff
     if(gl_proc.myrank != 0){
@@ -108,12 +107,6 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     }
     
     DTF_DBG(VERBOSE_DBG_LEVEL, "Init DTF");
-
-    s = getenv("DTF_SCALE");
-	if(s != NULL)
-		gl_proc.conf.sclltkf_flag = atoi(s);
-	else
-		gl_proc.conf.sclltkf_flag = 0;
 		
     s = getenv("DTF_DATA_MSG_SIZE_LIMIT");
     if(s == NULL)
@@ -154,9 +147,43 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 	err = load_config(filename, module_name);
 	if(err) goto panic_exit;
 
+    /*find out if we run all components with single mpirun/mpiexec or 
+     * separate command for each component. */
+    
+	{
+		//Temporarily turn off profiling if it's running
+		MPI_Pcontrol(0);
+		
+		void *val;
+		int flag, vval, maxval=-1;
+
+		err = MPI_Comm_get_attr( MPI_COMM_WORLD, MPI_APPNUM, &val, &flag );
+		CHECK_MPI(err);
+		if(flag){
+			vval = *(int*)val; 
+			err = MPI_Allreduce(&vval, &maxval, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); 
+			CHECK_MPI(err);
+			DTF_DBG(VERBOSE_DBG_LEVEL, "APP_NUM is %d", maxval);
+			gl_proc.conf.single_mpirun_mode =  maxval > 0 ? 1 : 0; 
+		}else {
+			
+			DTF_DBG(VERBOSE_DBG_LEVEL, "APP_NUM is not set!!");
+			char *s = getenv("DTF_COMP");
+			gl_proc.conf.single_mpirun_mode = s != NULL ? 1: 0;
+		    
+		}
+		MPI_Pcontrol(1);
+		
+		if(gl_proc.conf.single_mpirun_mode)
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Consider single mpirun execution mode");
+		else 
+			DTF_DBG(VERBOSE_DBG_LEVEL, "Consider separate mpirun for each executable execution mode");
+	}
+	
+        
     /*Establish intercommunicators between components*/
     err = init_comp_comm();
-    if(err) goto panic_exit;
+    if(err) assert(0); //goto panic_exit;
 
     create_tmp_file();
    
@@ -165,9 +192,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     //enable print setting for other ranks again
     if(gl_proc.myrank != 0)
         gl_verbose = verbose;
-        
-  
-	
+
 	if(gl_proc.myrank==0)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Time to init DTF %.3f",  MPI_Wtime() - t_start);
 

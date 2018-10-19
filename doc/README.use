@@ -27,6 +27,9 @@
 
 	e.g.:  export DTF_GLOBAL_PATH=/some/path/in/PFS
 
+******************** EXECUTION MODE ***********************
+
+
 ******************* ENVIRONMENT VARIABLES *************************
 
 *** DTF_GLOBAL_PATH - should be set to a directory accessible by processes
@@ -80,6 +83,11 @@
     the DTF library did not progress for DTF_TIMEOUT period of time, it 
     will consider that the execution has stalled and will abort it. Set
     the parameter to 1 to disable this feature. 
+
+*** DTF_COMP - used for MPMD execution mode in MPI. The value of this 
+	variable should be unique for every executable. E.g.
+	
+	mpiexec -n 2 -x DTF_COMP=0 comp1.exe : -n 2 -x DTF_COMP=1 comp2.exe
 
 ******************** USER API *****************************
 

@@ -95,18 +95,8 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 		pat->wrt_recorded = IO_PATTERN_RECORDED;
 	} else if (pat->replay_io && (pat->wrt_recorded == DTF_UNDEFINED))
 		pat->wrt_recorded = IO_PATTERN_RECORDING;
-	
-	 /*In scale-letkf we assume completely mirrorer file handling. 
-	 * Hence, will simply duplicate the master structure*/
-	 if(gl_proc.conf.sclltkf_flag){
-		assert(fbuf->cpl_mst_info->nmasters == 0);
-		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
-		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
-		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
-		fbuf->root_reader = fbuf->cpl_mst_info->masters[0];
-		fbuf->cpl_info_shared = 1;
-	 } else if(pat->replay_io && (pat->finfo_sz > 0)){
+			 
+	 if(pat->replay_io && (pat->finfo_sz > 0)){
 		int offt = MAX_FILE_NAME;
 		void *rbuf = pat->finfo;
 		//parse mst info of the other component
@@ -218,16 +208,6 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		fbuf->fready_notify_flag = DTF_UNDEFINED;
 	 }	   
 
-	if(gl_proc.conf.sclltkf_flag && (fbuf->cpl_mst_info->nmasters == 0)){
-		fbuf->cpl_mst_info->nmasters = fbuf->my_mst_info->nmasters;
-		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-		memcpy(fbuf->cpl_mst_info->masters, fbuf->my_mst_info->masters, fbuf->cpl_mst_info->nmasters*sizeof(int));
-		fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
-		fbuf->cpl_mst_info->comm_sz = fbuf->my_mst_info->comm_sz;
-		fbuf->cpl_info_shared = 1;
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Root writer set to %d", fbuf->root_writer);
-	 }
-
 	if(pat == NULL){
 		pat = find_fname_pattern(filename);
 		assert(pat != NULL);
@@ -258,8 +238,6 @@ _EXTERN_C_ void dtf_open(const char *filename, int omode, MPI_Comm comm)
 		cpl_root = fbuf->cpl_mst_info->masters[0];
 	else 
 		cpl_root = (fbuf->reader_id == gl_proc.my_comp) ? fbuf->root_writer : fbuf->root_reader;
-	//~ if(gl_proc.conf.sclltkf_flag)
-	//cpl_root = fbuf->cpl_mst_info->masters[0];
 	
 	if( omode & NC_WRITE && !fbuf->is_write_only){
 		//fbuf->omode = DTF_WRITE;

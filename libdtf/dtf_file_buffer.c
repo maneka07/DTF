@@ -54,23 +54,17 @@ void unpack_file_info(MPI_Offset bufsz, void *buf, file_buffer_t *fbf)
     fbuf->header = dtf_malloc(fbuf->hdr_sz);
     memcpy(fbuf->header, chbuf+offt, fbuf->hdr_sz);
     offt += fbuf->hdr_sz + fbuf->hdr_sz%sizeof(MPI_Offset);
-    if(gl_proc.conf.sclltkf_flag){
-		/*skip all the master related info since 
-		 * we assume it's the same*/
-		 offt+= sizeof(MPI_Offset)*(fbuf->cpl_mst_info->nmasters+1);
-		 assert(fbuf->root_writer == fbuf->cpl_mst_info->masters[0]);
-	} else {
-		/*number of masters*/
-		fbuf->cpl_mst_info->nmasters = (int)(*((MPI_Offset*)(chbuf+offt)));
-		DTF_DBG(VERBOSE_DBG_LEVEL, "unpack %d masters", fbuf->cpl_mst_info->nmasters);
-		offt += sizeof(MPI_Offset);
-		/*list of masters*/
-		fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
-		memcpy(fbuf->cpl_mst_info->masters, chbuf+offt, fbuf->cpl_mst_info->nmasters*sizeof(int));
-		offt += fbuf->cpl_mst_info->nmasters*sizeof(MPI_Offset);
-		//init root master
-		fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
-	}
+	/*number of masters*/
+	fbuf->cpl_mst_info->nmasters = (int)(*((MPI_Offset*)(chbuf+offt)));
+	DTF_DBG(VERBOSE_DBG_LEVEL, "unpack %d masters", fbuf->cpl_mst_info->nmasters);
+	offt += sizeof(MPI_Offset);
+	/*list of masters*/
+	fbuf->cpl_mst_info->masters = dtf_malloc(fbuf->cpl_mst_info->nmasters*sizeof(int));
+	memcpy(fbuf->cpl_mst_info->masters, chbuf+offt, fbuf->cpl_mst_info->nmasters*sizeof(int));
+	offt += fbuf->cpl_mst_info->nmasters*sizeof(MPI_Offset);
+	//init root master
+	fbuf->root_writer = fbuf->cpl_mst_info->masters[0];
+	
    
     /*number of vars*/
     nvars = (int)(*((MPI_Offset*)(chbuf+offt)));
@@ -772,8 +766,13 @@ void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     offt += sizeof(MPI_Offset);
     if(fbuf->my_mst_info->nmasters){
         DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->my_mst_info->nmasters);
-        /*list of masters*/
-        memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
+        if(gl_proc.conf.single_mpirun_mode){
+			//need to translate ranks from local mpi_comm_world to global
+			translate_ranks(fbuf->my_mst_info->masters,fbuf->my_mst_info->nmasters, 
+			                MPI_COMM_WORLD, gl_proc.comps[fbuf->reader_id].comm, (int*)(chbuf+offt));
+		} else 
+			/*list of masters*/
+			memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));
         offt += fbuf->my_mst_info->nmasters*sizeof(MPI_Offset); //sizeof(int) + padding for MPI_Offset
     }
 

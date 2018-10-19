@@ -643,5 +643,6 @@ int load_config(const char *dtf_ini_path, const char *comp_name)
 			
 		dtf_free(buf, offt);
 	}
+	DTF_DBG(VERBOSE_DBG_LEVEL, "Config loaded");
 	return 0;
 }
