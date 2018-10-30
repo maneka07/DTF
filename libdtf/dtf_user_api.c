@@ -168,7 +168,7 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
 		}else {
 			
 			DTF_DBG(VERBOSE_DBG_LEVEL, "APP_NUM is not set!!");
-			char *s = getenv("DTF_COMP");
+			char *s = getenv("MPMD_COMP");
 			gl_proc.conf.single_mpirun_mode = s != NULL ? 1: 0;
 		    
 		}

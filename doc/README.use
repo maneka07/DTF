@@ -28,8 +28,37 @@
 	e.g.:  export DTF_GLOBAL_PATH=/some/path/in/PFS
 
 ******************** EXECUTION MODE ***********************
+1) Separate mpiexec for each component: 
 
+	mpiexec -n $NPROC1 .... app1.exe &
+	mpiexec -n $NPROC2 .... app2.exe &
+	mpiexec -n $NPROC3 .... app3.exe 
+	wait
+	
+2) MPMD launch mode
 
+	mpiexec -n $NPROC1 .... app1.exe : \
+			-n $NPROC2 .... app2.exe : \
+			-n $NPROC3 .... app3.exe
+
+   To use MPMD mode it is required to additionally use the SplitWorldWrap
+   wrapper mini-library available at 
+   
+   https://github.com/maneka07/split_world_wrap
+
+   The wrapper library emulates the execution as if the components were 
+   launched with a separate mpiexec and, hence, each has its own 
+   MPI_COMM_WORLD. Either link the components statically with this 
+   wrapper library or load it dynamically by setting the LD_PRELOAD 
+   environment variable. See README file of the wrapper for more 
+   details. The components themselves do not need to be modified in 
+   order to run them in MPMD mode.
+   
+/// NOTE /// We have observed that when the applications are launched 
+using separate mpiexec for each application on a very large scale, the 
+DTF can sometimes take too long to initialize. In this case, we 
+recommend to use the MPMD launch mode. 
+   
 ******************* ENVIRONMENT VARIABLES *************************
 
 *** DTF_GLOBAL_PATH - should be set to a directory accessible by processes
@@ -84,10 +113,10 @@
     will consider that the execution has stalled and will abort it. Set
     the parameter to 1 to disable this feature. 
 
-*** DTF_COMP - used for MPMD execution mode in MPI. The value of this 
+*** MPMD_COMP - used for MPMD execution mode in MPI. The value of this 
 	variable should be unique for every executable. E.g.
 	
-	mpiexec -n 2 -x DTF_COMP=0 comp1.exe : -n 2 -x DTF_COMP=1 comp2.exe
+	mpiexec -n 2 -x MPMD_COMP=0 app1.exe : -n 2 -x MPMD_COMP=1 app2.exe
 
 ******************** USER API *****************************
 
