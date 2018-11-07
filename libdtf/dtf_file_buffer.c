@@ -767,9 +767,10 @@ void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     if(fbuf->my_mst_info->nmasters){
         DTF_DBG(VERBOSE_DBG_LEVEL, "pack %d masters", fbuf->my_mst_info->nmasters);
         if(gl_proc.conf.single_mpirun_mode){
+			MPI_Comm intercomm = fbuf->reader_id == gl_proc.my_comp ? gl_proc.comps[fbuf->writer_id].comm : gl_proc.comps[fbuf->reader_id].comm;
 			//need to translate ranks from local mpi_comm_world to global
 			translate_ranks(fbuf->my_mst_info->masters,fbuf->my_mst_info->nmasters, 
-			                MPI_COMM_WORLD, gl_proc.comps[fbuf->reader_id].comm, (int*)(chbuf+offt));
+			                gl_proc.comps[gl_proc.my_comp].comm, intercomm, (int*)(chbuf+offt));
 		} else 
 			/*list of masters*/
 			memcpy(chbuf+offt, fbuf->my_mst_info->masters, fbuf->my_mst_info->nmasters*sizeof(int));

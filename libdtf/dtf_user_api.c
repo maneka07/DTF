@@ -312,8 +312,6 @@ _EXTERN_C_ int dtf_transfer_all_files()
 	return 0;
 }
 
-//TODO add dtf_start_transfer and dtf_end_transfer
-
 /*called by user to do explicit matching*/
 /*
     User must specify either filename or ncid.
