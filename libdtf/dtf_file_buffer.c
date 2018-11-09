@@ -502,12 +502,10 @@ void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
 {
 	int i;
 	write_db_item_t *witem;
-	read_db_item_t *ritem;
 
     if(iodb == NULL){
 		return;
 	}
-//    DTF_DBG(VERBOSE_DBG_LEVEL, "Clean iodb: memuse %lu, peak %lu", gl_proc.stats_info.iodb_cur_memuse, gl_proc.stats_info.iodb_peak_memuse);
 
 	if(iodb->witems != NULL){
 		for(i = 0; i < nvars; i++){
@@ -530,30 +528,26 @@ void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
         dtf_free(iodb->witems, nvars*sizeof(write_db_item_t*));
         iodb->witems = NULL;
 	}
-    
-    if(iodb->ritems != NULL){
-		for(i = 0; i < cpl_comm_sz; i++){
-			if(iodb->ritems[i] != NULL){
-				ritem = iodb->ritems[i];
-				read_dblock_t *block = ritem->dblocks;
-				while(block != NULL){
-
-					dtf_free(block->start, block->ndims*sizeof(MPI_Offset));
-					dtf_free(block->count, block->ndims*sizeof(MPI_Offset));
-					ritem->dblocks = ritem->dblocks->next;
-					dtf_free(block, sizeof(read_dblock_t));
-					block = ritem->dblocks;
-					ritem->nblocks--;
-				}
-				assert(ritem->nblocks == 0);
-				dtf_free(ritem, sizeof(read_db_item_t));
-				iodb->nritems--;
-			}
-		}
-		dtf_free(iodb->ritems, cpl_comm_sz*sizeof(read_db_item_t*));
-		iodb->ritems = NULL;
-	}
-
+	
+	assert( iodb->ritems == NULL);
+			
+	//~ ritem = iodb->ritems;
+	//~ while(ritem != NULL){
+		//~ read_dblock_t *block = ritem->dblocks;
+		//~ iodb->ritems =  iodb->ritems->next;
+		//~ while(block != NULL){
+			//~ ritem->dblocks = ritem->dblocks->next;
+			//~ dtf_free(block->start, block->ndims*sizeof(MPI_Offset));
+			//~ dtf_free(block->count, block->ndims*sizeof(MPI_Offset));
+			
+			//~ dtf_free(block, sizeof(read_dblock_t));
+			//~ block = ritem->dblocks;
+			//~ ritem->nblocks--;
+		//~ }
+		//~ assert(ritem->nblocks == 0);
+		//~ dtf_free(ritem, sizeof(read_db_item_t));
+		//~ iodb->nritems--;
+	//~ }
     iodb->updated_flag = 0;
 
 	DTF_DBG(VERBOSE_DBG_LEVEL, "iodb clean");
@@ -609,7 +603,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
 			if(rank == 0){
 				if(fbuf->root_writer == -1){
-					fbuf->root_writer = inquire_root(fbuf->file_path);
+					fbuf->root_writer = inquire_root(fbuf->file_path); //TODO REMOVE FILES!!!
 					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
 				}
 				
