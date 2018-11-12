@@ -234,6 +234,7 @@ fname_pattern_t* new_fname_pattern()
     pat->rdr_recorded = DTF_UNDEFINED;
     pat->wrt_recorded = DTF_UNDEFINED;
     pat->write_only = 0;
+    pat->mirror_io_root=0;
     pat->io_pats = NULL;
     pat->finfo = NULL;
     pat->finfo_sz = 0;
@@ -603,7 +604,7 @@ void open_file(file_buffer_t *fbuf, MPI_Comm comm)
 
 			if(rank == 0){
 				if(fbuf->root_writer == -1){
-					fbuf->root_writer = inquire_root(fbuf->file_path); //TODO REMOVE FILES!!!
+					fbuf->root_writer = inquire_root(fbuf->file_path);
 					send_mst_info(fbuf, fbuf->root_writer, fbuf->writer_id);
 				}
 				

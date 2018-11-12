@@ -108,6 +108,8 @@ typedef struct fname_pattern{
     int  nexcls;                 /*Number of file name patterns to exclude*/
     int  comp1;
     int  comp2;
+    int  mirror_io_root;          /*if set to 1, then file I/O root rank in reader and writer is the same (for MPMD 
+                                     we consider that MPI_COMM_WORLD is unique for each executable) */
     int  iomode;
     int  num_sessions;          /*After how many open/close sessions we can delete given file buffer*/
     int  write_only;                

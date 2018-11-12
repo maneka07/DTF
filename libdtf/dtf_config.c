@@ -374,7 +374,11 @@ static int parse_config(const char *ini_name, const char *comp_name){
 			cur_fpat->replay_io = atoi(value);
 			assert(cur_fpat->replay_io==0 ||  cur_fpat->replay_io==1);
 			
-        }  else if(strcmp(param, "write_only") == 0){
+        } else if(strcmp(param, "mirror_io_root") == 0){
+			cur_fpat->mirror_io_root = atoi(value);
+			assert(cur_fpat->mirror_io_root==0 ||  cur_fpat->mirror_io_root==1);
+			
+        } else if(strcmp(param, "write_only") == 0){
 			cur_fpat->write_only = atoi(value);
 			assert(cur_fpat->write_only==0 ||  cur_fpat->write_only==1);
 			
@@ -452,7 +456,7 @@ void pack_config(void **buf, int *offt1)
 	sz += 7*sizeof(int)+gl_proc.ncomps*MAX_COMP_NAME;
 	pat = gl_proc.fname_ptrns;
 	while(pat != NULL){
-		sz += 7*sizeof(int)+ MAX_FILE_NAME*(pat->nexcls+1);
+		sz += 8*sizeof(int)+ MAX_FILE_NAME*(pat->nexcls+1);
 		pat = pat->next;
 	}
 	
@@ -495,6 +499,8 @@ void pack_config(void **buf, int *offt1)
 		*(int*)(chbuf+offt) = pat->num_sessions;
 		offt+=sizeof(int);
 		*(int*)(chbuf+offt) = pat->write_only;
+		offt+=sizeof(int);
+		*(int*)(chbuf+offt) = pat->mirror_io_root;
 		offt+=sizeof(int);
 		*(int*)(chbuf+offt) = pat->replay_io;
 		offt+=sizeof(int);
@@ -583,6 +589,8 @@ void unpack_config(void *buf,const char* comp_name)
 		pat->num_sessions = *(int*)(chbuf+offt);
 		offt+=sizeof(int);
 		pat->write_only = *(int*)(chbuf+offt);
+		offt+=sizeof(int);
+		pat->mirror_io_root = *(int*)(chbuf+offt);
 		offt+=sizeof(int);
 		pat->replay_io = *(int*)(chbuf+offt);
 		offt+=sizeof(int);

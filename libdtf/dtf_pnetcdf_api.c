@@ -114,7 +114,7 @@ _EXTERN_C_ void dtf_create(const char *filename, MPI_Comm comm)
 	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root master for file %s is %d", filename, fbuf->root_writer);
 
-    if(gl_proc.myrank == fbuf->root_writer && fbuf->cpl_mst_info->nmasters == 0){
+    if(!pat->mirror_io_root && (gl_proc.myrank == fbuf->root_writer) && (fbuf->cpl_mst_info->nmasters == 0)){
 		FILE *rootf;
 		char outfname[MAX_FILE_NAME+5];
 		strcpy(outfname, filename);

@@ -233,27 +233,51 @@ int inquire_root(const char *filename)
 {
 	int root_writer = -1;
 
-	FILE *rootf;
-	char outfname[MAX_FILE_NAME+5];
+	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Inquire who is the root writer for file %s", filename);
 
-	strcpy(outfname, filename);
-	strcat(outfname, ".root");
-	DTF_DBG(VERBOSE_DBG_LEVEL, "Open %s", outfname);
+	fname_pattern_t *pat=find_fname_pattern(filename);
+	assert(pat!=NULL);
+	
+	if(pat->mirror_io_root){
+		if(gl_proc.conf.single_mpirun_mode){
+			int my_comm_sz, glob_comm_sz;
+			int me_comp, me_glob, comp;
+			
+			comp = (pat->comp1 == gl_proc.my_comp) ? pat->comp2 : pat->comp1;
+			
+			MPI_Comm_rank(gl_proc.comps[gl_proc.my_comp].comm, &me_comp);
+			MPI_Comm_rank(gl_proc.comps[comp].comm, &me_glob);
+			MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &my_comm_sz);
+			MPI_Comm_size(gl_proc.comps[comp].comm, &glob_comm_sz);
+			
+			root_writer = (me_glob - me_comp == 0) ? me_glob + my_comm_sz : me_comp;
+		} else 
+			root_writer = gl_proc.myrank;
+		
+	} else {
+		FILE *rootf;
+		char outfname[MAX_FILE_NAME+5];
+		strcpy(outfname, filename);
+		strcat(outfname, ".root");
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Open %s", outfname);
 
-	while( access( outfname, F_OK ) == -1 )
-		{sleep(1);};
+		while( access( outfname, F_OK ) == -1 )
+			{sleep(1);};
 
-	rootf = fopen(outfname, "rb");
-	assert(rootf != NULL);
-	while(1){
-		if(!fread(&root_writer, sizeof(int), 1, rootf))
-			sleep(1);
-		else
-			break;
+		rootf = fopen(outfname, "rb");
+		assert(rootf != NULL);
+		while(1){
+			if(!fread(&root_writer, sizeof(int), 1, rootf))
+				sleep(1);
+			else
+				break;
+		}
+		fclose(rootf);
+		remove(outfname);
 	}
-	fclose(rootf);
-	remove(outfname);
+	
+	
 	DTF_DBG(VERBOSE_DBG_LEVEL, "Root writer is %d", root_writer);
 	return root_writer;
 }
