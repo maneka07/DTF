@@ -494,7 +494,7 @@ _EXTERN_C_ void dtf_time_start()
     if(!lib_initialized) return;
   
     gl_proc.stats_info.user_timer_start = MPI_Wtime();
-    DTF_DBG(VERBOSE_ERROR_LEVEL, "user_time start");
+    DTF_DBG(VERBOSE_DBG_LEVEL, "user_time start");
 }
 
 _EXTERN_C_ void dtf_time_end()
@@ -505,7 +505,7 @@ _EXTERN_C_ void dtf_time_end()
     gl_proc.stats_info.user_timer_accum += tt;
     gl_proc.stats_info.user_timer_start = 0;
     
-	DTF_DBG(VERBOSE_ERROR_LEVEL, "user_time end  %.6f", tt);
+	DTF_DBG(VERBOSE_DBG_LEVEL, "user_time end  %.6f", tt);
     
  //   DTF_DBG(VERBOSE_DBG_LEVEL, "time_stat: user time %.4f", tt);
 }
