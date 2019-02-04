@@ -3,7 +3,7 @@
 
 #include <mpi.h>
 #include "dtf_file_buffer.h"
-#include "rb_red_black_tree.h"
+#include "dtf_interval_tree.h"
 
 #define DEFAULT_BLOCK_SZ_RANGE 1
 //#define AUTO_BLOCK_SZ_RANGE    0

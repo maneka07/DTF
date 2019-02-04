@@ -4,7 +4,7 @@
  * 
  * Written by 
  */
- 
+#include <stdlib.h>
 #include <unistd.h>
 #include "dtf_component.h"
 #include "dtf_util.h"

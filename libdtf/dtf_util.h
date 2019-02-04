@@ -2,10 +2,11 @@
 #define DTF_UTIL_H_INCLUDED
 
 #include <mpi.h>
-#include "dtf_file_buffer.h"
-#include "dtf_component.h"
 #include <string.h>
 #include <assert.h>
+#include <stdio.h>
+#include "dtf_file_buffer.h"
+#include "dtf_component.h"
 
 #define MAX_WORKGROUP_SIZE     64
 
@@ -31,7 +32,7 @@
 #define VERBOSE_ERROR_LEVEL   0
 #define VERBOSE_DBG_LEVEL     1
 #define VERBOSE_ALL_LEVEL     2
-#define VERBOSE_RB_TREE_LEVEL 3
+#define VERBOSE_INTERVAL_TREE_LEVEL 3
 
 /*NOTE: These two definitions are copied from pnetcdf.h
  * since I wanted to be able to compile DTF without having 

@@ -2,7 +2,7 @@
 #define FILE_BUFFER_H_INCLUDED
 
 #include <mpi.h>
-#include "rb_red_black_tree.h"
+#include "dtf_interval_tree.h"
 #include "dtf_var.h"
 
 //#include "dtf_req_match.h"
@@ -20,43 +20,44 @@
 #define RDR_NOTIFIED       3
 
 /*Structures related to I/O database that stores read and
- * writ I/O requests*/
+ * write I/O requests*/
 typedef struct write_db_item{
-    int                    ndims;
-    void                   *dblocks; /*rb_red_blk_tree for ndims>0, block_t for ndims=0*/
-    MPI_Offset             nblocks;
+    int                    ndims; //TODO iranai?
+    struct interval_tree*  bl_tree; 
+    unsigned long          nblocks;
+    struct block*          blocks;
 }write_db_item_t;
 
 typedef struct read_dblock{
-    int                     var_id;
-    int                     ndims;
-    MPI_Offset              *start;
-    MPI_Offset              *count;
-    struct read_dblock   *next;
-    struct read_dblock   *prev;
+    int                    var_id;
+//    int                    ndims;
+    MPI_Offset*            start;
+    MPI_Offset*            count;
+    struct read_dblock*    next;
+    struct read_dblock*    prev;
 }read_dblock_t;
 
 typedef struct read_db_item{
     int                     rank;   
-    read_dblock_t           *dblocks;
-    MPI_Offset              nblocks;
-    struct read_db_item     *next;
-    struct read_db_item     *prev;
+    struct read_dblock*     dblocks;
+    unsigned long           nblocks;
+    struct read_db_item*    next;
+    struct read_db_item*    prev;
 }read_db_item_t;
 
 typedef struct ioreq_db{
-    int                  updated_flag;
-    MPI_Offset           nritems;
-    struct write_db_item **witems;
-    struct read_db_item  *ritems;
+    int                    updated_flag;
+    unsigned               nritems;
+    struct write_db_item** witems;
+    struct read_db_item*   ritems;    //TODO make it tree as well?
 }ioreq_db_t;
 
 typedef struct master_info{
     unsigned int        	nread_completed;   /*Number of work groups that completed reading file*/
-    struct ioreq_db     	*iodb;
+    struct ioreq_db*     	iodb;
     int 					my_mst;     /*My master rank*/
     int 					nmasters;   /*Number of master nodes that hold data for request matching*/
-    int 					*masters;   /*Ranks of master nodes on the writer's side*/
+    int* 					masters;   /*Ranks of master nodes on the writer's side*/
     int                     comm_sz;    /*How many ranks opened the file*/    
     unsigned int 			my_wg_sz;
 } master_info_t;
@@ -66,9 +67,9 @@ typedef struct file_buffer{
   char                      file_path[MAX_FILE_NAME];    /* path of the file */
   int                       ncid;        /*handler that pnetcdf assigns to a file*/
   MPI_Comm                  comm;        /*MPI_Communicator used to open the file*/
-  void                      *header;     /*buffer to store netcdf header*/
+  void*                     header;     /*buffer to store netcdf header*/
   MPI_Offset                hdr_sz;      /*size of the netcdf header*/
-  dtf_var_t                 **vars;      
+  struct dtf_var**          vars;      
   int                       nvars;       /*Number of defined variables*/
   int                       writer_id;
   int                       reader_id;
@@ -83,8 +84,8 @@ typedef struct file_buffer{
   int 						cur_transfer_epoch;      
   int                       root_writer;       /*MPI_COMM_WORLD rank of the rank who is a root in comm*/
   int                       root_reader;
-  struct master_info        *cpl_mst_info;     /*Master info of the coupled component*/
-  struct master_info        *my_mst_info;      /*Master info of this component*/
+  struct master_info*       cpl_mst_info;     /*Master info of the coupled component*/
+  struct master_info*       my_mst_info;      /*Master info of this component*/
 
   unsigned long             rreq_cnt;
   unsigned long             wreq_cnt;
@@ -96,15 +97,14 @@ typedef struct file_buffer{
                                                                      2 - The file is ready, reader has been notified */
   int 						session_cnt;         /*Every open/close is a session*/						
   int                       cpl_info_shared;    
-  struct io_req_log         *ioreq_log;        /*Used for debugging*/
-                                          
-  struct file_buffer        *next;
-  struct file_buffer        *prev;
+  struct io_req_log*        ioreq_log;        /*Used for debugging*/                              
+  struct file_buffer*       next;
+  struct file_buffer*       prev;
 }file_buffer_t;
 
 typedef struct fname_pattern{
     char fname[MAX_FILE_NAME];   /*File name pattern or the file name*/
-    char **excl_fnames;         /*File name patterns to exclude*/
+    char** excl_fnames;         /*File name patterns to exclude*/
     int  nexcls;                 /*Number of file name patterns to exclude*/
     int  comp1;
     int  comp2;
@@ -118,10 +118,10 @@ typedef struct fname_pattern{
 								the writer has already recorded its read pattern*/
     int  wrt_recorded;          /*If recorded, writer skips matching and replays data sending from previously 
                                  recorded I/O pattern*/
-    int  finfo_sz; 
-    void *finfo;                /*File info (vars, header etc.). TO be used during I/O replaying*/
-    struct io_pattern *io_pats;          /*Recorded pattern of what data this process sends to which reader process*/
-    struct fname_pattern *next;
+    int   finfo_sz; 
+    void* finfo;                /*File info (vars, header etc.). TO be used during I/O replaying*/
+    struct io_pattern*    io_pats;          /*Recorded pattern of what data this process sends to which reader process*/
+    struct fname_pattern* next;
 }fname_pattern_t;
 
 file_buffer_t*		create_file_buffer(fname_pattern_t *pat, const char* file_path, MPI_Comm comm);

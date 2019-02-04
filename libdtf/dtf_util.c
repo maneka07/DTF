@@ -14,7 +14,7 @@
 #include "dtf.h"
 #include "dtf_file_buffer.h"
 #include "dtf_req_match.h"
-#include "rb_red_black_tree.h"
+#include "dtf_interval_tree.h"
 
 /*only support conversion double<->float*/
 static void recur_get_put_data(int ndims, 
@@ -181,11 +181,6 @@ void print_stats()
         
     if(gl_proc.stats_info.dtf_time > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: total dtf time: %.4f", gl_proc.stats_info.dtf_time);
-
-	
-
-	if(gl_proc.myrank == 0)
-		rb_print_stats();
 
     /*AVERAGE STATS*/
     if(gl_proc.stats_info.iodb_nioreqs > 0 && gl_proc.myrank == 0)
@@ -396,6 +391,7 @@ void* dtf_malloc(size_t size)
     gl_proc.stats_info.malloc_size += size;
     void *ptr = malloc(size);
     assert(ptr != NULL);
+   // DTF_DBG(VERBOSE_DBG_LEVEL, "malloc %p", ptr);
     return ptr;
 }
 
@@ -404,7 +400,10 @@ void dtf_free(void *ptr, size_t size)
     if(size > gl_proc.stats_info.malloc_size)
         DTF_DBG(VERBOSE_DBG_LEVEL, "DTF Warning: mem stat negative (left %lu), will free %lu", gl_proc.stats_info.malloc_size, size);
     gl_proc.stats_info.malloc_size -= size;
+   // DTF_DBG(VERBOSE_DBG_LEVEL, "free %p", ptr);
+    assert(ptr!=NULL);
     free(ptr);
+    
     return;
 }
 

@@ -1,8 +1,26 @@
+#include <unistd.h>
+#include <stdlib.h>
 #include "dtf_req_match.h"
 #include "dtf_util.h"
 #include "dtf.h"
-#include <unistd.h>
 #include "dtf_io_pattern.h"
+
+static read_dblock_t* new_rblock(int var_id, MPI_Offset* start, MPI_Offset* count, int ndims)
+{
+	read_dblock_t *dblock = dtf_malloc(sizeof(read_dblock_t));
+	dblock->var_id = var_id;
+	dblock->next = NULL;
+	dblock->prev = NULL;
+	if(ndims > 0){
+		dblock->start = dtf_malloc(ndims*sizeof(MPI_Offset));
+		dblock->count = dtf_malloc(ndims*sizeof(MPI_Offset));
+		memcpy(dblock->start, start, ndims*sizeof(MPI_Offset));
+		memcpy(dblock->count, count, ndims*sizeof(MPI_Offset));
+	} else 
+		dblock->start = dblock->count = NULL;
+	DTF_DBG(VERBOSE_DBG_LEVEL, "create new rblock");
+	return dblock;
+}
 
 static void shift_coord(int ndims, const MPI_Offset *bl_start,
                  const MPI_Offset *bl_count, MPI_Offset *subbl_start,
@@ -123,29 +141,23 @@ void delete_ioreqs(file_buffer_t *fbuf)
 /*match subblocks of data*/
 static void do_matching(file_buffer_t *fbuf)
 {
-    int mlc_ranks = 4;
-    int mlc_buf   = 1024;
     int i;
     write_db_item_t *witem = NULL;
     read_db_item_t *ritem;
     read_dblock_t *rblock;
     block_t *wblock;
-    int rank_idx, var_id;
-    int nwriters, allocd_nwriters;
+    int var_id;
+    int nwriters = 0;
     int *writers;
     unsigned char **sbuf;
-    int *bufsz;
+    size_t *bufsz;
     size_t *offt;
-    int matched_rank;
-    MPI_Offset *matched_count;
     dtf_var_t *var = NULL;
     int ndims;
-    int ntimes_while = 0;
 
     double t_st, t_idle = 0, t_start;
 
-    int n_matched_blocks = 0;
-    if(!fbuf->my_mst_info->iodb->updated_flag){ //no new info since last time matching was done, ignore
+    if(!fbuf->my_mst_info->iodb->updated_flag){ //no new info since last time matching was done
         return;
 	}
     if(fbuf->my_mst_info->iodb->witems == NULL || fbuf->my_mst_info->iodb->ritems == NULL){
@@ -155,43 +167,20 @@ static void do_matching(file_buffer_t *fbuf)
 
     t_start = MPI_Wtime();
 
-    writers = (int*)dtf_malloc(mlc_ranks*sizeof(int));
-    sbuf = (unsigned char**)dtf_malloc(mlc_ranks*sizeof(unsigned char*));
-    bufsz = (int*)dtf_malloc(mlc_ranks*sizeof(int));
-    offt = (size_t*)dtf_malloc(mlc_ranks*sizeof(size_t));
+    writers = NULL;
+    sbuf = NULL;
+    bufsz = offt = NULL;
 
-    allocd_nwriters = mlc_ranks;
-
-    for(i = 0; i < mlc_ranks; i++){
-        sbuf[i] = NULL;
-        bufsz[i] = 0;
-        offt[i] = 0;
-    }
-
-//  DTF_DBG(VERBOSE_ERROR_LEVEL, "before matching: %d ritems", (int)fbuf->mst_info->iodb->nritems);
     /*Try to match as many read and write
     requests as we can*/
-    nwriters = 0;
     ritem = fbuf->my_mst_info->iodb->ritems;
     while(ritem != NULL){
 
         t_st = MPI_Wtime();
-
-        n_matched_blocks = 0;
-
-        for(i = 0; i < allocd_nwriters; i++){
-            sbuf[i] = NULL;
-            bufsz[i] = 0;
-            offt[i] = 0;
-            //writers[i] = -1;
-        }
-
-        nwriters = 0;
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Matching rreq from rank %d", ritem->rank);
 		
         rblock = ritem->dblocks;
         while(rblock != NULL){
-            ntimes_while++;
             var_id = rblock->var_id;
             t_st = MPI_Wtime();
 			assert(fbuf->my_mst_info->iodb->witems != NULL);
@@ -210,178 +199,165 @@ static void do_matching(file_buffer_t *fbuf)
             var = fbuf->vars[var_id];
             ndims = var->ndims;
             
-            DTF_DBG(VERBOSE_ALL_LEVEL, "Will try to match block for var %d:", var_id);
-			for(i = 0; i < var->ndims; i++)
-				DTF_DBG(VERBOSE_DBG_LEVEL, "%lld -> %lld",
-						rblock->start[i], rblock->count[i]);
+            DTF_DBG(VERBOSE_DBG_LEVEL, "Match rblock for var %d with %d dims", var_id, ndims);
+             
+			wblock = IntervalTreeFindOverlap(witem->bl_tree, rblock->start, rblock->count, ndims);
+			
+			//~ if(ndims == 0) wblock = witem->blocks;
+			//~ else {
+				//~ wblock = witem->blocks;
+				//~ while(wblock != NULL){
+					//~ int match = 0;
+					//~ for(i = 0; i < ndims; i++)
+						//~ if((rblock->start[i] >= wblock->start[i]) && (rblock->start[i] < wblock->start[i] + wblock->count[i]))
+							//~ match++;
+						//~ else 
+							//~ break;
+					//~ if(match == ndims)
+						//~ break;
+					
+					//~ wblock = wblock->next;
+				//~ }
+			//~ }
+			
+			if(wblock == NULL){
+				//Didn't find overlapping block
+				rblock = rblock->next;
+				gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
+				t_idle += MPI_Wtime() - t_st;
+				gl_proc.stats_info.idle_do_match_time += MPI_Wtime() - t_st;
+				continue;
+			};
+			
+			/*In case the found block only partially overlaps
+			 * with the requested block, create separate request
+			 * for all sub-blocks that are left, queue them right 
+			 * after current read block*/
+			for(i = 0; i < ndims; i++){
+				if(rblock->start[i] < wblock->start[i]){
+					read_dblock_t* new_block = new_rblock(var_id, rblock->start, rblock->count, ndims);
+					ritem->nblocks++;
+					new_block->count[i] = wblock->start[i] - rblock->start[i];
+					new_block->prev = rblock;
+					new_block->next = rblock->next;
+					if(rblock->next != NULL)
+						rblock->next->prev = new_block;
+					rblock->next = new_block;					
+				}
+				if(rblock->start[i] + rblock->count[i] > wblock->start[i] + wblock->count[i]){
+					read_dblock_t* new_block = new_rblock(var_id, rblock->start, rblock->count, ndims);
+					ritem->nblocks++;
+					new_block->start[i] = wblock->start[i] + wblock->count[i];
+					new_block->count[i] = rblock->start[i] + rblock->count[i] - new_block->start[i];
+					new_block->prev = rblock;
+					new_block->next = rblock->next;
+					if(rblock->next != NULL)
+						rblock->next->prev = new_block;
+					rblock->next = new_block;						
+				}
+				/*adjust coordinate and count for the overlapping part in this dimension*/
+				if(rblock->start[i] < wblock->start[i])
+					rblock->start[i] = wblock->start[i];
+				if(rblock->start[i] + rblock->count[i] > wblock->start[i] + wblock->count[i])
+					rblock->count[i] = wblock->start[i] + wblock->count[i] - rblock->start[i];
+			}
             
-            int nelems_to_match = 1;
-            int nelems_matched;
-            if(ndims > 0){
-                for(i = 0; i < ndims; i++)
-                    nelems_to_match *= rblock->count[i];
-                matched_count = dtf_malloc(ndims*sizeof(MPI_Offset));
-            } else
-                matched_count = NULL;
-                
-            DTF_DBG(VERBOSE_DBG_LEVEL, "Nelems to match %d", nelems_to_match);
-            
-            while(nelems_to_match){
+			/*Store*/
+			/*Find send buffer for this rank*/
+			int rank_idx = -1;
+			for(i = 0; i < nwriters; i++)
+				if(writers[i] == wblock->rank)
+					break;
 
-                nelems_matched = 0;
-				if(var->ndims > 0)
-					wblock = rb_find_block(witem->dblocks, rblock->start, rblock->count, var->ndims);
-				else
-					wblock = (block_t*)witem->dblocks;
+			if(i == nwriters){ 
 				
-                if(wblock == NULL){
+				/*add new send buffer*/
+				void *tmp;
+				tmp = realloc((void*)writers, (nwriters+1)*sizeof(int));
+				assert(tmp != NULL);
+				writers = (int*)tmp;
+				
+				tmp = realloc((void*)offt, (nwriters+1)*sizeof(size_t));
+				assert(tmp != NULL);
+				offt = (size_t*)tmp;				
 
-                    //didn't find
-                    DTF_DBG(VERBOSE_ALL_LEVEL, "didnt find block for var %d", var_id);
-                    gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
-                    t_idle += MPI_Wtime() - t_st;
-                    gl_proc.stats_info.idle_do_match_time += MPI_Wtime() - t_st;
-                    break;
-                }
+				tmp = realloc((void*)bufsz, (nwriters+1)*sizeof(size_t));
+				assert(tmp != NULL);
+				bufsz = (size_t*)tmp;
+				
+				unsigned char** tmp1;
+				tmp1 = realloc(sbuf, (nwriters+1)*sizeof(unsigned char*));
+				assert(tmp1 != NULL);
+				sbuf = tmp1;
+				
+				gl_proc.stats_info.malloc_size += sizeof(int) + sizeof(unsigned char*) + sizeof(size_t)*2;
+				
+				offt[nwriters] = 0;
+				sbuf[nwriters] = NULL;
+				bufsz[nwriters] = 0;
+				writers[nwriters] = wblock->rank;
+				rank_idx = nwriters;
+				nwriters++;
+				DTF_DBG(VERBOSE_DBG_LEVEL, "Created sbuf for %d", rank_idx); 
+			} else
+				rank_idx = i;
 
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Matched against block:");
-				for(i = 0; i < var->ndims; i++)
-					DTF_DBG(VERBOSE_DBG_LEVEL, "%lld -> %lld || %lld ->%lld",
-							rblock->start[i], rblock->count[i], wblock->start[i], wblock->count[i]);
-                n_matched_blocks++;
-                //can match subblock
-                matched_rank = wblock->rank;
-                for(i = 0; i < ndims; i++){
-                    if(rblock->start[i] + rblock->count[i] > wblock->start[i]+wblock->count[i])
-                        matched_count[i] = wblock->start[i]+wblock->count[i] - rblock->start[i]; //match part
-                    else
-                        matched_count[i] = rblock->count[i]; //match whole
-                }
-
-                /*Store*/
-				/*Find send buffer for this rank*/
-				for(i = 0; i < nwriters; i++)
-					if(writers[i] == matched_rank)
-						break;
-
-				if(i == nwriters){
-					/*add new send buffer*/
-					if(nwriters == allocd_nwriters ){
-						//extend buffers
-						void *tmp;
-						unsigned char **tmp1;
-						tmp = realloc((void*)writers, (nwriters+mlc_ranks)*sizeof(int));
-						assert(tmp != NULL);
-						writers = (int*)tmp;
-						gl_proc.stats_info.malloc_size += mlc_ranks*sizeof(int);
-
-						tmp = realloc((void*)offt, (nwriters+mlc_ranks)*sizeof(size_t));
-						assert(tmp != NULL);
-						offt = (size_t*)tmp;
-						gl_proc.stats_info.malloc_size += mlc_ranks*sizeof(size_t);
-
-						tmp = realloc((void*)bufsz, (nwriters+mlc_ranks)*sizeof(int));
-						assert(tmp != NULL);
-						bufsz = (int*)tmp;
-						gl_proc.stats_info.malloc_size += mlc_ranks*sizeof(int);
-
-						tmp1 = realloc(sbuf, (nwriters+mlc_ranks)*sizeof(unsigned char*));
-						assert(tmp1 != NULL);
-						sbuf = tmp1;
-						gl_proc.stats_info.malloc_size += mlc_ranks*sizeof(unsigned char*);
-						allocd_nwriters += mlc_ranks;
-
-						int j;
-						for(j = nwriters; j < allocd_nwriters; j++){
-							sbuf[j] = NULL;
-							offt[j] = 0;
-							bufsz[j] = 0;
-						}
-					}
-					offt[nwriters] = 0;
-					bufsz[nwriters] = 0;
-					sbuf[nwriters] = NULL;
-					rank_idx = nwriters;
-					writers[rank_idx] = matched_rank;
-					nwriters++;
-				} else
-					rank_idx = i;
-
-				/*If first time to write then, first, save the file name
-				  and reader rank*/
-				if(offt[rank_idx] == 0) {
-					if(bufsz[rank_idx] < MAX_FILE_NAME + sizeof(MPI_Offset)){
-						//extend
-						unsigned char *tmp;
-						tmp = realloc(sbuf[rank_idx], bufsz[rank_idx] + MAX_FILE_NAME + mlc_buf);
-						assert(tmp != NULL);
-						sbuf[rank_idx] = tmp;
-						bufsz[rank_idx] += MAX_FILE_NAME + mlc_buf;
-					}
-
-					memcpy(sbuf[rank_idx], fbuf->file_path, MAX_FILE_NAME);
-					offt[rank_idx] += MAX_FILE_NAME ;
-					*(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)ritem->rank; //to whom writer should send the data
-					offt[rank_idx] += sizeof(MPI_Offset);
-				 }
-				 /*Save info about the data block*/
-				if(offt[rank_idx] + sizeof(MPI_Offset)*ndims*2 +sizeof(MPI_Offset)> bufsz[rank_idx]){
+			/*If first time to write then, first, save the file name
+			  and reader rank*/
+			if(offt[rank_idx] == 0) {
+				if(bufsz[rank_idx] < MAX_FILE_NAME + sizeof(MPI_Offset)){
+					//extend
 					unsigned char *tmp;
-					tmp = realloc(sbuf[rank_idx], bufsz[rank_idx] + mlc_buf);
+					tmp = realloc(sbuf[rank_idx], bufsz[rank_idx] + MAX_FILE_NAME + 1024);
 					assert(tmp != NULL);
 					sbuf[rank_idx] = tmp;
-					bufsz[rank_idx] += mlc_buf;
+					bufsz[rank_idx] += MAX_FILE_NAME + 1024;
 				}
-				
-				//~ DTF_DBG(VERBOSE_ALL_LEVEL, "Saving matched block block:");
-				//~ for(i = 0; i < var->ndims; i++)
-					//~ DTF_DBG(VERBOSE_ALL_LEVEL, "%lld -> %lld || %lld ->%lld",
-							//~ rblock->start[i], rblock->count[i], wblock->start[i], matched_count[i]);
-				
-				*(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)rblock->var_id;
+
+				memcpy(sbuf[rank_idx], fbuf->file_path, MAX_FILE_NAME);
+				offt[rank_idx] += MAX_FILE_NAME ;
+				*(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)ritem->rank; //to whom writer should send the data
 				offt[rank_idx] += sizeof(MPI_Offset);
+			 }
+			 
+			 /*Save info about the data block*/
+			 if(offt[rank_idx] + sizeof(MPI_Offset)*ndims*2 +sizeof(MPI_Offset)> bufsz[rank_idx]){
+				unsigned char *tmp;
+				tmp = realloc(sbuf[rank_idx], bufsz[rank_idx] + 1024);
+				assert(tmp != NULL);
+				sbuf[rank_idx] = tmp;
+				bufsz[rank_idx] += 1024;
+			}
+			
+			DTF_DBG(VERBOSE_ALL_LEVEL, "Saving matched block:");
+			for(i = 0; i < var->ndims; i++)
+				DTF_DBG(VERBOSE_ALL_LEVEL, "%lld -> %lld",
+						rblock->start[i], rblock->count[i]);
+			
+			*(MPI_Offset*)(sbuf[rank_idx] + offt[rank_idx]) = (MPI_Offset)rblock->var_id;
+			offt[rank_idx] += sizeof(MPI_Offset);
+			if(ndims > 0){
 				memcpy(sbuf[rank_idx]+offt[rank_idx], rblock->start, ndims*sizeof(MPI_Offset));
 				offt[rank_idx] += ndims*sizeof(MPI_Offset);
-				memcpy(sbuf[rank_idx]+offt[rank_idx], matched_count, ndims*sizeof(MPI_Offset));
+				memcpy(sbuf[rank_idx]+offt[rank_idx], rblock->count, ndims*sizeof(MPI_Offset));
 				offt[rank_idx] += ndims*sizeof(MPI_Offset);
-                
-
-                //adjust start[] and count[] in read request
-                nelems_matched = 1;
-                for(i = 0; i < ndims; i++){
-                    if(rblock->count[i] - matched_count[i] != 0){
-						rblock->start[i] += matched_count[i];
-						rblock->count[i] -= matched_count[i];
-					}
-                    nelems_matched *= matched_count[i];
-                }
-                DTF_DBG(VERBOSE_ALL_LEVEL, "Adjusted rblock to ");
-				for(i = 0; i < var->ndims; i++)
-					DTF_DBG(VERBOSE_ALL_LEVEL, "%lld -> %lld", rblock->start[i], rblock->count[i]);
-                
-                nelems_to_match -= nelems_matched;
-                t_st = MPI_Wtime(); //reset
-            }
-
-            dtf_free(matched_count, ndims*sizeof(MPI_Offset));
-
-            if(nelems_to_match == 0){
-                /*matched all, delete this dblock*/
-                read_dblock_t *tmp = rblock;
-
-				rblock = rblock->next;
-				
-				DEQUEUE_ITEM(tmp,  ritem->dblocks);
-				
-                dtf_free(tmp->start, ndims*sizeof(MPI_Offset));
-                dtf_free(tmp->count, ndims*sizeof(MPI_Offset));
-                dtf_free(tmp, sizeof(read_dblock_t));
-                ritem->nblocks--;
-                DTF_DBG(VERBOSE_ALL_LEVEL, "Matched all in block (left %lld blocks)", ritem->nblocks);
-                continue;
-            }
-
-            rblock = rblock->next;
+			}
+			
+			assert(offt[rank_idx] <= bufsz[rank_idx]);
+			
+			read_dblock_t *tmp = rblock;
+			rblock = rblock->next;
+			
+			DEQUEUE_ITEM(tmp,  ritem->dblocks);
+			if(ndims > 0){
+				dtf_free(tmp->start, ndims*sizeof(MPI_Offset));
+				dtf_free(tmp->count, ndims*sizeof(MPI_Offset));
+			}
+			dtf_free(tmp, sizeof(read_dblock_t));
+			ritem->nblocks--;
+			DTF_DBG(VERBOSE_ALL_LEVEL, "left %lu blocks", ritem->nblocks);
+			if(ritem->nblocks == 0) 
+				assert(ritem->dblocks == NULL);
         }
 
         /*Ask writers to send the data*/
@@ -398,7 +374,7 @@ static void do_matching(file_buffer_t *fbuf)
                 } else {
                     dtf_msg_t *msg = new_dtf_msg(sbuf[i], bufsz[i], DTF_UNDEFINED, IO_DATA_REQ_TAG, 1);
                     DTF_DBG(VERBOSE_DBG_LEVEL, "Send data req to wrt %d", writers[i]);
-                    err = MPI_Isend((void*)sbuf[i], offt[i], MPI_BYTE, writers[i], IO_DATA_REQ_TAG, gl_proc.comps[gl_proc.my_comp].comm, msg->reqs);
+                    err = MPI_Isend((void*)sbuf[i], (int)offt[i], MPI_BYTE, writers[i], IO_DATA_REQ_TAG, gl_proc.comps[gl_proc.my_comp].comm, msg->reqs);
                     CHECK_MPI(err);
                     ENQUEUE_ITEM(msg, gl_proc.comps[gl_proc.my_comp].out_msg_q);
                 }
@@ -410,8 +386,17 @@ static void do_matching(file_buffer_t *fbuf)
                 dtf_free(sbuf[my_idx], bufsz[my_idx]);
             }
             DTF_DBG(VERBOSE_DBG_LEVEL, "Matched rreq for rank %d", ritem->rank);
+            /*dealloc stuff*/
+			dtf_free(writers, nwriters*sizeof(int));
+			dtf_free(offt, nwriters*sizeof(size_t));
+			dtf_free(bufsz, nwriters*sizeof(size_t));
+			dtf_free(sbuf, nwriters*sizeof(unsigned char*));
+			sbuf = NULL;
+			bufsz = offt = NULL;
+			writers = NULL;
+			nwriters = 0;
         }
-
+		
         /*If we matched all chunks for this rank, then delete this ritem*/
         if(ritem->nblocks == 0){
 			read_db_item_t *tmp = ritem;
@@ -422,24 +407,13 @@ static void do_matching(file_buffer_t *fbuf)
             	
             DEQUEUE_ITEM(tmp, fbuf->my_mst_info->iodb->ritems);  
             dtf_free(tmp, sizeof(read_db_item_t));
-          
             fbuf->my_mst_info->iodb->nritems--;
         } else {
            DTF_DBG(VERBOSE_DBG_LEVEL, "Haven't matched all blocks for rank %d, %d left", ritem->rank, (int)ritem->nblocks);
 		   ritem = ritem->next;
         }        
     }
-    if(nwriters == 0)
-        t_st = MPI_Wtime(); //reset
-    /*dealloc stuff*/
-    dtf_free(writers, allocd_nwriters*sizeof(int));
-    dtf_free(offt, allocd_nwriters*sizeof(size_t));
-    dtf_free(bufsz, allocd_nwriters*sizeof(int));
-    dtf_free(sbuf, allocd_nwriters*sizeof(unsigned char*));
-
-    if(nwriters == 0)
-        gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
-
+   
     assert( MPI_Wtime() - t_start >= t_idle);
     gl_proc.stats_info.master_time = MPI_Wtime() - t_start - t_idle;  //useful work
 	gl_proc.stats_info.t_do_match += MPI_Wtime() - t_start;
@@ -450,11 +424,13 @@ static void do_matching(file_buffer_t *fbuf)
 
 static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank, MPI_Comm comm)
 {
-    int var_id, rw_flag, i;
+    int var_id, rw_flag;
     dtf_var_t *var = NULL;
     size_t offt = 0;
     unsigned char *chbuf = (unsigned char*)buf;
 	read_db_item_t *ritem = NULL;
+	insert_info_t info;
+	MPI_Offset* start, *count;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start parsing reqs for file %s", fbuf->file_path);
     if(comm == gl_proc.comps[fbuf->reader_id].comm)
@@ -482,14 +458,18 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
         gl_proc.stats_info.iodb_nioreqs++;
         assert(var_id < fbuf->nvars);
 		var = fbuf->vars[var_id];
+		
+		DTF_DBG(VERBOSE_DBG_LEVEL, "var %d, %d dims", var_id, var->ndims);
 
         if(rw_flag == DTF_READ){
-						
-			ritem = fbuf->my_mst_info->iodb->ritems;
-			while(ritem != NULL){
-				if(ritem->rank == src_rank)
-					break;
-				ritem = ritem->next;
+			
+			if(ritem == NULL || ritem->rank != src_rank){		
+				ritem = fbuf->my_mst_info->iodb->ritems;
+				while(ritem != NULL){
+					if(ritem->rank == src_rank)
+						break;
+					ritem = ritem->next;
+				}
 			}
 			
 			if(ritem == NULL){
@@ -504,21 +484,16 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
 				fbuf->my_mst_info->iodb->nritems++;
 			}
 			
-            read_dblock_t *dblock = dtf_malloc(sizeof(read_dblock_t));
-            dblock->var_id = var_id;
-            dblock->ndims = var->ndims;
-            dblock->next = NULL;
-            dblock->prev = NULL;
-            dblock->start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            dblock->count = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-            memcpy(dblock->start, chbuf+offt, var->ndims*sizeof(MPI_Offset));
-            offt += var->ndims*sizeof(MPI_Offset);
-            memcpy(dblock->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
-            offt += var->ndims*sizeof(MPI_Offset);
+			start = (MPI_Offset*)(chbuf+offt);
+			offt += var->ndims*sizeof(MPI_Offset);
+			count = (MPI_Offset*)(chbuf+offt);
+			offt += var->ndims*sizeof(MPI_Offset);
+			
+            read_dblock_t* dblock = new_rblock(var_id, start, count, var->ndims);
             
-            DTF_DBG(VERBOSE_ALL_LEVEL, "Added dblock for var %d:", var_id);
-			for(i = 0; i < var->ndims; i++)
-				DTF_DBG(VERBOSE_ALL_LEVEL, "%lld  ->  %lld", dblock->start[i], dblock->count[i]);
+            //~ DTF_DBG(VERBOSE_ALL_LEVEL, "Added dblock for var %d:", var_id);
+			//~ for(i = 0; i < var->ndims; i++)
+				//~ DTF_DBG(VERBOSE_ALL_LEVEL, "%lld  ->  %lld", dblock->start[i], dblock->count[i]);
 			
 			ENQUEUE_ITEM(dblock, ritem->dblocks);
             ritem->nblocks++;
@@ -526,8 +501,6 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
         } else { /*DTF_WRITE*/
 			int i;
             write_db_item_t *witem;
-            /*Allow write requests only from the writer*/
-            //assert(comm == gl_proc.comps[fbuf->writer_id].comm);
             
             if(fbuf->my_mst_info->iodb->witems == NULL){
 				fbuf->my_mst_info->iodb->witems = dtf_malloc(fbuf->nvars*sizeof(write_db_item_t*));
@@ -537,53 +510,45 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
             if(fbuf->my_mst_info->iodb->witems[var_id] == NULL){
                 fbuf->my_mst_info->iodb->witems[var_id] = (write_db_item_t*)dtf_malloc(sizeof(write_db_item_t));
                 witem = fbuf->my_mst_info->iodb->witems[var_id];
-
-                if(var->ndims > 0)     
-                    witem->dblocks = (void*)RBTreeCreateBlocks(rb_key_cmp, NullFunction, rb_destroy_node_info, rb_print_key, rb_print_info, 0);
-                else{
-                    witem->dblocks = dtf_malloc(sizeof(block_t));
-				}
+                witem->bl_tree = IntervalTreeCreate();
                 witem->nblocks = 0;
                 witem->ndims = var->ndims;
+                witem->blocks = NULL;
             } else
 				witem = fbuf->my_mst_info->iodb->witems[var_id];
-				
-            if(var->ndims > 0){
-				insert_info *info = dtf_malloc(sizeof(insert_info));
-				info->ndims = var->ndims;
-
-				info->blck = dtf_malloc(sizeof(block_t));
-				info->cur_dim = 0;
-				info->blck->rank = src_rank;
-				info->blck->start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
-                info->blck->count = dtf_malloc(var->ndims*sizeof(MPI_Offset)); 
-                memcpy(info->blck->start, chbuf+offt, var->ndims*sizeof(MPI_Offset));
-                offt += var->ndims*sizeof(MPI_Offset);
-                memcpy(info->blck->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
-                offt += var->ndims*sizeof(MPI_Offset);
-				
-				rb_red_blk_node *bl_node = RBTreeInsertBlock(witem->dblocks, info);
-				assert(bl_node != NULL);
 			
-				DTF_DBG(VERBOSE_ALL_LEVEL, "Added dblock for var %d:", var_id);
-				for(i = 0; i < var->ndims; i++)
-					DTF_DBG(VERBOSE_ALL_LEVEL, "%lld  ->  %lld",info->blck->start[i], info->blck->count[i]);
-				dtf_free(info, sizeof(insert_info));
-			} else{
-                ((block_t*)witem->dblocks)->start = NULL;
-                ((block_t*)witem->dblocks)->count = NULL;
-                ((block_t*)witem->dblocks)->rank = src_rank;
-                DTF_DBG(VERBOSE_DBG_LEVEL, "Inserted scalar var");
-            }
-            witem->nblocks++;       
+			block_t* bl =  dtf_malloc(sizeof(block_t));
+			
+			bl->id = witem->nblocks;
+			witem->nblocks++;
+			bl->rank = src_rank;
+			if(var->ndims == 0){
+				bl->start = NULL;
+				bl->count = NULL;
+			} else {
+				bl->start = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+				bl->count = dtf_malloc(var->ndims*sizeof(MPI_Offset));
+				memcpy(bl->start, chbuf+offt, var->ndims*sizeof(MPI_Offset));
+				offt += var->ndims*sizeof(MPI_Offset);
+				memcpy(bl->count, chbuf+offt, var->ndims*sizeof(MPI_Offset));
+				offt += var->ndims*sizeof(MPI_Offset);
+			}
+			bl->next = witem->blocks;
+			witem->blocks = bl;
+			
+			info.ndims = var->ndims;
+			info.bl = bl;
+						
+			IntervalTreeInsert(witem->bl_tree, &info);
+
+			DTF_DBG(VERBOSE_ALL_LEVEL, "Added dblock for var %d:", var_id);
+			for(i = 0; i < var->ndims; i++)
+				DTF_DBG(VERBOSE_ALL_LEVEL, "%lld  ->  %lld",bl->start[i], bl->count[i]);    
         }
     }
     assert(offt == (size_t)bufsz);
 	fbuf->my_mst_info->iodb->updated_flag = 1;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_proc.stats_info.malloc_size);
-
-	
-
 }
 
 io_req_t *new_ioreq(int id,

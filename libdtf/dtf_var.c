@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "dtf_util.h"
 #include "dtf_var.h"
 #include "dtf_req_match.h"
@@ -131,7 +132,8 @@ dtf_var_t* new_var(int varid, int ndims, MPI_Datatype dtype, MPI_Offset *shape)
 void delete_var(struct file_buffer *fbuf, dtf_var_t* var)
 {
 	assert(var->ioreqs == NULL);
-    dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
+	if(var->ndims > 0)
+		dtf_free(var->shape, var->ndims*sizeof(MPI_Offset));
     dtf_free(var, sizeof(dtf_var_t));
     fbuf->nvars--;
 }

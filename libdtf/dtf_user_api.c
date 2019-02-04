@@ -3,12 +3,12 @@
 */
 #include <mpi.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 #include <string.h>
 #include <stddef.h>
 #include <unistd.h>
 #include <errno.h>
-#include <unistd.h>
 
 #include "dtf.h"
 #include "dtf_config.h"
@@ -329,7 +329,7 @@ _EXTERN_C_ int dtf_finalize()
 
     if(gl_proc.msgbuf != NULL)
         dtf_free(gl_proc.msgbuf, gl_proc.conf.data_msg_size_limit);
-    
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "memory %lu", gl_proc.stats_info.malloc_size);
 	DTF_DBG(VERBOSE_DBG_LEVEL,"DTF: finalized");
     lib_initialized = 0;
     fflush(stdout);

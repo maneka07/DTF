@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "dtf_util.h"
 #include "dtf_req_match.h"
 #include "dtf_file_buffer.h"
@@ -516,11 +518,15 @@ void clean_iodb(ioreq_db_t *iodb, int nvars, int cpl_comm_sz)
 
 			witem = iodb->witems[i];
 
-			if(witem->ndims > 0){
-				RBTreeDestroy(witem->dblocks);
-				gl_proc.stats_info.malloc_size -= witem->nblocks*(sizeof(block_t)+sizeof(MPI_Offset)*2*witem->ndims);
-			} else
-				dtf_free(witem->dblocks, sizeof(block_t));
+			IntervalTreeDestroy(witem->bl_tree);
+			block_t* bl = witem->blocks;
+			while(bl!=NULL){
+				witem->blocks = witem->blocks->next;
+				dtf_free(bl->start, witem->ndims*sizeof(MPI_Offset));
+				dtf_free(bl->count, witem->ndims*sizeof(MPI_Offset));
+				dtf_free(bl, sizeof(block_t));
+				bl = witem->blocks;
+			}
 
 			dtf_free(witem, sizeof(write_db_item_t));
 			iodb->witems[i] = NULL;
@@ -712,7 +718,7 @@ void pack_file_info(file_buffer_t *fbuf, MPI_Offset *bufsz, void **buf)
     MPI_Offset sz = 0, offt = 0;
     unsigned char *chbuf;
     int i;
- //   rb_red_blk_node *var_node;
+
     /*Pack:
        - file name
        - how many ranks opened it
