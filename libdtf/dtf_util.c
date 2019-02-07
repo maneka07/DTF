@@ -175,7 +175,8 @@ void print_stats()
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: pnetcdf I/O time: %.4f", gl_proc.stats_info.timer_accum);
 	if(gl_proc.stats_info.user_timer_accum > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: user-measured I/O time: %.4f", gl_proc.stats_info.user_timer_accum);
-
+	if(gl_proc.stats_info.master_time > 0)
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: master time: %.4f", gl_proc.stats_info.master_time);
 	if(gl_proc.stats_info.transfer_time > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: transfer time: %.4f", gl_proc.stats_info.transfer_time);
         
@@ -183,9 +184,7 @@ void print_stats()
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: total dtf time: %.4f", gl_proc.stats_info.dtf_time);
 
 	
-
-	if(gl_proc.myrank == 0)
-		rb_print_stats();
+	rb_print_stats();
 
     /*AVERAGE STATS*/
     if(gl_proc.stats_info.iodb_nioreqs > 0 && gl_proc.myrank == 0)

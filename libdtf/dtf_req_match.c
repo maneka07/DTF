@@ -441,7 +441,7 @@ static void do_matching(file_buffer_t *fbuf)
         gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
 
     assert( MPI_Wtime() - t_start >= t_idle);
-    gl_proc.stats_info.master_time = MPI_Wtime() - t_start - t_idle;  //useful work
+    gl_proc.stats_info.master_time = MPI_Wtime() - t_start;  //useful work
 	gl_proc.stats_info.t_do_match += MPI_Wtime() - t_start;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "after matching: %d ritems", (int)fbuf->my_mst_info->iodb->nritems);
@@ -455,7 +455,8 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
     size_t offt = 0;
     unsigned char *chbuf = (unsigned char*)buf;
 	read_db_item_t *ritem = NULL;
-
+	
+	double t_start = MPI_Wtime();
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start parsing reqs for file %s", fbuf->file_path);
     if(comm == gl_proc.comps[fbuf->reader_id].comm)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Reqs are from reader");
@@ -582,7 +583,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
 	fbuf->my_mst_info->iodb->updated_flag = 1;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_proc.stats_info.malloc_size);
 
-	
+	 gl_proc.stats_info.master_time = MPI_Wtime() - t_start;
 
 }
 
