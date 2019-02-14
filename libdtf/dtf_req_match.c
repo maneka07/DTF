@@ -434,7 +434,7 @@ static void do_matching(file_buffer_t *fbuf)
     dtf_free(bufsz, allocd_nwriters*sizeof(int));
     dtf_free(sbuf, allocd_nwriters*sizeof(unsigned char*));
 
-    gl_proc.stats_info.master_time = MPI_Wtime() - t_start;  //useful work
+    gl_proc.stats_info.master_time += MPI_Wtime() - t_start;  //useful work
 	gl_proc.stats_info.t_do_match += MPI_Wtime() - t_start;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "after matching: %d ritems", (int)fbuf->my_mst_info->iodb->nritems);
