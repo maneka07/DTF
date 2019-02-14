@@ -190,8 +190,6 @@ void print_stats()
     if(gl_proc.stats_info.iodb_nioreqs > 0 && gl_proc.myrank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: nioreqs in iodb %lu", gl_proc.stats_info.iodb_nioreqs);
 
-
-
     err = MPI_Allreduce(&(gl_proc.stats_info.user_timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_proc.comps[gl_proc.my_comp].comm);
     CHECK_MPI(err);
     avglibt = dblsum/nranks;
@@ -209,6 +207,11 @@ void print_stats()
         data_sz = (unsigned long)(gl_proc.stats_info.data_msg_sz/gl_proc.stats_info.ndata_msg_sent);
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: total sent %lu, avg data msg sz %lu (%d msgs)", gl_proc.stats_info.data_msg_sz, data_sz, gl_proc.stats_info.ndata_msg_sent);
     }
+
+	if(gl_proc.stats_info.t_do_match > 0)
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: do match %.4f, idle %.4f, parse %.4f, search %.4f, %u times searched, %u times domatched", 
+			   gl_proc.stats_info.t_do_match,  gl_proc.stats_info.idle_do_match_time, gl_proc.stats_info.t_parse,  gl_proc.stats_info.t_search,  gl_proc.stats_info.nsearch, 
+			   gl_proc.stats_info.ndomatch);
 
     err = MPI_Reduce(&(gl_proc.stats_info.nioreqs), &unsgn, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, gl_proc.comps[gl_proc.my_comp].comm);
     CHECK_MPI(err);

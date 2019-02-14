@@ -140,9 +140,8 @@ static void do_matching(file_buffer_t *fbuf)
     MPI_Offset *matched_count;
     dtf_var_t *var = NULL;
     int ndims;
-    int ntimes_while = 0;
 
-    double t_st, t_idle = 0, t_start;
+    double t_st, t_start;
 
     int n_matched_blocks = 0;
     if(!fbuf->my_mst_info->iodb->updated_flag){ //no new info since last time matching was done, ignore
@@ -152,6 +151,8 @@ static void do_matching(file_buffer_t *fbuf)
 		return;
 	}
     fbuf->my_mst_info->iodb->updated_flag = 0; //reset
+
+	gl_proc.stats_info.ndomatch++;
 
     t_start = MPI_Wtime();
 
@@ -175,8 +176,6 @@ static void do_matching(file_buffer_t *fbuf)
     ritem = fbuf->my_mst_info->iodb->ritems;
     while(ritem != NULL){
 
-        t_st = MPI_Wtime();
-
         n_matched_blocks = 0;
 
         for(i = 0; i < allocd_nwriters; i++){
@@ -191,9 +190,8 @@ static void do_matching(file_buffer_t *fbuf)
 		
         rblock = ritem->dblocks;
         while(rblock != NULL){
-            ntimes_while++;
+			t_st = MPI_Wtime();
             var_id = rblock->var_id;
-            t_st = MPI_Wtime();
 			assert(fbuf->my_mst_info->iodb->witems != NULL);
 			
             witem = fbuf->my_mst_info->iodb->witems[var_id];
@@ -202,7 +200,6 @@ static void do_matching(file_buffer_t *fbuf)
 				rblock = rblock->next;
 				/*No match right now*/
 				gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
-				t_idle += MPI_Wtime() - t_st;
 				gl_proc.stats_info.idle_do_match_time += MPI_Wtime() - t_st;
 				continue;
 			}
@@ -229,9 +226,12 @@ static void do_matching(file_buffer_t *fbuf)
             while(nelems_to_match){
 
                 nelems_matched = 0;
-				if(var->ndims > 0)
+				if(var->ndims > 0){
+					double t_search = MPI_Wtime();
 					wblock = rb_find_block(witem->dblocks, rblock->start, rblock->count, var->ndims);
-				else
+					gl_proc.stats_info.t_search += MPI_Wtime() - t_search;
+					gl_proc.stats_info.nsearch++;
+				} else
 					wblock = (block_t*)witem->dblocks;
 				
                 if(wblock == NULL){
@@ -239,7 +239,6 @@ static void do_matching(file_buffer_t *fbuf)
                     //didn't find
                     DTF_DBG(VERBOSE_ALL_LEVEL, "didnt find block for var %d", var_id);
                     gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
-                    t_idle += MPI_Wtime() - t_st;
                     gl_proc.stats_info.idle_do_match_time += MPI_Wtime() - t_st;
                     break;
                 }
@@ -429,18 +428,12 @@ static void do_matching(file_buffer_t *fbuf)
 		   ritem = ritem->next;
         }        
     }
-    if(nwriters == 0)
-        t_st = MPI_Wtime(); //reset
     /*dealloc stuff*/
     dtf_free(writers, allocd_nwriters*sizeof(int));
     dtf_free(offt, allocd_nwriters*sizeof(size_t));
     dtf_free(bufsz, allocd_nwriters*sizeof(int));
     dtf_free(sbuf, allocd_nwriters*sizeof(unsigned char*));
 
-    if(nwriters == 0)
-        gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
-
-    assert( MPI_Wtime() - t_start >= t_idle);
     gl_proc.stats_info.master_time = MPI_Wtime() - t_start;  //useful work
 	gl_proc.stats_info.t_do_match += MPI_Wtime() - t_start;
 
@@ -584,7 +577,8 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_proc.stats_info.malloc_size);
 
 	 gl_proc.stats_info.master_time = MPI_Wtime() - t_start;
-
+	 gl_proc.stats_info.t_parse = MPI_Wtime() - t_start;
+	 
 }
 
 io_req_t *new_ioreq(int id,

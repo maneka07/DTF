@@ -361,7 +361,7 @@ void TreeInsertHelpVer2(rb_red_blk_tree* tree, rb_red_blk_node* z, insert_info *
 		/*new intermediate node for tree in dimension cur_dim*/
 		insert_node = (rb_red_blk_node*)SafeMalloc(sizeof(rb_red_blk_node));
 		insert_node->key = key;
-  
+		
 		node_info *ninfo = (node_info*)SafeMalloc(sizeof(node_info));
 	    ninfo->max_node_rcoord = info->blck->start[cur_dim]+info->blck->count[cur_dim]-1;
 	    ninfo->max_subtr_rcoord = ninfo->max_node_rcoord;
@@ -730,16 +730,19 @@ void InorderTreePrintVer2(rb_red_blk_tree* tree, rb_red_blk_node* x) {
 /*    Note:    This function should only be called by RBTreeDestroy */
 /***********************************************************************/
 
-void TreeDestHelper(rb_red_blk_tree* tree, rb_red_blk_node* x) {
+void TreeDestHelper(rb_red_blk_tree* tree, rb_red_blk_node* x, int cur_height, int* max_height) {
   rb_red_blk_node* nil=tree->nil;
   if (x != nil) {
-    TreeDestHelper(tree,x->left);
-    TreeDestHelper(tree,x->right);
+	cur_height++; 
+    TreeDestHelper(tree,x->left, cur_height, max_height);
+    TreeDestHelper(tree,x->right, cur_height, max_height);
     tree->DestroyKey(x->key);
     tree->DestroyInfo(x->info);
     free(x);
     assert(tree->nnodes > 0);
     tree->nnodes--;
+  } else {
+	if(cur_height > *max_height) *max_height = cur_height;
   }
 }
 
@@ -759,13 +762,18 @@ void TreeDestHelper(rb_red_blk_tree* tree, rb_red_blk_node* x) {
 
 void RBTreeDestroy(rb_red_blk_tree* tree) {
   //printf("nnodes %lu\n", tree->nnodes);
-  TreeDestHelper(tree,tree->root->left);
+  unsigned nnodes = tree->nnodes;
+  int level = tree->cur_dim;
+  int cur_height = 0;
+  int max_height = cur_height;
+  TreeDestHelper(tree,tree->root->left, cur_height, &max_height);
   free(tree->root);
   tree->nnodes--;
   free(tree->nil);
   tree->nnodes--;
   
   assert(tree->nnodes == 0);
+  DTF_DBG(VERBOSE_RB_TREE_LEVEL, "Destroy tree for dim %d, nnodes %u, height %d", level, nnodes, max_height);
   free(tree);
 }
 

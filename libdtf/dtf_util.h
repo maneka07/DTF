@@ -109,6 +109,10 @@ typedef struct stats{
     double          idle_do_match_time;
     double          t_progr_comm;
     double          t_do_match;
+    double			t_parse;
+    double			t_search;
+    unsigned		nsearch;	
+    unsigned        ndomatch;	
     double          master_time;  /*measure accum time for master-related work*/ 
     size_t          malloc_size;
     unsigned long   nioreqs;

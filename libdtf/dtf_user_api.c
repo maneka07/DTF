@@ -74,6 +74,10 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_proc.stats_info.accum_dbuff_time = 0;
     gl_proc.stats_info.t_progr_comm = 0;
     gl_proc.stats_info.t_do_match = 0;
+    gl_proc.stats_info.t_parse = 0;
+    gl_proc.stats_info.t_search = 0;
+    gl_proc.stats_info.nsearch = 0;
+    gl_proc.stats_info.ndomatch = 0;
     gl_proc.stats_info.nfiles = 0;
     gl_proc.stats_info.idle_time = 0;
     gl_proc.stats_info.idle_do_match_time = 0;
