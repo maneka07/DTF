@@ -48,5 +48,5 @@ void 				IntervalTreeDestroy(interval_tree_t* tree);
 void 				IntervalTreeInsert(interval_tree_t* tree, insert_info_t* info);
 void 				IntervalTreePrint(interval_tree_t* tree);
 block_t* 			IntervalTreeFindOverlap(interval_tree_t* tree, MPI_Offset* start, MPI_Offset *count, int ndims);
-void print_memuse();
+void 				IntervalTreePrintMem();
 #endif

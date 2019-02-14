@@ -4,6 +4,9 @@
 #include "dtf_interval_tree.h"
 #include "dtf_util.h"
 
+static size_t memuse = 0;
+static unsigned long nnodes = 0, ntrees = 0;
+
 static int cmp_intervals(MPI_Offset la, MPI_Offset ra, MPI_Offset lb, MPI_Offset rb)
 {
 	if(lb >= ra) return 1; //interval b lies completely to the right from a
@@ -14,6 +17,7 @@ static int cmp_intervals(MPI_Offset la, MPI_Offset ra, MPI_Offset lb, MPI_Offset
 static interval_node_t* create_node(MPI_Offset lkey, MPI_Offset rkey, block_t *bl, int cur_dim, int ndims, int node_id)
 {
 	interval_node_t *node = dtf_malloc(sizeof(interval_node_t));
+	memuse += sizeof(interval_node_t);
 	node->id = node_id;
 	node_id++;
 	node->lkey = lkey;
@@ -23,6 +27,7 @@ static interval_node_t* create_node(MPI_Offset lkey, MPI_Offset rkey, block_t *b
 	node->left=node->right=node->parent=NULL;
 	node->next_dim_tree = NULL;
 	DTF_DBG(VERBOSE_INTERVAL_TREE_LEVEL,"Created node %d for interval [%lld, %lld) in dim %d", node->id, lkey, rkey, cur_dim);
+	nnodes++;
 	
 	return node;
 }
@@ -115,6 +120,7 @@ static interval_node_t* insert(interval_node_t* node, interval_tree_t* tree,MPI_
 		tree->nnodes++;
 		if(ndims == 0 || tree->cur_dim == ndims - 1){ 
 			block_ref_t *ref = dtf_malloc(sizeof(block_ref_t));
+			memuse += sizeof(block_ref_t);
 			ref->bl = bl;
 			ref->next = node->bl_refs;
 			node->bl_refs = ref;
@@ -150,6 +156,7 @@ static interval_node_t* insert(interval_node_t* node, interval_tree_t* tree,MPI_
 		}
 		if(tree->cur_dim == ndims - 1){ 
 			block_ref_t* ref = dtf_malloc(sizeof(block_ref_t));
+			memuse += sizeof(block_ref_t);
 			ref->bl = bl;
 			assert(node->bl_refs != NULL);
 			ref->next = node->bl_refs;
@@ -254,15 +261,19 @@ static interval_node_t* find_overlap(interval_node_t* node, MPI_Offset* start, M
 interval_tree_t* IntervalTreeCreate()
 {
 	interval_tree_t* tree = dtf_malloc(sizeof(interval_tree_t));
+	memuse += sizeof(interval_tree_t);
 	DTF_DBG(VERBOSE_INTERVAL_TREE_LEVEL,"Create tree");
 	tree->root = NULL;
 	tree->cur_dim = 0;
 	tree->nnodes = 0;
+	ntrees++;
 	return tree;
 }
 
 void IntervalTreeDestroy(interval_tree_t* tree)
 {
+	if(tree != NULL)
+		DTF_DBG(VERBOSE_INTERVAL_TREE_LEVEL, "Destroy tree level %d, height %d, nnodes %lu", tree->cur_dim, height(tree->root), tree->nnodes);
 	destroy_subtree(tree->root);
 	dtf_free(tree, sizeof(interval_tree_t));	
 }
@@ -329,4 +340,10 @@ block_t* IntervalTreeFindOverlap(interval_tree_t* tree, MPI_Offset* start, MPI_O
 	}
 
 	return bl;
+}
+
+void IntervalTreePrintMem()
+{
+	if(memuse > 0)
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "Memory use for trees %ld, %lu nodes, %lu trees", memuse, nnodes, ntrees);
 }

@@ -181,11 +181,19 @@ void print_stats()
         
     if(gl_proc.stats_info.dtf_time > 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: total dtf time: %.4f", gl_proc.stats_info.dtf_time);
+    
+    if(gl_proc.stats_info.master_time > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: master time: %.4f", gl_proc.stats_info.master_time);
+    
+    IntervalTreePrintMem();
+    
+    if(gl_proc.stats_info.idle_do_match_time > 0)
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: idle_do_match_time time: %.4f", gl_proc.stats_info.idle_do_match_time);
+
 
     /*AVERAGE STATS*/
     if(gl_proc.stats_info.iodb_nioreqs > 0 && gl_proc.myrank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF Stat: nioreqs in iodb %lu", gl_proc.stats_info.iodb_nioreqs);
-
 
 
     err = MPI_Allreduce(&(gl_proc.stats_info.user_timer_accum), &dblsum, 1, MPI_DOUBLE, MPI_SUM, gl_proc.comps[gl_proc.my_comp].comm);
