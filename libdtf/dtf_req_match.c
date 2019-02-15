@@ -155,7 +155,7 @@ static void do_matching(file_buffer_t *fbuf)
     dtf_var_t *var = NULL;
     int ndims;
 
-    double t_st, t_idle = 0, t_start;
+    double t_st, t_start;
 
     if(!fbuf->my_mst_info->iodb->updated_flag){ //no new info since last time matching was done
         return;
@@ -164,7 +164,7 @@ static void do_matching(file_buffer_t *fbuf)
 		return;
 	}
     fbuf->my_mst_info->iodb->updated_flag = 0; //reset
-
+	gl_proc.stats_info.ndomatch++;
     t_start = MPI_Wtime();
 
     writers = NULL;
@@ -176,7 +176,6 @@ static void do_matching(file_buffer_t *fbuf)
     ritem = fbuf->my_mst_info->iodb->ritems;
     while(ritem != NULL){
 
-        t_st = MPI_Wtime();
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Matching rreq from rank %d", ritem->rank);
 		
         rblock = ritem->dblocks;
@@ -191,7 +190,6 @@ static void do_matching(file_buffer_t *fbuf)
 				rblock = rblock->next;
 				/*No match right now*/
 				gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
-				t_idle += MPI_Wtime() - t_st;
 				gl_proc.stats_info.idle_do_match_time += MPI_Wtime() - t_st;
 				continue;
 			}
@@ -200,9 +198,10 @@ static void do_matching(file_buffer_t *fbuf)
             ndims = var->ndims;
             
             DTF_DBG(VERBOSE_DBG_LEVEL, "Match rblock for var %d with %d dims", var_id, ndims);
-             
+            double t_search = MPI_Wtime();
 			wblock = IntervalTreeFindOverlap(witem->bl_tree, rblock->start, rblock->count, ndims);
-			
+			gl_proc.stats_info.t_search += MPI_Wtime() - t_search;
+			gl_proc.stats_info.nsearch++;
 			//~ if(ndims == 0) wblock = witem->blocks;
 			//~ else {
 				//~ wblock = witem->blocks;
@@ -224,7 +223,6 @@ static void do_matching(file_buffer_t *fbuf)
 				//Didn't find overlapping block
 				rblock = rblock->next;
 				gl_proc.stats_info.idle_time += MPI_Wtime() - t_st;
-				t_idle += MPI_Wtime() - t_st;
 				gl_proc.stats_info.idle_do_match_time += MPI_Wtime() - t_st;
 				continue;
 			};
@@ -414,8 +412,7 @@ static void do_matching(file_buffer_t *fbuf)
         }        
     }
    
-    assert( MPI_Wtime() - t_start >= t_idle);
-    gl_proc.stats_info.master_time = MPI_Wtime() - t_start - t_idle;  //useful work
+    gl_proc.stats_info.master_time += MPI_Wtime() - t_start;  //useful work
 	gl_proc.stats_info.t_do_match += MPI_Wtime() - t_start;
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "after matching: %d ritems", (int)fbuf->my_mst_info->iodb->nritems);
@@ -431,6 +428,8 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
 	read_db_item_t *ritem = NULL;
 	insert_info_t info;
 	MPI_Offset* start, *count;
+
+	double t_start = MPI_Wtime();
 
     DTF_DBG(VERBOSE_DBG_LEVEL, "Start parsing reqs for file %s", fbuf->file_path);
     if(comm == gl_proc.comps[fbuf->reader_id].comm)
@@ -548,6 +547,7 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
     }
     assert(offt == (size_t)bufsz);
 	fbuf->my_mst_info->iodb->updated_flag = 1;
+	gl_proc.stats_info.t_parse += MPI_Wtime() - t_start;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_proc.stats_info.malloc_size);
 }
 

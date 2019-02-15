@@ -132,6 +132,10 @@ void print_stats()
     }dblint_t;
 
     dblint_t dblint_in, dblint_out;
+    
+    char *s = getenv("DTF_PRINT_STATS");
+	if(s == NULL) return;
+	else if(!atoi(s)) return;
 
     walltime = MPI_Wtime() - gl_proc.walltime;
     MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &nranks);
@@ -161,11 +165,7 @@ void print_stats()
     CHECK_MPI(err);
     if(gl_proc.myrank == 0)
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: max dtf time: %.4f: rank: %d", dblint_out.dbl, dblint_out.intg);
-    
-	char *s = getenv("DTF_PRINT_STATS");
-	if(s == NULL) return;
-	else if(!atoi(s)) return;
-	
+    	
     if(gl_proc.stats_info.accum_dbuff_sz > 0){
     //    DTF_DBG(VERBOSE_DBG_LEVEL, "DTF STAT: buffering time: %.5f: %.4f", gl_proc.stats_info.accum_dbuff_time,(gl_proc.stats_info.accum_dbuff_time/gl_proc.stats_info.timer_accum)*100);
         DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: buffering size: %lu",  gl_proc.stats_info.accum_dbuff_sz);
@@ -187,8 +187,10 @@ void print_stats()
     
     IntervalTreePrintMem();
     
-    if(gl_proc.stats_info.idle_do_match_time > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: idle_do_match_time time: %.4f", gl_proc.stats_info.idle_do_match_time);
+	if(gl_proc.stats_info.t_do_match > 0)
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT: do match %.4f, idle %.4f, parse %.4f, search %.4f, %u times searched, %u times domatched", 
+			   gl_proc.stats_info.t_do_match,  gl_proc.stats_info.idle_do_match_time, gl_proc.stats_info.t_parse,  gl_proc.stats_info.t_search,  gl_proc.stats_info.nsearch, 
+			   gl_proc.stats_info.ndomatch);
 
 
     /*AVERAGE STATS*/
@@ -207,7 +209,7 @@ void print_stats()
     err = MPI_Reduce(&(gl_proc.stats_info.dtf_time), &dblsum, 1, MPI_DOUBLE, MPI_SUM, 0, gl_proc.comps[gl_proc.my_comp].comm);
     CHECK_MPI(err);
     if(gl_proc.myrank == 0 && dblsum > 0)
-        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg dtf time: %.4f: (%.4f%%)", dblsum/nranks, (dblsum/nranks)/avglibt*100);
+        DTF_DBG(VERBOSE_ERROR_LEVEL, "DTF STAT AVG: avg dtf time: %.4f", dblsum/nranks);
 
     if(gl_proc.stats_info.ndata_msg_sent > 0 && gl_proc.myrank == 0){
         data_sz = (unsigned long)(gl_proc.stats_info.data_msg_sz/gl_proc.stats_info.ndata_msg_sent);

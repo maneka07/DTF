@@ -273,7 +273,7 @@ interval_tree_t* IntervalTreeCreate()
 void IntervalTreeDestroy(interval_tree_t* tree)
 {
 	if(tree != NULL)
-		DTF_DBG(VERBOSE_INTERVAL_TREE_LEVEL, "Destroy tree level %d, height %d, nnodes %lu", tree->cur_dim, height(tree->root), tree->nnodes);
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Destroy tree level %d, height %d, nnodes %lu", tree->cur_dim, height(tree->root), tree->nnodes);
 	destroy_subtree(tree->root);
 	dtf_free(tree, sizeof(interval_tree_t));	
 }
