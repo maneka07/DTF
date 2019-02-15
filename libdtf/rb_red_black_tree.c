@@ -80,15 +80,11 @@ rb_red_blk_tree* RBTreeCreateBlocks( int (*CompFunc) (const void*,const void*),
   temp->parent=temp->left=temp->right=temp;
   temp->red=0;
   temp->key=NULL;
-  nnodes++;
-  newTree->nnodes++;
   
   temp=newTree->root=(rb_red_blk_node*) SafeMalloc(sizeof(rb_red_blk_node));
   temp->parent = temp->left=temp->right=newTree->nil;
   temp->key=NULL;
   temp->red=0;
-  newTree->nnodes++;
-  nnodes++;
   return(newTree);
 }
 
@@ -768,12 +764,9 @@ void RBTreeDestroy(rb_red_blk_tree* tree) {
   int max_height = cur_height;
   TreeDestHelper(tree,tree->root->left, cur_height, &max_height);
   free(tree->root);
-  tree->nnodes--;
   free(tree->nil);
-  tree->nnodes--;
-  
   assert(tree->nnodes == 0);
-  DTF_DBG(VERBOSE_RB_TREE_LEVEL, "Destroy tree for dim %d, nnodes %u, height %d", level, nnodes, max_height);
+  DTF_DBG(VERBOSE_DBG_LEVEL, "Destroy tree for dim %d, nnodes %u, height %d", level, nnodes, max_height);
   free(tree);
 }
 
