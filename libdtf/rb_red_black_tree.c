@@ -554,7 +554,6 @@ rb_red_blk_node * RBTreeInsertBlock(rb_red_blk_tree* tree, void* ins_info)
   /*this block will be inserted in the tree on the 
    * level of the last dimension, i.e., this is a leaf node*/
   x=(rb_red_blk_node*) SafeMalloc(sizeof(rb_red_blk_node));
-  nnodes++;
   x->key=(void*)(&(info->blck->start[info->ndims-1]));
   
   ninfo = (node_info*)SafeMalloc(sizeof(node_info));

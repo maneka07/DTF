@@ -576,8 +576,8 @@ static void parse_ioreqs(file_buffer_t *fbuf, void *buf, int bufsz, int src_rank
 	fbuf->my_mst_info->iodb->updated_flag = 1;
     DTF_DBG(VERBOSE_DBG_LEVEL, "Finished parsing reqs. (mem %lu)", gl_proc.stats_info.malloc_size);
 
-	 gl_proc.stats_info.master_time = MPI_Wtime() - t_start;
-	 gl_proc.stats_info.t_parse = MPI_Wtime() - t_start;
+	 gl_proc.stats_info.master_time += MPI_Wtime() - t_start;
+	 gl_proc.stats_info.t_parse += MPI_Wtime() - t_start;
 	 
 }
 
