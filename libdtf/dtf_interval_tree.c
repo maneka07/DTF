@@ -58,16 +58,17 @@ static void delete_node(interval_node_t *node)
 	dtf_free(node, sizeof(interval_node_t));
 }
 
-static void destroy_subtree(interval_node_t* node)
+static void destroy_subtree(interval_tree_t* tree, interval_node_t* node)
 {
 	if(node == NULL) return;
 	
 	if(node->left != NULL)
-		destroy_subtree(node->left);
+		destroy_subtree(tree, node->left);
 	if(node->right != NULL)
-		destroy_subtree(node->right);
+		destroy_subtree(tree, node->right);
 	
 	delete_node(node);
+	tree->nnodes--;
 }
 
 static int inline max(int a, int b)
@@ -274,7 +275,8 @@ void IntervalTreeDestroy(interval_tree_t* tree)
 {
 	if(tree != NULL)
 		DTF_DBG(VERBOSE_DBG_LEVEL, "Destroy tree level %d, height %d, nnodes %lu", tree->cur_dim, height(tree->root), tree->nnodes);
-	destroy_subtree(tree->root);
+	destroy_subtree(tree, tree->root);
+	assert(tree->nnodes == 0);
 	dtf_free(tree, sizeof(interval_tree_t));	
 }
 

@@ -156,16 +156,18 @@ static void do_matching(file_buffer_t *fbuf)
     int ndims;
 
     double t_st, t_start;
-
+    t_start = MPI_Wtime();
+	gl_proc.stats_info.ndomatch++;
+	
     if(!fbuf->my_mst_info->iodb->updated_flag){ //no new info since last time matching was done
+		gl_proc.stats_info.idle_do_match_time += MPI_Wtime() - t_start;
         return;
 	}
     if(fbuf->my_mst_info->iodb->witems == NULL || fbuf->my_mst_info->iodb->ritems == NULL){
+		gl_proc.stats_info.idle_do_match_time += MPI_Wtime() - t_start;
 		return;
 	}
     fbuf->my_mst_info->iodb->updated_flag = 0; //reset
-	gl_proc.stats_info.ndomatch++;
-    t_start = MPI_Wtime();
 
     writers = NULL;
     sbuf = NULL;
