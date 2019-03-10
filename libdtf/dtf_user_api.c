@@ -82,7 +82,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
     gl_proc.stats_info.idle_time = 0;
     gl_proc.stats_info.idle_do_match_time = 0;
     gl_proc.stats_info.master_time = 0;
-    gl_proc.stats_info.iodb_nioreqs = 0;
+    gl_proc.stats_info.nrreqs = 0;
+    gl_proc.stats_info.nwreqs = 0;
 	gl_proc.stats_info.dtf_time = 0;
 	gl_proc.stats_info.t_idle = MPI_Wtime();
 	gl_proc.msgbuf = NULL;
@@ -198,8 +199,8 @@ _EXTERN_C_ int dtf_init(const char *filename, char *module_name)
         gl_verbose = verbose;
 
 	if(gl_proc.myrank==0)
-		DTF_DBG(VERBOSE_DBG_LEVEL, "Time to init DTF %.3f",  MPI_Wtime() - t_start);
-
+		DTF_DBG(VERBOSE_ERROR_LEVEL, "Time to init DTF %.3f",  MPI_Wtime() - t_start);
+	gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
     return 0;
 
 panic_exit:
@@ -239,74 +240,77 @@ _EXTERN_C_ int dtf_finalize()
     
     delete_tmp_file();
     
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Notify other components that I finalized");
-    if(gl_proc.conf.single_mpirun_mode){
-		/*Send finalize message to ranks of other components before and 
-		 * after my component
-		 *       ----------------------------
-		 * 		 | others   | Me   |  others|
-		 * 		 ----------------------------
-		 * */
-		 //found out how many ranks before and after ranks of my component
-		 int my_comm_sz, glob_comm_sz;
-		 int me_comp, me_glob;
-		 int num_msg, i, start_rank;
-		 
-		for(comp = 0; comp < gl_proc.ncomps; comp++){
-			if(comp == gl_proc.my_comp)
-				continue;
-		 
-			MPI_Comm_rank(gl_proc.comps[gl_proc.my_comp].comm, &me_comp);
-			MPI_Comm_rank(gl_proc.comps[comp].comm, &me_glob);
-			MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &my_comm_sz);
-			MPI_Comm_size(gl_proc.comps[comp].comm, &glob_comm_sz);
-			
-			num_msg = (glob_comm_sz - my_comm_sz)/my_comm_sz;
-			if(num_msg == 0 && (me_comp < glob_comm_sz - my_comm_sz))
-				num_msg = 1;
-			if(glob_comm_sz - my_comm_sz > my_comm_sz && 
-			   (glob_comm_sz - my_comm_sz)%my_comm_sz != 0 && 
-			    me_comp == my_comm_sz-1)
-				num_msg += (glob_comm_sz - my_comm_sz)%my_comm_sz;
-			
-			
-			start_rank = (me_glob - me_comp == 0) ? me_glob + my_comm_sz : me_comp;
-			
+	char *s = getenv("DTF_SCALE");
+	if( (s != NULL) && atoi(s)){
+		DTF_DBG(VERBOSE_DBG_LEVEL, "Notify other components that I finalized");
+		if(gl_proc.conf.single_mpirun_mode){
+			/*Send finalize message to ranks of other components before and 
+			 * after my component
+			 *       ----------------------------
+			 * 		 | others   | Me   |  others|
+			 * 		 ----------------------------
+			 * */
+			 //found out how many ranks before and after ranks of my component
+			 int my_comm_sz, glob_comm_sz;
+			 int me_comp, me_glob;
+			 int num_msg, i, start_rank;
+			 
+			for(comp = 0; comp < gl_proc.ncomps; comp++){
+				if(comp == gl_proc.my_comp)
+					continue;
+			 
+				MPI_Comm_rank(gl_proc.comps[gl_proc.my_comp].comm, &me_comp);
+				MPI_Comm_rank(gl_proc.comps[comp].comm, &me_glob);
+				MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &my_comm_sz);
+				MPI_Comm_size(gl_proc.comps[comp].comm, &glob_comm_sz);
 				
-			for(i = 0; i < num_msg; i++){
-				DTF_DBG(VERBOSE_DBG_LEVEL, "Notify %d that my comp finished", start_rank+i);
-				dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG, 1);
-				err = MPI_Isend(NULL, 0, MPI_INT, start_rank + i, COMP_FINALIZED_TAG, gl_proc.comps[comp].comm, msg->reqs);
-				CHECK_MPI(err);
-				ENQUEUE_ITEM(msg, gl_proc.comps[comp].out_msg_q);
+				num_msg = (glob_comm_sz - my_comm_sz)/my_comm_sz;
+				if(num_msg == 0 && (me_comp < glob_comm_sz - my_comm_sz))
+					num_msg = 1;
+				if(glob_comm_sz - my_comm_sz > my_comm_sz && 
+				   (glob_comm_sz - my_comm_sz)%my_comm_sz != 0 && 
+					me_comp == my_comm_sz-1)
+					num_msg += (glob_comm_sz - my_comm_sz)%my_comm_sz;
+				
+				
+				start_rank = (me_glob - me_comp == 0) ? me_glob + my_comm_sz : me_comp;
+				
+					
+				for(i = 0; i < num_msg; i++){
+					DTF_DBG(VERBOSE_DBG_LEVEL, "Notify %d that my comp finished", start_rank+i);
+					dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG, 1);
+					err = MPI_Isend(NULL, 0, MPI_INT, start_rank + i, COMP_FINALIZED_TAG, gl_proc.comps[comp].comm, msg->reqs);
+					CHECK_MPI(err);
+					ENQUEUE_ITEM(msg, gl_proc.comps[comp].out_msg_q);
+				}
+				 
 			}
 			 
-		}
-		 
-	} else { // !gl_conf.single_mpirun_mode
-		for(comp = 0; comp < gl_proc.ncomps; comp++){
-			if(comp == gl_proc.my_comp)
-				continue;
-			int ncomm_my, ncomm_cpl; 
-			MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &ncomm_my);
-			MPI_Comm_remote_size(gl_proc.comps[comp].comm, &ncomm_cpl);
-			
-			if(gl_proc.myrank < ncomm_cpl){
-				dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG, 1);
-				err = MPI_Isend(NULL, 0, MPI_INT, gl_proc.myrank, COMP_FINALIZED_TAG, gl_proc.comps[comp].comm, msg->reqs);
-				CHECK_MPI(err);
-				ENQUEUE_ITEM(msg, gl_proc.comps[comp].out_msg_q);
-			}
-			
-			if( (ncomm_cpl > ncomm_my) && (gl_proc.myrank == 0)){
-				int i;
-				for(i = gl_proc.myrank; i < ncomm_cpl; i++){
+		} else { // !gl_conf.single_mpirun_mode
+			for(comp = 0; comp < gl_proc.ncomps; comp++){
+				if(comp == gl_proc.my_comp)
+					continue;
+				int ncomm_my, ncomm_cpl; 
+				MPI_Comm_size(gl_proc.comps[gl_proc.my_comp].comm, &ncomm_my);
+				MPI_Comm_remote_size(gl_proc.comps[comp].comm, &ncomm_cpl);
+				
+				if(gl_proc.myrank < ncomm_cpl){
 					dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG, 1);
 					err = MPI_Isend(NULL, 0, MPI_INT, gl_proc.myrank, COMP_FINALIZED_TAG, gl_proc.comps[comp].comm, msg->reqs);
 					CHECK_MPI(err);
 					ENQUEUE_ITEM(msg, gl_proc.comps[comp].out_msg_q);
 				}
-			} 
+				
+				if( (ncomm_cpl > ncomm_my) && (gl_proc.myrank == 0)){
+					int i;
+					for(i = gl_proc.myrank; i < ncomm_cpl; i++){
+						dtf_msg_t *msg = new_dtf_msg(NULL, 0, DTF_UNDEFINED, COMP_FINALIZED_TAG, 1);
+						err = MPI_Isend(NULL, 0, MPI_INT, gl_proc.myrank, COMP_FINALIZED_TAG, gl_proc.comps[comp].comm, msg->reqs);
+						CHECK_MPI(err);
+						ENQUEUE_ITEM(msg, gl_proc.comps[comp].out_msg_q);
+					}
+				} 
+			}
 		}
 	}
     
@@ -373,7 +377,7 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
 	double t_start = MPI_Wtime();
 	
     if(!lib_initialized) return 0;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "call match io for %s (ncid %d)", filename, ncid);
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "Enter match io for %s", filename);
   
     fbuf = find_file_buffer(gl_proc.filebuf_list, filename, ncid);
     if(fbuf == NULL){
@@ -400,7 +404,7 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
     
     gl_proc.stats_info.transfer_time += MPI_Wtime() - t_start;
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
-    DTF_DBG(VERBOSE_DBG_LEVEL, "Exit transfer");
+    DTF_DBG(VERBOSE_ERROR_LEVEL, "Exit transfer");
     return 0;
 }
 

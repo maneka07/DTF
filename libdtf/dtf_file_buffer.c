@@ -185,6 +185,7 @@ static int init_req_match_masters(MPI_Comm comm, master_info_t *mst_info)
 
     if(myrank == 0)
         DTF_DBG(VERBOSE_DBG_LEVEL, "Nmasters %d", mst_info->nmasters);
+    gl_proc.stats_info.nmasters = mst_info->nmasters;
 
     translate_ranks(&my_master, 1, comm, gl_proc.comps[gl_proc.my_comp].comm, &my_master_glob);
     mst_info->my_mst = my_master_glob;
@@ -317,8 +318,10 @@ void delete_file_buffer(file_buffer_t* fbuf)
     if(fbuf->my_mst_info != NULL){
 
         if(fbuf->my_mst_info->iodb != NULL){
+			double t_start = MPI_Wtime();
             clean_iodb(fbuf->my_mst_info->iodb, fbuf->nvars, fbuf->cpl_mst_info->comm_sz);
             dtf_free(fbuf->my_mst_info->iodb, sizeof(ioreq_db_t));
+            gl_proc.stats_info.master_time += MPI_Wtime() - t_start;
         }
 
         if(fbuf->my_mst_info->masters != NULL)
@@ -449,7 +452,7 @@ void finalize_files()
     while(fbuf != NULL){
         DTF_DBG(VERBOSE_DBG_LEVEL, "File %s, fready_notif_flag %d", fbuf->file_path,  fbuf->fready_notify_flag);
         if(fbuf->iomode == DTF_IO_MODE_FILE){
-			 if(fbuf->writer_id == gl_proc.my_comp && fbuf->fready_notify_flag == DTF_UNDEFINED)
+			 if(fbuf->root_writer == gl_proc.myrank && fbuf->fready_notify_flag == DTF_UNDEFINED)
 				file_cnt++;
         } 
 
@@ -470,7 +473,7 @@ void finalize_files()
 					//~ progress_comm(0);
 				//~ notify_file_ready(fbuf);
 			//~ }
-			if(fbuf->writer_id == gl_proc.my_comp && fbuf->fready_notify_flag == DTF_UNDEFINED)
+			if(fbuf->root_writer == gl_proc.myrank && fbuf->fready_notify_flag == DTF_UNDEFINED)
 				while(fbuf->fready_notify_flag != RDR_NOTIFIED)
 					progress_comm(0);
 			 

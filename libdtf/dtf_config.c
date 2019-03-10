@@ -201,7 +201,7 @@ static int parse_config(const char *ini_name, const char *comp_name){
 	}
   } else {
 	  	if ((in=fopen(tmp_ininame, "r"))==NULL) {
-		DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: cannot open %s\n", ini_name);
+		DTF_DBG(VERBOSE_ERROR_LEVEL,   "DTF Error: cannot open %s\n", tmp_ininame);
 		return 1 ;
 	}
   }

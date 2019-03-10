@@ -765,7 +765,7 @@ void RBTreeDestroy(rb_red_blk_tree* tree) {
   free(tree->root);
   free(tree->nil);
   assert(tree->nnodes == 0);
-  DTF_DBG(VERBOSE_DBG_LEVEL, "Destroy tree for dim %d, nnodes %u, height %d", level, nnodes, max_height);
+  DTF_DBG(VERBOSE_RB_TREE_LEVEL, "Destroy tree for dim %d, nnodes %u, height %d", level, nnodes, max_height);
   free(tree);
 }
 

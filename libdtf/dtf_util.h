@@ -32,7 +32,7 @@
 #define VERBOSE_DBG_LEVEL     1
 #define VERBOSE_ALL_LEVEL     2
 #define VERBOSE_RB_TREE_LEVEL 3
-
+#define VERBOSE_OVERRIDE_LEVEL 4
 /*NOTE: These two definitions are copied from pnetcdf.h
  * since I wanted to be able to compile DTF without having 
  * to link it to pnetcdf.*/
@@ -66,7 +66,7 @@
 
 
 #define DTF_DBG(dbg_level, ...) do{  \
-    if(gl_verbose >= dbg_level){  \
+    if(gl_verbose >= dbg_level || dbg_level==VERBOSE_OVERRIDE_LEVEL){  \
                 memset(_buff,0,1024);                         \
                 snprintf(_buff,1024,__VA_ARGS__);             \
                 fprintf(stdout, "%s %d [%.3f]: %s\n", _comp_name, gl_proc.myrank, MPI_Wtime() - gl_proc.walltime, _buff);  \
@@ -115,13 +115,16 @@ typedef struct stats{
     unsigned        ndomatch;	
     double          master_time;  /*measure accum time for master-related work*/ 
     size_t          malloc_size;
-    unsigned long   nioreqs;
-    unsigned long   iodb_nioreqs;   /*number of blocks in iodb for matching*/
+    unsigned long   nioreqs;  /*Number of I/O requests issued by the process*/
+    unsigned long   nrreqs;   /*number of read I/O requests in iodb for matching*/
+    unsigned long   nwreqs;   /*number of write I/O requests in iodb for matching*/
     double          timer_start;   
     double          timer_accum;
     double          user_timer_start;
     double          user_timer_accum;
     unsigned int    nfiles;
+    
+    unsigned int    nmasters; //remember number of masters of the last opened file
     
     double          transfer_time;  /*data transfer time=I/O calls+dtf_transfer */
     double          dtf_time;       /*Total time spent inside DTF*/
