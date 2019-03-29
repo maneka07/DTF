@@ -365,7 +365,7 @@ _EXTERN_C_ void dtf_close(const char* filename)
 			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer == gl_proc.myrank && fbuf->fready_notify_flag == RDR_NOTIFIED) ||
 			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->root_writer != gl_proc.myrank) || 
 			(fbuf->iomode == DTF_IO_MODE_FILE && fbuf->reader_id == gl_proc.my_comp)){
-				if(gl_proc.stats_info.nwreqs > 0)
+				if(gl_proc.stats_info.nwreqs > 0 || gl_proc.stats_info.nrreqs > 0 )
 					DTF_DBG(VERBOSE_DBG_LEVEL, "%lu rreqs and %lu wreqs, %lu my own reqs", gl_proc.stats_info.nrreqs	,  gl_proc.stats_info.nwreqs, gl_proc.stats_info.nioreqs);
 				delete_file_buffer(fbuf);
 			}
