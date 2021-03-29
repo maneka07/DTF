@@ -401,7 +401,10 @@ _EXTERN_C_ int dtf_transfer(const char *filename, int ncid)
 	assert(pat != NULL);
 	if(fbuf->session_cnt == pat->num_sessions)
 		delete_file_buffer(fbuf);
-    
+
+    /* Synchronize between sessions */
+    MPI_Barrier(fbuf->comm);
+
     gl_proc.stats_info.transfer_time += MPI_Wtime() - t_start;
     gl_proc.stats_info.dtf_time += MPI_Wtime() - t_start;
     DTF_DBG(VERBOSE_ERROR_LEVEL, "Exit transfer");
