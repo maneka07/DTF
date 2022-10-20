@@ -1,11 +1,28 @@
 ** Compilation and installation
 
+*** Common part
+
 autoreconf
-./configure --prefix=/where/to/install CFLAGS="-I/dtf/dir -L/dtf/dir -ldtf -g" LDFLAGS="-L/dtf/dir -ldtf" CC=mpicc FC=mpif90 
+export DTF_DIR=XXXX
+INSTALLDIR=YYY
+
+*** Linux
+
+export CFLAGS="-I${DTF_DIR} -ldtf -g"
+#export LDFLAGS="-{L$DTF_DIR} -ldtf -g"
+export LDFLAGS="-L${DTF_DIR} -ldtf -g -Wl,-rpath=${DTF_DIR} -Wl,--disbale-new-dtags"
+export CC=mpicc
+export FC=mpif90
+./configure --prefix=${INSTALLDIR}
 make 
 make install
 
+** the K computer
 
-** Notes for K computer
-
-./configure --prefix=/where/to/install --host=x86_64-unknown-linux-gnu --target=sparc64v-sparc-linux-gnu CFLAGS="-I/dtf/dir -Xg" LDFLAGS="-L/dtf/dir -ldtf -Xg" CC=mpifccpx FC=mpifrtpx
+export CFLAGS="-I${DTF_DIR} -Xg" 
+export LDFLAGS="-L${DTF_DIR} -ldtf -Xg" 
+export CC=mpifccpx 
+export FC=mpifrtpx
+./configure --prefix={INSTALLDIR} --host=x86_64-unknown-linux-gnu --target=sparc64v-sparc-linux-gnu 
+make 
+make install
